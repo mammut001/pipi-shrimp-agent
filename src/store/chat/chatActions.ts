@@ -319,6 +319,11 @@ async function tryRecoverFromToolPolicyError(
     return false;
   }
 
+  // Stale recovering turn must not show an upgrade dialog for a newer turn.
+  if (getChatSessionTurnEpoch(activeSessionId) !== turnEpoch) {
+    return false;
+  }
+
   const toolNeed = detectAskModeToolNeed(userContent);
   const choice = await useUIStore.getState().showExecutionModeUpgradePrompt({
     reason: toolNeed.reason,
@@ -347,8 +352,18 @@ async function tryRecoverFromToolPolicyError(
     pendingToolResults: [],
   });
 
+  // Gate rollback+auto-retry behind epoch match for the recovering turn.
+  if (getChatSessionTurnEpoch(activeSessionId) !== turnEpoch) {
+    return false;
+  }
+
   const lastUser = await rollbackToLastUserMessage(activeSessionId, get, set);
   if (!lastUser) {
+    return false;
+  }
+
+  // Rollback awaited DB deletes — do not start an extra retry if epoch moved.
+  if (getChatSessionTurnEpoch(activeSessionId) !== turnEpoch) {
     return false;
   }
 
@@ -1338,11 +1353,25 @@ export function createChatActionMethods({
       const executionIds = owningSessionId
         ? listCancellableSessionExecutionIds(owningSessionId)
         : [];
-      // Epoch + diagnostics captured before optimistic clear / await so a
-      // same-session sendMessage that starts mid-cancel is detectable and so
-      // we never cancel a newer diagnostics task registered by that send.
+      // Epoch + diagnostics + assistant id captured before optimistic clear /
+      // await so a same-session sendMessage that starts mid-cancel is
+      // detectable, we never cancel a newer diagnostics task, and placeholder /
+      // message ops stay bound to the stopped turn only.
       const stopEpoch = getChatSessionTurnEpoch(owningSessionId);
       const diagnosticsTaskIdAtStop = getActiveChatDiagnosticsTaskId(owningSessionId);
+      const owningMessagesAtStop = owningSessionId
+        ? get().sessions.find((session) => session.id === owningSessionId)?.messages
+        : undefined;
+      let stoppedAssistantMessageId: string | null = null;
+      if (owningMessagesAtStop) {
+        for (let i = owningMessagesAtStop.length - 1; i >= 0; i -= 1) {
+          const message = owningMessagesAtStop[i];
+          if (message.role === 'assistant') {
+            stoppedAssistantMessageId = message.id;
+            break;
+          }
+        }
+      }
 
       // Soak knife 3 — optimistic UI: cancelled feel ≤1s. Clear Stop/busy
       // before awaiting native cancel_tool_execution (can be slow). Capture
@@ -1411,8 +1440,9 @@ export function createChatActionMethods({
         // If a new same-session turn started after optimistic busy clear,
         // skip session-mutating cancel completion (handle.cancel without
         // turnId, failUnresolved, scrub, stop_subprocess, pending wipe).
-        const cancelCompletionStale = getChatSessionTurnEpoch(owningSessionId) !== stopEpoch;
-        if (!cancelCompletionStale) {
+        // Re-validate epoch after EVERY await before further mutations.
+        const stillOwnsStoppedTurn = () => getChatSessionTurnEpoch(owningSessionId) === stopEpoch;
+        if (stillOwnsStoppedTurn()) {
           useUIStore.getState().clearAllPermissions();
           getSessionHandle(owningSessionId).cancel('Cancelled by user');
           failUnresolvedSessionTools(
@@ -1423,51 +1453,57 @@ export function createChatActionMethods({
             'cancelled',
           );
           await scrubDanglingToolCalls(owningSessionId, set, get);
-          // Drop an empty assistant placeholder so the cancel notice is not stranded after it.
-          set((state) => ({
-            sessions: state.sessions.map((session) => {
-              if (session.id !== owningSessionId || session.messages.length === 0) {
-                return session;
+          // Newer turn may have started during scrub — re-check before mutations.
+          if (stillOwnsStoppedTurn()) {
+            // Bind removal to the stopped turn's assistant id only (never last-message).
+            removeEmptyAssistantPlaceholderById(set, owningSessionId, stoppedAssistantMessageId);
+            if (unresolvedTools.length > 0) {
+              const toolNames = unresolvedTools.map((tool) => tool.label);
+              const toolCallIds = unresolvedTools.map((tool) => tool.toolCallId);
+              await get().addMessageToSession(
+                owningSessionId,
+                createMessage(
+                  'assistant',
+                  buildToolCancelNoticeContent(toolNames, 'user_cancel', toolCallIds),
+                ),
+              );
+            }
+
+            if (stillOwnsStoppedTurn()) {
+              try {
+                await safeInvoke('stop_subprocess', { sessionId: owningSessionId }, { silent: true });
+              } catch (error) {
+                console.error('Failed to stop subprocess:', error);
+                if (stillOwnsStoppedTurn()) {
+                  setError(`Failed to stop generation: ${formatError(error)}`);
+                }
               }
-              const last = session.messages[session.messages.length - 1];
-              if (!shouldRemoveEmptyAssistantPlaceholder(last)) {
-                return session;
+            }
+
+            if (stillOwnsStoppedTurn()) {
+              const flushed = flushBuffer({
+                content: finalContent,
+                reasoning: finalReasoning,
+                statusMessages: [],
+              });
+
+              if ((flushed.content || flushed.reasoning) && stoppedAssistantMessageId) {
+                await get().updateLastMessage(
+                  flushed.content,
+                  undefined,
+                  flushed.reasoning,
+                  undefined,
+                  owningSessionId,
+                  stoppedAssistantMessageId,
+                );
               }
-              return { ...session, messages: session.messages.slice(0, -1), updatedAt: Date.now() };
-            }),
-          }));
-          if (unresolvedTools.length > 0) {
-            const toolNames = unresolvedTools.map((tool) => tool.label);
-            const toolCallIds = unresolvedTools.map((tool) => tool.toolCallId);
-            await get().addMessageToSession(
-              owningSessionId,
-              createMessage(
-                'assistant',
-                buildToolCancelNoticeContent(toolNames, 'user_cancel', toolCallIds),
-              ),
-            );
+            }
+
+            // Re-assert idle busy flags only while this Stop still owns the turn.
+            if (stillOwnsStoppedTurn()) {
+              set({ pendingToolCalls: 0, pendingToolResults: [] });
+            }
           }
-
-          try {
-            await safeInvoke('stop_subprocess', { sessionId: owningSessionId }, { silent: true });
-          } catch (error) {
-            console.error('Failed to stop subprocess:', error);
-            setError(`Failed to stop generation: ${formatError(error)}`);
-          }
-
-          const flushed = flushBuffer({
-            content: finalContent,
-            reasoning: finalReasoning,
-            statusMessages: [],
-          });
-
-          if (flushed.content || flushed.reasoning) {
-            await get().updateLastMessage(flushed.content, undefined, flushed.reasoning, undefined, owningSessionId);
-          }
-
-          // Re-assert idle busy flags after durable cancel work (sync may have
-          // briefly restored pending counters while tools were failing).
-          set({ pendingToolCalls: 0, pendingToolResults: [] });
         }
       } else {
         try {

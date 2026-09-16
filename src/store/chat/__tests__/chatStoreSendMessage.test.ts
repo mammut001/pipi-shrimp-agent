@@ -149,6 +149,7 @@ jest.mock('../../../i18n', () => ({
 }));
 
 import { useChatStore } from '../index';
+import { createMessage } from '../../../types/chat';
 import {
   listCancellableSessionExecutionIds,
   listUnresolvedSessionTools,
@@ -160,6 +161,7 @@ import {
 import {
   bumpChatSessionTurnEpoch,
   consumeChatGenerationCancel,
+  getChatSessionTurnEpoch,
   requestChatGenerationCancel,
   resetChatSessionTurnEpochForTests,
 } from '../chatStreaming';
@@ -1929,6 +1931,313 @@ describe('chatStore sendMessage integration', () => {
     expect(session.messages.some((m) => (
       m.role === 'assistant' && typeof m.content === 'string' && m.content.includes('new-placeholder-survived')
     ))).toBe(true);
+  });
+
+  it('GPT FIX: stopGeneration must re-check epoch after scrub await before pending wipe / stop_subprocess / placeholder', async () => {
+    const oldAssistant = createMessage('assistant', '');
+    oldAssistant.tool_calls = [{
+      id: 'tool-old',
+      name: 'execute_command',
+      arguments: '{}',
+    }];
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+      messages: [
+        createMessage('user', 'old stop mid-await'),
+        oldAssistant,
+      ],
+    });
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-old', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-old',
+      'execute_command',
+      'exec-old-mid-await',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    useChatStore.setState({
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      pendingToolCalls: 1,
+      streamingContent: 'old-partial',
+    });
+
+    let releaseCancel!: () => void;
+    const cancelGate = new Promise<void>((resolve) => {
+      releaseCancel = resolve;
+    });
+    let releaseScrubSave!: () => void;
+    const scrubSaveGate = new Promise<void>((resolve) => {
+      releaseScrubSave = resolve;
+    });
+    const stopSubprocessCalls: unknown[] = [];
+    let scrubSaveHolds = 0;
+
+    mockInvoke.mockImplementation(async (command: unknown, args?: unknown) => {
+      if (command === 'cancel_tool_execution') {
+        await cancelGate;
+        return { cancelled: true, status: 'cancelled' };
+      }
+      if (command === 'db_save_message') {
+        // scrubDanglingToolCalls persists cleaned assistants after the first epoch check.
+        scrubSaveHolds += 1;
+        await scrubSaveGate;
+        return undefined;
+      }
+      if (command === 'stop_subprocess') {
+        stopSubprocessCalls.push(args);
+        return undefined;
+      }
+      return undefined;
+    });
+
+    const stopPromise = useChatStore.getState().stopGeneration();
+    await Promise.resolve();
+    expect(useChatStore.getState().isStreaming).toBe(false);
+
+    // Let cancel settle so cancel-completion enters the non-stale block and hits scrub await.
+    releaseCancel();
+    for (let i = 0; i < 80 && scrubSaveHolds === 0; i += 1) {
+      await Promise.resolve();
+    }
+    expect(scrubSaveHolds).toBeGreaterThan(0);
+
+    // New same-session turn starts while scrub DB save is still awaiting.
+    bumpChatSessionTurnEpoch('session-1');
+    clearSessionToolRuntime('session-1', useChatStore.setState, useChatStore.getState);
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-new', name: 'read_file' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-new',
+      'read_file',
+      'exec-new-mid-await',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    const newPlaceholder = createMessage('assistant', '');
+    useChatStore.setState((state) => ({
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      pendingToolCalls: 1,
+      sessions: state.sessions.map((session) => (
+        session.id === 'session-1'
+          ? {
+              ...session,
+              messages: [
+                ...session.messages,
+                createMessage('user', 'new after stop scrub'),
+                newPlaceholder,
+              ],
+            }
+          : session
+      )),
+    }));
+
+    // handle.cancel (pre-scrub, epoch still matched) may already have invoked
+    // stop_subprocess for the OLD turn — that is fine. After epoch bump, cancel
+    // completion must not call stop_subprocess again or wipe the new turn.
+    const stopCallsBeforeRelease = stopSubprocessCalls.length;
+    releaseScrubSave();
+    await stopPromise;
+
+    expect(stopSubprocessCalls.length).toBe(stopCallsBeforeRelease);
+    expect(useChatStore.getState().pendingToolCalls).toBe(1);
+    expect(useChatStore.getState().isStreaming).toBe(true);
+    expect(useChatStore.getState().streamingSessionId).toBe('session-1');
+    expect(listUnresolvedSessionTools('session-1')).toEqual([
+      expect.objectContaining({
+        toolCallId: 'tool-new',
+        executionId: 'exec-new-mid-await',
+      }),
+    ]);
+    expect(
+      useChatStore.getState().sessions[0]?.messages.some((m) => m.id === newPlaceholder.id),
+    ).toBe(true);
+  });
+
+  it('GPT FIX: stale policy recovery must not show upgrade prompt', async () => {
+    resetChatState({
+      executionMode: 'plan',
+      permissionMode: 'plan-only',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+
+    let releaseOldStream!: () => void;
+    const oldStreamGate = new Promise<void>((resolve) => {
+      releaseOldStream = resolve;
+    });
+    let runChatTurnCalls = 0;
+
+    mockRunChatTurn.mockImplementation(() => {
+      runChatTurnCalls += 1;
+      if (runChatTurnCalls === 1) {
+        return (async function* () {
+          yield { type: 'text_delta' as const, content: 'policy-old ' };
+          await oldStreamGate;
+          throw new Error('Every tool call in the last round was rejected by the safety policy.');
+        })();
+      }
+      return (async function* () {
+        yield { type: 'text_delta' as const, content: 'new-turn-ok' };
+        yield {
+          type: 'turn_complete' as const,
+          tokenUsage: { input_tokens: 2, output_tokens: 2, model: 'mock-model' },
+        };
+      })();
+    });
+
+    const sendOld = useChatStore.getState().sendMessage('读取 README 并总结');
+    for (let i = 0; i < 50 && !useChatStore.getState().isStreaming; i += 1) {
+      await Promise.resolve();
+    }
+    expect(useChatStore.getState().isStreaming).toBe(true);
+    const oldEpoch = getChatSessionTurnEpoch('session-1');
+
+    // Simulate a newer same-session turn owning the epoch before recovery runs.
+    bumpChatSessionTurnEpoch('session-1');
+    expect(getChatSessionTurnEpoch('session-1')).not.toBe(oldEpoch);
+
+    mockShowExecutionModeUpgradePrompt.mockClear();
+    releaseOldStream();
+    await sendOld;
+
+    expect(mockShowExecutionModeUpgradePrompt).not.toHaveBeenCalled();
+  });
+
+  it('GPT FIX: policy recovery must not auto-retry after epoch moves during upgrade prompt', async () => {
+    resetChatState({
+      executionMode: 'plan',
+      permissionMode: 'plan-only',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+
+    let releasePrompt!: (choice: 'agent' | 'cancel') => void;
+    const promptGate = new Promise<'agent' | 'cancel'>((resolve) => {
+      releasePrompt = resolve;
+    });
+    mockShowExecutionModeUpgradePrompt.mockImplementation(async () => promptGate);
+
+    let runChatTurnCalls = 0;
+    mockRunChatTurn.mockImplementation(() => {
+      runChatTurnCalls += 1;
+      if (runChatTurnCalls === 1) {
+        return (async function* () {
+          yield { type: 'text_delta' as const, content: 'before-policy ' };
+          throw new Error('Every tool call in the last round was rejected by the safety policy.');
+        })();
+      }
+      return (async function* () {
+        yield { type: 'text_delta' as const, content: 'should-not-auto-retry' };
+        yield {
+          type: 'turn_complete' as const,
+          tokenUsage: { input_tokens: 2, output_tokens: 2, model: 'mock-model' },
+        };
+      })();
+    });
+
+    const sendOld = useChatStore.getState().sendMessage('读取 README 并总结');
+    for (let i = 0; i < 80 && mockShowExecutionModeUpgradePrompt.mock.calls.length === 0; i += 1) {
+      await Promise.resolve();
+    }
+    expect(mockShowExecutionModeUpgradePrompt).toHaveBeenCalled();
+    const epochAtPrompt = getChatSessionTurnEpoch('session-1');
+
+    // Newer turn starts while the user is staring at the upgrade dialog.
+    bumpChatSessionTurnEpoch('session-1');
+    expect(getChatSessionTurnEpoch('session-1')).not.toBe(epochAtPrompt);
+    const runCallsBeforeRelease = runChatTurnCalls;
+
+    releasePrompt('agent');
+    await sendOld;
+
+    // Stale recovery must not kick off rollback+sendMessage retry.
+    expect(runChatTurnCalls).toBe(runCallsBeforeRelease);
+    expect(
+      useChatStore.getState().sessions[0]?.messages.some((m) => (
+        typeof m.content === 'string' && m.content.includes('should-not-auto-retry')
+      )),
+    ).toBe(false);
+  });
+
+  it('GPT FIX: policy recovery must not auto-retry after epoch moves during rollback await', async () => {
+    resetChatState({
+      executionMode: 'plan',
+      permissionMode: 'plan-only',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+
+    mockShowExecutionModeUpgradePrompt.mockResolvedValue('agent');
+
+    let releaseDelete!: () => void;
+    const deleteGate = new Promise<void>((resolve) => {
+      releaseDelete = resolve;
+    });
+    let deleteHolds = 0;
+    mockInvoke.mockImplementation(async (command: unknown) => {
+      if (command === 'db_delete_message') {
+        deleteHolds += 1;
+        await deleteGate;
+        return undefined;
+      }
+      return undefined;
+    });
+
+    let runChatTurnCalls = 0;
+    mockRunChatTurn.mockImplementation(() => {
+      runChatTurnCalls += 1;
+      if (runChatTurnCalls === 1) {
+        return (async function* () {
+          yield { type: 'text_delta' as const, content: 'before-rollback-race ' };
+          throw new Error('Every tool call in the last round was rejected by the safety policy.');
+        })();
+      }
+      return (async function* () {
+        yield { type: 'text_delta' as const, content: 'extra-retry-should-not-run' };
+        yield {
+          type: 'turn_complete' as const,
+          tokenUsage: { input_tokens: 2, output_tokens: 2, model: 'mock-model' },
+        };
+      })();
+    });
+
+    const sendOld = useChatStore.getState().sendMessage('读取 README 并总结');
+    for (let i = 0; i < 120 && deleteHolds === 0; i += 1) {
+      await Promise.resolve();
+    }
+    expect(deleteHolds).toBeGreaterThan(0);
+    expect(mockShowExecutionModeUpgradePrompt).toHaveBeenCalled();
+
+    const epochAtRollback = getChatSessionTurnEpoch('session-1');
+    bumpChatSessionTurnEpoch('session-1');
+    expect(getChatSessionTurnEpoch('session-1')).not.toBe(epochAtRollback);
+    const runCallsAtRollback = runChatTurnCalls;
+
+    releaseDelete();
+    await sendOld;
+
+    expect(runChatTurnCalls).toBe(runCallsAtRollback);
+    expect(
+      useChatStore.getState().sessions[0]?.messages.some((m) => (
+        typeof m.content === 'string' && m.content.includes('extra-retry-should-not-run')
+      )),
+    ).toBe(false);
   });
 
 });
