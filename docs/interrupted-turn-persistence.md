@@ -58,6 +58,11 @@ Before `handleToolBatchRequest` waits on tools, Chat now calls
 completes, `clearAssistantPendingToolCalls` removes them. Kill mid-wait never
 reaches clear, so reopen hydrate still sees orphans.
 
+After the persist **await**, Chat re-checks turn epoch / active turn /
+generation-cancel before executing tools. Stop or a newer same-session Send
+can advance the epoch while `db_save_message` is in flight; without that gate
+the stale turn would still call `handleToolBatchRequest` after the await.
+
 ## Key APIs
 
 | API | Role |

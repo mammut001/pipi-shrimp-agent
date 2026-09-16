@@ -1010,6 +1010,18 @@ export function createChatActionMethods({
                 reasoning: streamSnapshot.streamingReasoning || undefined,
               },
             );
+            // After mid-tool persist await: Stop / cancel / newer Send may have
+            // advanced epoch or marked cancel while db_save_message was in flight.
+            // Must not proceed to execute tools for a cancelled/stale turn.
+            if (getChatSessionTurnEpoch(activeSessionId) !== turnEpoch) {
+              throw new ChatGenerationCancelledError(activeSessionId);
+            }
+            if (activeTurnId && !getSessionHandle(activeSessionId).isTurnActive(activeTurnId)) {
+              throw new ChatGenerationCancelledError(activeSessionId);
+            }
+            if (consumeChatGenerationCancel(activeSessionId)) {
+              throw new ChatGenerationCancelledError(activeSessionId);
+            }
             try {
               await handleToolBatchRequest(
                 {

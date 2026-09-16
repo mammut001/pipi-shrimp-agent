@@ -2742,4 +2742,84 @@ describe('chatStore sendMessage integration', () => {
   });
 
 
+  it('GPT FIX FIRST #93: epoch/cancel during mid-tool persist must not execute tools after await', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+
+    let releasePersist!: () => void;
+    const persistGate = new Promise<void>((resolve) => {
+      releasePersist = resolve;
+    });
+    let persistHolds = 0;
+    mockInvoke.mockImplementation(async (command: unknown, args?: unknown) => {
+      if (command === 'db_save_message') {
+        const message = (args as { message?: { tool_calls?: string | null } } | undefined)?.message;
+        // Mid-tool persist writes pending tool_calls onto the assistant placeholder.
+        if (typeof message?.tool_calls === 'string' && message.tool_calls.includes('tool-persist-race')) {
+          persistHolds += 1;
+          await persistGate;
+        }
+        return undefined;
+      }
+      return undefined;
+    });
+
+    mockRunChatTurn.mockImplementation(() => (async function* () {
+      yield {
+        type: 'tool_batch_request' as const,
+        tools: [{
+          id: 'tool-persist-race',
+          name: 'test_barrier_tool',
+          arguments: '{"barrier_id":"soak-persist-race"}',
+        }],
+        _resolveAll: jest.fn(),
+      };
+      yield { type: 'text_delta' as const, content: 'stale-must-not-continue' };
+      yield {
+        type: 'turn_complete' as const,
+        tokenUsage: { input_tokens: 1, output_tokens: 1, model: 'mock-model' },
+      };
+    })());
+
+    mockExecuteBatch.mockImplementation(async () => {
+      throw new Error('stale turn must not reach handleToolBatchRequest / executeBatch');
+    });
+
+    const staleSend = useChatStore.getState().sendMessage('call barrier mid-persist race');
+    for (let i = 0; i < 200 && persistHolds === 0; i += 1) {
+      await Promise.resolve();
+    }
+    expect(persistHolds).toBeGreaterThan(0);
+    expect(mockExecuteBatch).not.toHaveBeenCalled();
+
+    // Stop / newer Send advances epoch while durable mid-tool persist is still awaiting.
+    bumpChatSessionTurnEpoch('session-1');
+    requestChatGenerationCancel('session-1');
+    useChatStore.setState({
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      streamingContent: 'newer-partial',
+      pendingToolCalls: 1,
+      error: null,
+    });
+
+    const executeCallsBeforeRelease = mockExecuteBatch.mock.calls.length;
+    releasePersist();
+    await staleSend;
+
+    // Stale turn must not execute tools after the persist await.
+    expect(mockExecuteBatch.mock.calls.length).toBe(executeCallsBeforeRelease);
+    expect(mockExecuteBatch).not.toHaveBeenCalled();
+    // Newer turn UI must not be wiped by the stale cancelled path.
+    expect(useChatStore.getState().streamingContent).toBe('newer-partial');
+    expect(useChatStore.getState().pendingToolCalls).toBe(1);
+    expect(useChatStore.getState().isStreaming).toBe(true);
+  });
+
+
+
 });
