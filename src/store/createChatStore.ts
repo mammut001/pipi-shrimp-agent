@@ -30,13 +30,12 @@ import { safeSetItem, safeRemoveItem, safeGetItem, safeMigrateKey } from '@/util
 import {
   clearNonCurrentSessionToolRuntime,
   clearSessionToolRuntime,
-  failUnresolvedSessionTools,
   markSessionToolRunning,
   resetAllSessionToolRuntime,
   resolveSessionTool,
   syncSessionToolRuntimeToCurrentSession,
 } from './chat/toolRuntimeState';
-import { scrubDanglingToolCalls, terminalizeInterruptedToolTurnsForSessions } from './chat/scrubDanglingToolCalls';
+import { terminalizeInterruptedToolTurnsForSessions } from './chat/scrubDanglingToolCalls';
 import {
   getSessionPipiOutputDir as resolveSessionPipiOutputDirHelper,
   getSessionProjectDir as resolveSessionProjectDirHelper,
@@ -700,26 +699,11 @@ export const useChatStore = create<ChatState>()(
       if (get().streamingTimeoutId) {
         clearTimeout(get().streamingTimeoutId!);
       }
-      if (
-        previousSessionId
-        && (get().pendingToolCalls > 0 || get().pendingToolResults.length > 0 || uiStore.permissionQueue.length > 0)
-      ) {
-        failUnresolvedSessionTools(
-          previousSessionId,
-          set,
-          get,
-          (_toolCallId, label) => `Error: ${label} cancelled due to session change`,
-        );
-      }
+      // Soak knife 3 / live soak 2026-09-16 — new chat only rebinds the
+      // selected session's UI chrome. Do NOT cancel/stop/scrub/fail the previous
+      // session's in-flight tools or generation; background turns keep running.
+      // Stop remains explicit via stopGeneration (A ≠ B).
       resetTransientSessionStateForNewChat(previousSessionId, {
-        isStreaming: get().isStreaming,
-        pendingToolCalls: get().pendingToolCalls,
-        pendingToolResultsLength: get().pendingToolResults.length,
-        permissionQueueLength: uiStore.permissionQueue.length,
-      }, {
-        stopSubprocess: (sessionId) => {
-          safeInvokeOrNull('stop_subprocess', { sessionId });
-        },
         clearAllPermissions: () => uiStore.clearAllPermissions(),
         clearQuestionnaire: (sessionId) => uiStore.clearQuestionnaire(sessionId),
         clearNotificationHistory: (sessionId) => uiStore.clearNotificationHistory(sessionId),
@@ -728,9 +712,6 @@ export const useChatStore = create<ChatState>()(
         setActiveSkill: (name) => uiStore.setActiveSkill(name),
         setAgentPanelTab: (tab) => uiStore.setAgentPanelTab(tab),
         closeArtifactsPanel: () => artifactsStore.closePanel(),
-        scrubDanglingToolCalls: (sessionId) => {
-          void scrubDanglingToolCalls(sessionId, set, get);
-        },
       });
 
       safeSetItem(CURRENT_SESSION_ID_STORAGE_KEY, newSession.id);
