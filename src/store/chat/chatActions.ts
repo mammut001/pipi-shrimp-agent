@@ -892,6 +892,13 @@ export function createChatActionMethods({
           }
         }
 
+        // Final epoch re-check: Stop → newer Send may advance the epoch during
+        // any post-scrub await (placeholder persist, pipi-output resolve, core.md,
+        // memory, CDP connect, …). createChatTurnAbortController aborts+replaces
+        // the session controller — must not install/take over if this turn is stale.
+        if (getChatSessionTurnEpoch(activeSessionId) !== turnEpoch) {
+          throw new ChatGenerationCancelledError(activeSessionId);
+        }
         const turnAbort = createChatTurnAbortController(activeSessionId);
         const turnHostContext = {
           maxToolRounds: useSettingsStore.getState().agentSettings?.maxToolRounds,

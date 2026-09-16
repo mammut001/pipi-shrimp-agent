@@ -1342,9 +1342,13 @@ describe('chatStore sendMessage integration', () => {
     });
 
     const sendOld = useChatStore.getState().sendMessage('old message');
-    for (let i = 0; i < 50 && !useChatStore.getState().isStreaming; i += 1) {
+    // isStreaming flips before createChatTurnAbortController / runChatTurn — wait
+    // until the old turn owns the abort controller + engine, or Stop→Send during
+    // the post-scrub window correctly aborts the stale path (call-order mocks break).
+    for (let i = 0; i < 80 && (runChatTurnCalls < 1 || !useChatStore.getState().isStreaming); i += 1) {
       await Promise.resolve();
     }
+    expect(runChatTurnCalls).toBeGreaterThanOrEqual(1);
     expect(useChatStore.getState().isStreaming).toBe(true);
 
     seedSessionToolRuntime(
@@ -1527,9 +1531,10 @@ describe('chatStore sendMessage integration', () => {
     });
 
     const sendOld = useChatStore.getState().sendMessage('old for buffer race');
-    for (let i = 0; i < 50 && !useChatStore.getState().isStreaming; i += 1) {
+    for (let i = 0; i < 80 && (runChatTurnCalls < 1 || !useChatStore.getState().isStreaming); i += 1) {
       await Promise.resolve();
     }
+    expect(runChatTurnCalls).toBeGreaterThanOrEqual(1);
     expect(useChatStore.getState().isStreaming).toBe(true);
 
     seedSessionToolRuntime(
@@ -1638,9 +1643,10 @@ describe('chatStore sendMessage integration', () => {
     });
 
     const sendOld = useChatStore.getState().sendMessage('old for cancel-marker race');
-    for (let i = 0; i < 50 && !useChatStore.getState().isStreaming; i += 1) {
+    for (let i = 0; i < 80 && (runChatTurnCalls < 1 || !useChatStore.getState().isStreaming); i += 1) {
       await Promise.resolve();
     }
+    expect(runChatTurnCalls).toBeGreaterThanOrEqual(1);
 
     seedSessionToolRuntime(
       'session-1',
@@ -1750,9 +1756,10 @@ describe('chatStore sendMessage integration', () => {
     });
 
     const sendOld = useChatStore.getState().sendMessage('old for real-error race');
-    for (let i = 0; i < 50 && !useChatStore.getState().isStreaming; i += 1) {
+    for (let i = 0; i < 80 && (runChatTurnCalls < 1 || !useChatStore.getState().isStreaming); i += 1) {
       await Promise.resolve();
     }
+    expect(runChatTurnCalls).toBeGreaterThanOrEqual(1);
     expect(useChatStore.getState().isStreaming).toBe(true);
 
     seedSessionToolRuntime(
@@ -1871,13 +1878,14 @@ describe('chatStore sendMessage integration', () => {
     });
 
     const sendOld = useChatStore.getState().sendMessage('old for placeholder race');
-    for (let i = 0; i < 80; i += 1) {
+    for (let i = 0; i < 100; i += 1) {
       const msgs = useChatStore.getState().sessions[0]?.messages ?? [];
-      if (msgs.some((m) => m.role === 'assistant' && !m.content)) {
+      if (runChatTurnCalls >= 1 && msgs.some((m) => m.role === 'assistant' && !m.content)) {
         break;
       }
       await Promise.resolve();
     }
+    expect(runChatTurnCalls).toBeGreaterThanOrEqual(1);
     expect(useChatStore.getState().sessions[0]?.messages.some((m) => m.role === 'assistant')).toBe(true);
 
     seedSessionToolRuntime(
@@ -2509,6 +2517,100 @@ describe('chatStore sendMessage integration', () => {
       && m.id !== newerPlaceholder.id
       && (m.content === '' || m.content.trim() === '')
     ))).toBe(false);
+  });
+
+
+
+  it('GPT FIX FIRST #8: post-scrub Stop→Send must not let stale path take over abort controller / runChatTurn', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+
+    let releasePipiDir!: () => void;
+    const pipiDirGate = new Promise<void>((resolve) => {
+      releasePipiDir = resolve;
+    });
+    let pipiDirHolds = 0;
+    mockInvoke.mockImplementation(async (command: unknown) => {
+      if (command === 'get_app_default_dir') {
+        pipiDirHolds += 1;
+        // Hold only the stale send's first resolve after scrub; newer Send proceeds.
+        if (pipiDirHolds === 1) {
+          await pipiDirGate;
+        }
+        return '/tmp/pipi-output/session-1';
+      }
+      if (command === 'cancel_tool_execution') {
+        return { cancelled: true, status: 'cancelled' };
+      }
+      return undefined;
+    });
+
+    let releaseNewStream!: () => void;
+    const newStreamGate = new Promise<void>((resolve) => {
+      releaseNewStream = resolve;
+    });
+    let runChatTurnCalls = 0;
+    mockRunChatTurn.mockImplementation(() => {
+      runChatTurnCalls += 1;
+      return (async function* () {
+        yield { type: 'text_delta' as const, content: 'newer-turn-alive ' };
+        await newStreamGate;
+        yield {
+          type: 'turn_complete' as const,
+          tokenUsage: { input_tokens: 2, output_tokens: 2, model: 'mock-model' },
+        };
+      })();
+    });
+
+    const staleSend = useChatStore.getState().sendMessage('stale send post-scrub window');
+    for (let i = 0; i < 120 && pipiDirHolds === 0; i += 1) {
+      await Promise.resolve();
+    }
+    expect(pipiDirHolds).toBe(1);
+    expect(runChatTurnCalls).toBe(0);
+    expect(useChatStore.getState().isStreaming).toBe(true);
+
+    // Stop → new Send advances epoch while stale is still in the post-scrub await gap
+    // (after scrub epoch check, before createChatTurnAbortController / runChatTurn).
+    const stopPromise = useChatStore.getState().stopGeneration();
+    await Promise.resolve();
+    expect(useChatStore.getState().isStreaming).toBe(false);
+
+    jest.advanceTimersByTime(25);
+    const newSend = useChatStore.getState().sendMessage('fresh send after stop mid post-scrub');
+    for (let i = 0; i < 120 && runChatTurnCalls === 0; i += 1) {
+      await Promise.resolve();
+    }
+    expect(runChatTurnCalls).toBe(1);
+
+    const newerHost = mockRunChatTurn.mock.calls[0]?.[6] as { signal?: AbortSignal } | undefined;
+    expect(newerHost?.signal).toBeDefined();
+    expect(newerHost!.signal!.aborted).toBe(false);
+
+    const epochAfterNewSend = getChatSessionTurnEpoch('session-1');
+    expect(epochAfterNewSend).toBeGreaterThan(0);
+
+    releasePipiDir();
+    await staleSend;
+
+    // Stale must not create/take over the session abort controller or call runChatTurn.
+    expect(runChatTurnCalls).toBe(1);
+    expect(newerHost!.signal!.aborted).toBe(false);
+    expect(useChatStore.getState().isStreaming).toBe(true);
+    expect(useChatStore.getState().streamingSessionId).toBe('session-1');
+    expect(getChatSessionTurnEpoch('session-1')).toBe(epochAfterNewSend);
+    expect(
+      useChatStore.getState().sessions[0]?.messages.some((m) => (
+        typeof m.content === 'string' && m.content.includes('fresh send after stop mid post-scrub')
+      )),
+    ).toBe(true);
+
+    releaseNewStream();
+    await Promise.all([stopPromise, newSend]);
   });
 
 
