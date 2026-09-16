@@ -1087,6 +1087,70 @@ describe('chatStore sendMessage integration', () => {
     ]);
   });
 
+  it('background session A completion must not clear B streamingTimeoutId', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+    const currentSessions = useChatStore.getState().sessions;
+    useChatStore.setState({
+      sessions: [
+        ...currentSessions,
+        {
+          id: 'session-B',
+          title: 'Session B',
+          messages: [createMessage('user', 'idle on B')],
+          createdAt: 2,
+          updatedAt: 2,
+          permissionMode: 'auto-edits',
+          executionMode: 'agent',
+        },
+      ],
+    });
+
+    // Sentinel timeout owned by selected session B after switch.
+    const bTimeoutId = setTimeout(() => {
+      throw new Error('B streamingTimeoutId must not fire during this test');
+    }, 60_000);
+    const clearTimeoutSpy = jest.spyOn(global, 'clearTimeout');
+
+    async function* streamAThenCompleteInBackground() {
+      yield { type: 'text_delta' as const, content: 'A-chunk-1' };
+      useChatStore.getState().selectSession('session-B');
+      useChatStore.setState({
+        isStreaming: true,
+        streamingContent: 'B-buffer',
+        streamingReasoning: 'B-reason',
+        streamingSessionId: 'session-B',
+        streamingTimeoutId: bTimeoutId,
+      });
+      expect(useChatStore.getState().streamingTimeoutId).toBe(bTimeoutId);
+
+      yield { type: 'text_delta' as const, content: 'A-chunk-2' };
+      yield {
+        type: 'turn_complete' as const,
+        tokenUsage: { input_tokens: 1, output_tokens: 1, model: 'mock-model' },
+      };
+    }
+    mockRunChatTurn.mockImplementation(() => streamAThenCompleteInBackground());
+
+    try {
+      await useChatStore.getState().sendMessage('send in session A');
+
+      expect(useChatStore.getState().currentSessionId).toBe('session-B');
+      // B's timeout must remain armed and uncleared by A's background completion.
+      expect(useChatStore.getState().streamingTimeoutId).toBe(bTimeoutId);
+      expect(useChatStore.getState().isStreaming).toBe(true);
+      expect(useChatStore.getState().streamingSessionId).toBe('session-B');
+      expect(clearTimeoutSpy).not.toHaveBeenCalledWith(bTimeoutId);
+    } finally {
+      clearTimeoutSpy.mockRestore();
+      clearTimeout(bTimeoutId);
+    }
+  });
+
   it('soak knife 3: Stop clears busy UI before slow native cancel resolves (≤1s feel)', async () => {
     resetChatState({
       executionMode: 'agent',

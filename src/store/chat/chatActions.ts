@@ -387,7 +387,11 @@ export function getCurrentStreamingBufferForTests(): string {
 /**
  * Clear selected-session stream chrome only when `owningSessionId` is currently
  * selected. Background completion/cancel must not flip another session's
- * isStreaming / stream buffers / busy chrome.
+ * isStreaming / stream buffers / busy chrome / streamingTimeoutId.
+ *
+ * `streamingTimeoutId` is selected-session chrome: only clear/reset it when this
+ * owning session owns the selected stream, or still holds `streamingSessionId`
+ * (stale ownership pointer for the completing background turn).
  */
 function clearStreamChromeIfSelected(
   set: ChatActionFactoryDeps['set'],
@@ -396,17 +400,21 @@ function clearStreamChromeIfSelected(
   extra: Record<string, unknown> = {},
 ): void {
   const { currentSessionId, streamingSessionId, streamingTimeoutId } = get();
-  if (streamingTimeoutId) {
-    clearTimeout(streamingTimeoutId);
-  }
-  if (!ownsSelectedStreamChrome(owningSessionId, currentSessionId)) {
+  const ownsSelected = ownsSelectedStreamChrome(owningSessionId, currentSessionId);
+
+  if (!ownsSelected) {
     // Drop ownership pointer if it still names this background session.
+    // Only then may we clearTimeout — never touch B's streamingTimeoutId while A completes.
     if (streamingSessionId === owningSessionId) {
+      if (streamingTimeoutId) {
+        clearTimeout(streamingTimeoutId);
+      }
       set({ streamingSessionId: null, streamingTimeoutId: null });
-    } else if (streamingTimeoutId) {
-      set({ streamingTimeoutId: null });
     }
     return;
+  }
+  if (streamingTimeoutId) {
+    clearTimeout(streamingTimeoutId);
   }
   set({
     isStreaming: false,
@@ -1911,11 +1919,13 @@ export function createChatActionMethods({
       const clearSelectedChrome = ownsSelectedStreamChrome(streamingSessionId, currentSessionId)
         || streamingSessionId == null;
       if (!streaming) {
-        if (streamingTimeoutId) {
-          clearTimeout(streamingTimeoutId);
-        }
         const finalContent = currentStreamingBuffer || streamingContent;
         currentStreamingBuffer = '';
+        // Owner-gate timeout cleanup: background setStreaming(false) must not
+        // clearTimeout / null another session's streamingTimeoutId.
+        if (clearSelectedChrome && streamingTimeoutId) {
+          clearTimeout(streamingTimeoutId);
+        }
         if (flushTargetId && finalContent) {
           const flushed = flushBuffer({
             content: finalContent,
@@ -1925,7 +1935,7 @@ export function createChatActionMethods({
           set((state) => ({
             ...(clearSelectedChrome
               ? { isStreaming: false, streamingTimeoutId: null, streamingContent: '' }
-              : { streamingTimeoutId: null }),
+              : {}),
             sessions: state.sessions.map((session) => {
               if (session.id !== flushTargetId || session.messages.length === 0) {
                 return session;
@@ -1945,8 +1955,6 @@ export function createChatActionMethods({
           }));
         } else if (clearSelectedChrome) {
           set({ isStreaming: false, streamingTimeoutId: null, streamingContent: '' });
-        } else {
-          set({ streamingTimeoutId: null });
         }
         return;
       }
