@@ -157,7 +157,9 @@ import {
   setSessionToolExecutionId,
   seedSessionToolRuntime,
   clearSessionToolRuntime,
+  syncSessionToolRuntimeToCurrentSession,
 } from '../toolRuntimeState';
+import { shouldShowStopControl } from '../chatSelectors';
 import {
   bumpChatSessionTurnEpoch,
   consumeChatGenerationCancel,
@@ -1053,6 +1055,120 @@ describe('chatStore sendMessage integration', () => {
         expect.objectContaining({ id: 'tool-slow', status: 'cancelled' }),
       ]),
     );
+  });
+
+  it('soak knife 3: after Stop completes, pendingToolResults / busy do not rebound (Stop stays hidden)', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-slow', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-slow',
+      'execute_command',
+      'exec-slow-rebound',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    useChatStore.setState({
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      pendingToolCalls: 1,
+      pendingToolResults: [{ toolCallId: 'tool-slow', result: '' }],
+    });
+
+    let releaseCancel!: () => void;
+    const cancelGate = new Promise<void>((resolve) => {
+      releaseCancel = resolve;
+    });
+    let releaseNoticeSave!: () => void;
+    const noticeSaveGate = new Promise<void>((resolve) => {
+      releaseNoticeSave = resolve;
+    });
+    let noticeSaveHolds = 0;
+
+    mockInvoke.mockImplementation(async (command: unknown, args?: { message?: { content?: string } }) => {
+      if (command === 'cancel_tool_execution') {
+        await cancelGate;
+        return { cancelled: true, status: 'cancelled' };
+      }
+      if (command === 'db_save_message') {
+        const content = args?.message?.content;
+        if (typeof content === 'string' && content.includes('Tool run cancelled by user')) {
+          noticeSaveHolds += 1;
+          // Post-terminalize: failUnresolved + idle re-assert already ran.
+          const state = useChatStore.getState();
+          expect(state.pendingToolCalls).toBe(0);
+          expect(state.pendingToolResults).toEqual([]);
+          expect(shouldShowStopControl({
+            isStreaming: state.isStreaming,
+            pendingToolCalls: state.pendingToolCalls,
+            pendingToolResultsLength: state.pendingToolResults.length,
+          })).toBe(false);
+          await noticeSaveGate;
+        }
+        return undefined;
+      }
+      return undefined;
+    });
+
+    const stopPromise = useChatStore.getState().stopGeneration();
+    await Promise.resolve();
+    const mid = useChatStore.getState();
+    expect(mid.isStreaming).toBe(false);
+    expect(mid.pendingToolCalls).toBe(0);
+    expect(mid.pendingToolResults).toEqual([]);
+    expect(shouldShowStopControl({
+      isStreaming: mid.isStreaming,
+      pendingToolCalls: mid.pendingToolCalls,
+      pendingToolResultsLength: mid.pendingToolResults.length,
+    })).toBe(false);
+
+    releaseCancel();
+    for (let i = 0; i < 120 && noticeSaveHolds === 0; i += 1) {
+      await Promise.resolve();
+    }
+    expect(noticeSaveHolds).toBeGreaterThan(0);
+
+    const duringNotice = useChatStore.getState();
+    expect(duringNotice.pendingToolCalls).toBe(0);
+    expect(duringNotice.pendingToolResults).toEqual([]);
+    expect(shouldShowStopControl({
+      isStreaming: duringNotice.isStreaming,
+      pendingToolCalls: duringNotice.pendingToolCalls,
+      pendingToolResultsLength: duringNotice.pendingToolResults.length,
+    })).toBe(false);
+
+    releaseNoticeSave();
+    await stopPromise;
+
+    const done = useChatStore.getState();
+    expect(done.pendingToolCalls).toBe(0);
+    expect(done.pendingToolResults).toEqual([]);
+    expect(done.isStreaming).toBe(false);
+    expect(shouldShowStopControl({
+      isStreaming: done.isStreaming,
+      pendingToolCalls: done.pendingToolCalls,
+      pendingToolResultsLength: done.pendingToolResults.length,
+    })).toBe(false);
+
+    // Sync after terminalize must not resurrect busy flags from leftover results.
+    syncSessionToolRuntimeToCurrentSession(useChatStore.setState, useChatStore.getState);
+    const afterSync = useChatStore.getState();
+    expect(afterSync.pendingToolResults).toEqual([]);
+    expect(shouldShowStopControl({
+      isStreaming: afterSync.isStreaming,
+      pendingToolCalls: afterSync.pendingToolCalls,
+      pendingToolResultsLength: afterSync.pendingToolResults.length,
+    })).toBe(false);
   });
 
   it('soak knife 3: Stop on A does not mutate B history or tool runtime', async () => {

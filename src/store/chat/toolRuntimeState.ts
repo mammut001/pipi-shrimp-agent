@@ -298,6 +298,10 @@ export function failUnresolvedSessionTools(
     }
   }
   runtime.unresolvedIds.clear();
+  // Mass-terminalize abandons the in-flight turn. Drop accumulated results so
+  // syncCurrentSessionToolRuntime cannot rewrite them into pendingToolResults
+  // and bounce Stop/busy back after an optimistic stopGeneration clear.
+  runtime.results.clear();
   syncCurrentSessionToolRuntime(set, get);
 }
 

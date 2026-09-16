@@ -229,7 +229,8 @@ export const AgentPanel: React.FC = () => {
       }
 
       if (result.status === 'not_found' || result.status === 'already_finished') {
-        updateTaskStep(stepId, 'cancelled');
+        // Neutral finished — not a user Cancelled outcome (vocab: done).
+        updateTaskStep(stepId, 'done');
         addNotification('info', result.message, currentSessionId ?? undefined);
         return;
       }

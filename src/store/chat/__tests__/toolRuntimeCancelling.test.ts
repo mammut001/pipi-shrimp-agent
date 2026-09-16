@@ -22,6 +22,7 @@ import {
   seedSessionToolRuntime,
   setSessionToolExecutionId,
 } from '../toolRuntimeState';
+import { shouldShowStopControl } from '../chatSelectors';
 
 function makeState(overrides: Partial<ChatState> = {}): ChatState {
   return {
@@ -102,6 +103,41 @@ describe('markSessionToolsCancelling', () => {
     expect(listUnresolvedSessionTools('session-a')).toEqual([]);
     expect(mockSetTaskProgress).toHaveBeenCalledWith([
       expect.objectContaining({ id: 'tool-a', status: 'cancelled' }),
+    ]);
+  });
+
+  it('failUnresolved after optimistic clear does not rebound pendingToolResults / Stop busy', () => {
+    seedSessionToolRuntime(
+      'session-a',
+      [{ id: 'tool-1', name: 'execute_command' }],
+      set,
+      get,
+    );
+    markSessionToolRunning('session-a', 'tool-1', 'execute_command', set, get);
+    // Simulate Stop optimistic busy clear (and a prior completed-tool result).
+    state = {
+      ...state,
+      pendingToolCalls: 0,
+      pendingToolResults: [],
+    };
+
+    failUnresolvedSessionTools(
+      'session-a',
+      set,
+      get,
+      (_id, label) => `Error: ${label} cancelled by user`,
+      'cancelled',
+    );
+
+    expect(state.pendingToolCalls).toBe(0);
+    expect(state.pendingToolResults).toEqual([]);
+    expect(shouldShowStopControl({
+      isStreaming: false,
+      pendingToolCalls: state.pendingToolCalls,
+      pendingToolResultsLength: state.pendingToolResults.length,
+    })).toBe(false);
+    expect(mockSetTaskProgress).toHaveBeenCalledWith([
+      expect.objectContaining({ id: 'tool-1', status: 'cancelled' }),
     ]);
   });
 });

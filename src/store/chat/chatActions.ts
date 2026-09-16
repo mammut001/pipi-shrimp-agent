@@ -1479,6 +1479,10 @@ export function createChatActionMethods({
             (_toolCallId, label) => `Error: ${label} cancelled by user`,
             'cancelled',
           );
+          // Re-assert idle immediately after terminalize — before notice /
+          // stop_subprocess awaits — so pendingToolResults cannot rebound
+          // shouldShowStopControl true mid-completion.
+          set({ pendingToolCalls: 0, pendingToolResults: [] });
           // Bind removal to the stopped turn's assistant id only (never last-message).
           removeEmptyAssistantPlaceholderById(set, owningSessionId, stoppedAssistantMessageId);
           if (unresolvedTools.length > 0) {
