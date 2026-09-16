@@ -38,3 +38,10 @@ export {
   isGenericSafetyPolicyError,
   shouldOfferExecutionModeUpgrade,
 } from './toolPolicyRecovery';
+
+export {
+  describeExecutionModeAffordance,
+  getExecutionModeAffordance,
+  type ExecutionModeAffordance,
+} from './modeAffordance';
+

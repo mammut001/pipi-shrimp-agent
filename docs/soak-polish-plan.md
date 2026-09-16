@@ -76,7 +76,7 @@ Docs: `docs/stop-session-switch-polish.md`
 ### Intentionally not this knife
 
 - Intermediate `cancelling` step status / terminal vocabulary unify — **follow-up** [`cancelling-status-vocab.md`](./cancelling-status-vocab.md)
-- Truncated replies / Project Folder / Danger affordance (scout leftovers)
+- Truncated replies / Project Folder / Danger affordance — **addressed** (see scout leftovers below)
 - Full Playwright E2E
 
 ## Later polish leftovers (not this knife)
@@ -85,7 +85,7 @@ From scout (`docs/soak-polish-scout.md`):
 
 - Truncated replies / provider stream finalize — **addressed** (`docs/provider-stream-finalize.md`)
 - Project Folder binding UX (GTK dialog / unbound denial) — **addressed** (`docs/project-folder-binding-ux.md`)
-- Danger mode defaults affordance
+- Danger mode defaults affordance — **addressed** (`docs/danger-mode-defaults-affordance.md`)
 - Stop button visibility during short streams — **addressed in knife 3** (`shouldShowStopControl`)
 
 ## Entry points (paths only)

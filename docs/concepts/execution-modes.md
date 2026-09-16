@@ -5,6 +5,16 @@ The registry in `src/services/executionMode/registry.ts` is the source of truth 
 
 > Hard rule: UI copy, prompt harnesses, tool visibility, and approval behavior must describe the same capability. A prompt-only instruction is never a substitute for runtime enforcement.
 
+## Defaults affordance (composer)
+
+Fresh sessions **default to Ask**. The composer shows a compact status hint under the mode control (`getExecutionModeAffordance` / `ExecutionModeDropdown`):
+
+- **Ask** — default · no tools — switch to Danger for shell/tools
+- **Plan** — read-only tools · Danger needed for shell/writes
+- **Danger** — tools/shell active · risky ops still confirm (not legacy Bypass)
+
+Selecting Danger still shows the warning dialog; approval gates for risky categories remain. See [`docs/danger-mode-defaults-affordance.md`](../danger-mode-defaults-affordance.md).
+
 ## Mode contract
 
 | Mode | Purpose | Tool surface | Permission layer | Warning |

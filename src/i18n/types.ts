@@ -333,6 +333,10 @@ export type TranslationKeys = {
   'executionMode.advancedSection': string;
   'executionMode.ask.label': string;
   'executionMode.ask.description': string;
+  'executionMode.ask.defaultBadge': string;
+  'executionMode.affordance.ask': string;
+  'executionMode.affordance.plan': string;
+  'executionMode.affordance.danger': string;
   'executionMode.upgrade.title': string;
   'executionMode.upgrade.body.browser': string;
   'executionMode.upgrade.body.workspace': string;
