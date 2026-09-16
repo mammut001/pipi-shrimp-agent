@@ -10,6 +10,8 @@ Principle (from `docs/gpt-next-gaps-guidance.md`): prove + persist + observe; do
 
 ## 1. Manual D / test_barrier / manualD harness
 
+**Canonical runbook:** [`manual-d-product-harness.md`](./manual-d-product-harness.md)
+
 ### TypeScript (Jest product harness)
 
 | File | Role |
