@@ -74,6 +74,22 @@ __PIPI_RUNTIME_DIAG__.dump()
 
 ---
 
+## 1b. Interrupted-turn recovery policy
+
+**Canonical runbook:** [`interrupted-turn-recovery-policy.md`](./interrupted-turn-recovery-policy.md)
+
+| File | Role |
+|------|------|
+| `src/store/chat/interruptedTurnRecoveryPolicy.ts` | R1–R4 policy constants + pure helpers |
+| `src/store/chat/__tests__/interruptedTurnRecoveryPolicy.test.ts` | Deterministic R1–R4 tests |
+| `src/store/chat/scrubDanglingToolCalls.ts` | Hydrate terminalize enforcement (#80) |
+
+```bash
+pnpm exec jest src/store/chat/__tests__/interruptedTurnRecoveryPolicy.test.ts --runInBand --no-coverage
+```
+
+---
+
 ## 2. Soak / stress scripts under `tests/` or `docs/`
 
 **None found.**

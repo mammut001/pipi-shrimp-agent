@@ -1,4 +1,7 @@
-# Interrupted-turn recovery policy (GPT P1 #5)
+# Interrupted-turn recovery policy runbook (GPT P1 #5)
+
+**Status:** **DONE** — helpers + deterministic tests landed with Manual D in #83
+(`c063d03`); this doc is the canonical close-out runbook.
 
 **Principle:** After a restart (crash, kill, reload), unfinished work is
 **terminalized**, never resumed. Re-execution requires an **explicit user**
@@ -6,6 +9,16 @@ retry (Send / Retry). No durable half-run tool resume.
 
 Companion: [`interrupted-turn-persistence.md`](./interrupted-turn-persistence.md)
 (hydrate scrub + cancel/interrupted notice from #80).
+
+## Key paths
+
+| Layer | Path | Role |
+|-------|------|------|
+| Policy helpers | `src/store/chat/interruptedTurnRecoveryPolicy.ts` | Named R1–R4 constants + pure decision/invariant helpers |
+| Policy tests | `src/store/chat/__tests__/interruptedTurnRecoveryPolicy.test.ts` | Deterministic R1–R4 coverage (no wall-clock sleeps) |
+| Hydrate terminalize | `src/store/chat/scrubDanglingToolCalls.ts` | `terminalizeInterruptedMessages` / `…ToolTurns*` (enforcement on `createChatStore.init`) |
+| Persist mid-tool | `persistAssistantPendingToolCalls` / `clearAssistantPendingToolCalls` | So kill mid-wait leaves orphans hydrate can scrub |
+| Store export | `src/store/chat/index.ts` | Re-exports policy helpers |
 
 ## Rules
 
@@ -36,20 +49,52 @@ Companion: [`interrupted-turn-persistence.md`](./interrupted-turn-persistence.md
 | `requiresExplicitUserRetryToReExecute()` | Always `true` (R4) |
 | `decideHydrateRecoveryAction(messages)` | `terminalize_interrupted` iff orphans exist (R3) |
 | `assertInterruptedRecoveryInvariants(messages)` | Post-terminalize checks (no orphans; notice present) |
+| `hasInterruptedOrCancelNotice(messages, kind?)` | Detect durable interrupt / user_cancel notice text |
 | `terminalizeInterruptedMessages` / `…ToolTurns*` | Existing #80 hydrate path |
 
-## Tests
+## How to run
 
-`src/store/chat/__tests__/interruptedTurnRecoveryPolicy.test.ts` maps directly
-to R1–R4 (policy helpers + hydrate terminalize / cancel notice reuse).
+```bash
+# From repo root (/workspace/pipi-shrimp-agent)
+
+# Policy R1–R4 suite (primary)
+pnpm exec jest src/store/chat/__tests__/interruptedTurnRecoveryPolicy.test.ts --runInBand --no-coverage
+
+# Pattern filter (prefer plural --testPathPatterns)
+./node_modules/.bin/jest --testPathPatterns='interruptedTurnRecoveryPolicy' --runInBand --no-coverage
+
+# Companion hydrate scrub / mid-tool persist coverage (#80)
+pnpm exec jest src/store/chat/__tests__/scrubDanglingToolCalls.test.ts --runInBand --no-coverage
+```
+
+Short soak (stop-on-fail):
+
+```bash
+N=10
+for i in $(seq 1 "$N"); do
+  echo "=== recovery policy soak $i/$N ==="
+  pnpm exec jest \
+    src/store/chat/__tests__/interruptedTurnRecoveryPolicy.test.ts \
+    --runInBand --no-coverage \
+    || { echo "FAILED at iteration $i"; exit 1; }
+done
+echo "recovery policy soak: $N/$N passed"
+```
 
 Manual D dual-session cancel/late-discard (independent of restart) lives in
-`src/core/runtime/__tests__/manualDProductHarness.test.ts` and
-`SessionRuntime.concurrent.test.ts`.
+[`manual-d-product-harness.md`](./manual-d-product-harness.md) —
+`manualDProductHarness.test.ts` + `SessionRuntime.concurrent.test.ts`.
 
 ## Out of scope / deferred
 
 - No `SessionRuntime` / `queryLoop` rewrite
 - No durable resume of half-run tools / actor resume tokens for chat turns
 - No OpenTelemetry; no big Playwright E2E framework
-- Full SQLite crash/WAL kill matrix remains deferred (see persistence docs)
+- Full SQLite crash/WAL kill matrix remains deferred (see [`interrupted-turn-persistence.md`](./interrupted-turn-persistence.md) / [`soak-crash-reload.md`](./soak-crash-reload.md))
+
+## Related
+
+- [`interrupted-turn-persistence.md`](./interrupted-turn-persistence.md) — P0 hydrate scrub + mid-tool persist
+- [`manual-d-product-harness.md`](./manual-d-product-harness.md) — P1 #4 dual-session product harness
+- [`gpt-next-gaps-guidance.md`](./gpt-next-gaps-guidance.md) — knife progression
+- [`soak-polish-scout.md`](./soak-polish-scout.md) — scout index
