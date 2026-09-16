@@ -19,6 +19,7 @@ import {
   markSessionToolRunning,
   markSessionToolsCancelling,
   resetAllSessionToolRuntime,
+  resolveSessionTool,
   seedSessionToolRuntime,
   setSessionToolExecutionId,
 } from '../toolRuntimeState';
@@ -139,5 +140,77 @@ describe('markSessionToolsCancelling', () => {
     expect(mockSetTaskProgress).toHaveBeenCalledWith([
       expect.objectContaining({ id: 'tool-1', status: 'cancelled' }),
     ]);
+  });
+
+  it('late tool-complete/error after terminalize does not rebound pendingToolResults / Stop', () => {
+    seedSessionToolRuntime(
+      'session-a',
+      [{ id: 'tool-1', name: 'execute_command' }],
+      set,
+      get,
+    );
+    markSessionToolRunning('session-a', 'tool-1', 'execute_command', set, get);
+    setSessionToolExecutionId('session-a', 'tool-1', 'execute_command', 'exec-1', set, get);
+
+    // Stop → mass-terminalize (clears results + unresolved).
+    failUnresolvedSessionTools(
+      'session-a',
+      set,
+      get,
+      (_id, label) => `Error: ${label} cancelled by user`,
+      'cancelled',
+    );
+    state = { ...state, pendingToolCalls: 0, pendingToolResults: [], isStreaming: false };
+
+    expect(state.pendingToolResults).toEqual([]);
+    expect(shouldShowStopControl({
+      isStreaming: false,
+      pendingToolCalls: state.pendingToolCalls,
+      pendingToolResultsLength: state.pendingToolResults.length,
+    })).toBe(false);
+    expect(mockSetTaskProgress).toHaveBeenCalledWith([
+      expect.objectContaining({ id: 'tool-1', status: 'cancelled' }),
+    ]);
+    mockSetTaskProgress.mockClear();
+
+    // Inject late tool-complete (success) — must no-op.
+    resolveSessionTool(
+      'session-a',
+      'tool-1',
+      'execute_command',
+      'done',
+      'late ok',
+      set,
+      get,
+    );
+    expect(state.pendingToolCalls).toBe(0);
+    expect(state.pendingToolResults).toEqual([]);
+    expect(shouldShowStopControl({
+      isStreaming: false,
+      pendingToolCalls: state.pendingToolCalls,
+      pendingToolResultsLength: state.pendingToolResults.length,
+    })).toBe(false);
+    expect(mockSetTaskProgress).not.toHaveBeenCalled();
+
+    // Inject late tool-error — must also no-op; keep cancelled terminal status.
+    resolveSessionTool(
+      'session-a',
+      'tool-1',
+      'execute_command',
+      'failed',
+      'Error: late boom',
+      set,
+      get,
+    );
+    expect(state.pendingToolCalls).toBe(0);
+    expect(state.pendingToolResults).toEqual([]);
+    expect(shouldShowStopControl({
+      isStreaming: false,
+      pendingToolCalls: state.pendingToolCalls,
+      pendingToolResultsLength: state.pendingToolResults.length,
+    })).toBe(false);
+    expect(mockSetTaskProgress).not.toHaveBeenCalled();
+    // Status remains cancelled (last TaskProgress sync from failUnresolved).
+    expect(listUnresolvedSessionTools('session-a')).toEqual([]);
   });
 });

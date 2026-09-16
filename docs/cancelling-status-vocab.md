@@ -11,6 +11,7 @@ Companion: [`stop-session-switch-polish.md`](./stop-session-switch-polish.md) ·
 | **Intermediate `cancelling` on Stop** | `stopGeneration` calls `markSessionToolsCancelling` after optimistic busy clear, before awaiting `cancel_tool_execution`; TaskStep shows `cancelling` until `failUnresolvedSessionTools(..., 'cancelled')` |
 | **Pending counters stay cleared** | `markSessionToolsCancelling` updates `setTaskProgress` only — does **not** restore `pendingToolCalls` / `pendingToolResults` |
 | **No busy rebound after terminalize** | `failUnresolvedSessionTools` clears `runtime.results` before sync; Stop completion re-asserts idle pending flags so `shouldShowStopControl` stays false |
+| **Late tool-complete/error no-op** | `resolveSessionTool` no-ops when step is already `cancelled`; pendingToolResults stay empty; Stop stays hidden (`already_finished`/`not_found` → `done` unchanged) |
 | **Per-step Cancel same vocab** | AgentPanel sets `cancelling` while invoke is in flight, then `cancelled` |
 | **Unified labels** | `cancelInterruptVocab`: Cancelling / Cancelled / Interrupted (`canceled` → `cancelled` when normalizing) |
 

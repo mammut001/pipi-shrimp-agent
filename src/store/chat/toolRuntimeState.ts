@@ -206,6 +206,14 @@ export function resolveSessionTool(
   get: () => ChatState,
 ): void {
   const runtime = getOrCreateSessionToolRuntime(sessionId);
+  const existing = runtime.steps.get(toolCallId);
+  // Late tool-complete / tool-error after Stop mass-terminalize must not
+  // overwrite `cancelled`, rewrite runtime.results, or sync pendingToolResults
+  // (Stop / busy rebound). Other terminal statuses (e.g. preflight `failed`
+  // then resolve with error payload) still record results.
+  if (existing?.status === 'cancelled') {
+    return;
+  }
   setStepStatus(runtime, toolCallId, label, status);
   if (isTerminalStepStatus(status)) {
     runtime.unresolvedIds.delete(toolCallId);
