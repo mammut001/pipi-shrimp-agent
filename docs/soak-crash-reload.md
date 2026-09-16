@@ -116,6 +116,7 @@ Use a local `tauri dev` / packaged build with Danger (or whatever mode allows `t
 - True mid-`COMMIT` WAL tear (kill during the single `db_save_messages` transaction) still depends on SQLite atomicity; not fault-injected here
 - Live UI Stop / session-switch polish is **out of scope** for this knife
 - Native barrier waiters do not survive process death (expected) — durable signal is **message history** + hydrate terminalize
+- Chat must call `persistAssistantPendingToolCalls` before waiting on a tool batch (cleared after batch). Without that, kill mid-tool leaves blank assistants with NULL `tool_calls` and hydrate skips the notice
 
 ## Related
 

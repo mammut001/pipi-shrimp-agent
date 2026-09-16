@@ -243,6 +243,143 @@ export function scrubLateCompletionsAfterCancel(messages: Message[]): {
   };
 }
 
+
+/**
+ * Persist pending tool_calls onto the in-flight assistant placeholder before
+ * tools execute. Crash/kill mid-tool then leaves durable orphans in SQLite so
+ * hydrate `terminalizeInterrupted*` can scrub + show the interrupted notice.
+ * Without this, the placeholder is empty content with NULL tool_calls and
+ * reopen shows a blank agent row with no notice (live Tauri soak failure).
+ */
+export async function persistAssistantPendingToolCalls(
+  sessionId: string,
+  assistantMessageId: string,
+  tools: Array<{ id: string; name: string; arguments: string }>,
+  set: ChatSetState,
+  get: () => ChatState,
+  options: {
+    content?: string;
+    reasoning?: string;
+    persist?: 'db' | 'none';
+  } = {},
+): Promise<boolean> {
+  if (!tools.length) {
+    return false;
+  }
+
+  const session = get().sessions.find((candidate) => candidate.id === sessionId);
+  if (!session) {
+    return false;
+  }
+  const messageIndex = session.messages.findIndex((message) => message.id === assistantMessageId);
+  if (messageIndex === -1) {
+    return false;
+  }
+  const existing = session.messages[messageIndex];
+  if (existing.role !== 'assistant') {
+    return false;
+  }
+
+  const toolCalls: ToolCall[] = tools.map((tool) => ({
+    id: tool.id,
+    name: tool.name,
+    arguments: tool.arguments,
+  }));
+
+  const nextContent = typeof options.content === 'string' ? options.content : existing.content;
+  const nextReasoning = typeof options.reasoning === 'string'
+    ? options.reasoning
+    : existing.reasoning;
+
+  const updated: Message = {
+    ...existing,
+    content: nextContent,
+    reasoning: nextReasoning,
+    tool_calls: toolCalls,
+  };
+
+  const now = Date.now();
+  set((state) => ({
+    sessions: state.sessions.map((candidate) => (
+      candidate.id === sessionId
+        ? {
+            ...candidate,
+            updatedAt: now,
+            messages: candidate.messages.map((message, index) => (
+              index === messageIndex ? updated : message
+            )),
+          }
+        : candidate
+    )),
+  }));
+
+  const persist = options.persist ?? 'db';
+  if (persist === 'db') {
+    try {
+      await safeInvoke('db_save_message', { message: messageToDb(updated, sessionId) });
+    } catch (error) {
+      console.error('Failed to persist mid-tool assistant tool_calls:', error);
+    }
+  }
+  return true;
+}
+
+/**
+ * Clear pending tool_calls after a tool batch completes (success or handled
+ * failure). Leaves content/reasoning intact. Crash mid-wait never reaches this
+ * path, so orphans remain durable for hydrate.
+ */
+export async function clearAssistantPendingToolCalls(
+  sessionId: string,
+  assistantMessageId: string,
+  set: ChatSetState,
+  get: () => ChatState,
+  options: { persist?: 'db' | 'none' } = {},
+): Promise<boolean> {
+  const session = get().sessions.find((candidate) => candidate.id === sessionId);
+  if (!session) {
+    return false;
+  }
+  const messageIndex = session.messages.findIndex((message) => message.id === assistantMessageId);
+  if (messageIndex === -1) {
+    return false;
+  }
+  const existing = session.messages[messageIndex];
+  if (existing.role !== 'assistant' || !existing.tool_calls?.length) {
+    return false;
+  }
+
+  const updated: Message = {
+    ...existing,
+    tool_calls: undefined,
+  };
+
+  const now = Date.now();
+  set((state) => ({
+    sessions: state.sessions.map((candidate) => (
+      candidate.id === sessionId
+        ? {
+            ...candidate,
+            updatedAt: now,
+            messages: candidate.messages.map((message, index) => (
+              index === messageIndex ? updated : message
+            )),
+          }
+        : candidate
+    )),
+  }));
+
+  const persist = options.persist ?? 'db';
+  if (persist === 'db') {
+    try {
+      await safeInvoke('db_save_message', { message: messageToDb(updated, sessionId) });
+    } catch (error) {
+      console.error('Failed to clear mid-tool assistant tool_calls after batch:', error);
+    }
+  }
+  return true;
+}
+
 /**
  * Strip orphan tool_calls from any assistant message that lacks a matching
  * tool result, so a follow-up turn does not present unfinished tool requests.

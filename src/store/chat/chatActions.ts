@@ -50,7 +50,12 @@ import {
   markSessionToolsCancelling,
   syncSessionToolRuntimeToCurrentSession,
 } from './toolRuntimeState';
-import { buildToolCancelNoticeContent, scrubDanglingToolCalls } from './scrubDanglingToolCalls';
+import {
+  buildToolCancelNoticeContent,
+  clearAssistantPendingToolCalls,
+  persistAssistantPendingToolCalls,
+  scrubDanglingToolCalls,
+} from './scrubDanglingToolCalls';
 import {
   abortChatTurn,
   bumpChatSessionTurnEpoch,
@@ -990,16 +995,54 @@ export function createChatActionMethods({
           } else if (chunk.type === 'status_update') {
             uiStore.addNotification('info', chunk.message, activeSessionId);
           } else if (chunk.type === 'tool_batch_request') {
-            await handleToolBatchRequest(
+            // Durably attach pending tool_calls BEFORE waiting on tools so a
+            // kill -9 / crash mid-tool leaves orphans in SQLite for hydrate
+            // interrupted notice (see docs/soak-crash-reload.md).
+            const streamSnapshot = get();
+            await persistAssistantPendingToolCalls(
+              activeSessionId,
+              assistantMessage.id,
+              chunk.tools,
+              set,
+              get,
               {
-                chunk,
-                activeSessionId,
-                assistantMessageId: assistantMessage.id,
-                get,
-                set,
-                ensureSessionWorkDir: () => ensureSessionWorkDir(activeSessionId, set, get),
+                content: currentStreamingBuffer || streamSnapshot.streamingContent || '',
+                reasoning: streamSnapshot.streamingReasoning || undefined,
               },
             );
+            // After mid-tool persist await: Stop / cancel / newer Send may have
+            // advanced epoch or marked cancel while db_save_message was in flight.
+            // Must not proceed to execute tools for a cancelled/stale turn.
+            if (getChatSessionTurnEpoch(activeSessionId) !== turnEpoch) {
+              throw new ChatGenerationCancelledError(activeSessionId);
+            }
+            if (activeTurnId && !getSessionHandle(activeSessionId).isTurnActive(activeTurnId)) {
+              throw new ChatGenerationCancelledError(activeSessionId);
+            }
+            if (consumeChatGenerationCancel(activeSessionId)) {
+              throw new ChatGenerationCancelledError(activeSessionId);
+            }
+            try {
+              await handleToolBatchRequest(
+                {
+                  chunk,
+                  activeSessionId,
+                  assistantMessageId: assistantMessage.id,
+                  get,
+                  set,
+                  ensureSessionWorkDir: () => ensureSessionWorkDir(activeSessionId, set, get),
+                },
+              );
+            } finally {
+              // Batch finished (success / handled failure / cancel settle).
+              // Process death never reaches here — orphans stay for hydrate.
+              await clearAssistantPendingToolCalls(
+                activeSessionId,
+                assistantMessage.id,
+                set,
+                get,
+              );
+            }
             streamState = clearStreamingRoundBuffers(streamState);
             // After await: only clear shared stream UI if this turn still owns the epoch.
             if (getChatSessionTurnEpoch(activeSessionId) === turnEpoch) {

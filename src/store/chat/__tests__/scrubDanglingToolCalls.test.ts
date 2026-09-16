@@ -8,7 +8,9 @@ jest.mock('../../../utils/safeInvoke', () => ({
 
 import {
   buildToolCancelNoticeContent,
+  clearAssistantPendingToolCalls,
   listOrphanToolCalls,
+  persistAssistantPendingToolCalls,
   persistSessionsToLocalStorage,
   scrubDanglingToolCalls,
   SESSIONS_LOCAL_STORAGE_KEY,
@@ -412,5 +414,128 @@ describe('interrupted-turn persistence (hydrate terminalize)', () => {
     expect(messages.filter((message) => message.id === 'a1')).toHaveLength(1);
     expect(messages.filter((message) => message.content.includes('session reloaded'))).toHaveLength(1);
     expect(messages).toHaveLength(2);
+  });
+});
+
+describe('mid-tool pending tool_calls persist (crash/reload durability)', () => {
+  beforeEach(() => {
+    mockSafeInvoke.mockClear();
+  });
+
+  it('persistAssistantPendingToolCalls writes orphans to store + db before tools wait', async () => {
+    const { set, get } = bindState(makeState([
+      {
+        id: 'assistant-mid',
+        role: 'assistant',
+        content: '',
+        timestamp: 1,
+      },
+    ]));
+
+    const ok = await persistAssistantPendingToolCalls(
+      'session-scrub',
+      'assistant-mid',
+      [{ id: 'barrier-a', name: 'test_barrier_tool', arguments: '{"barrier_id":"soak-crash-a"}' }],
+      set,
+      get,
+      { content: '', persist: 'db' },
+    );
+
+    expect(ok).toBe(true);
+    const orphans = listOrphanToolCalls(get().sessions[0].messages);
+    expect(orphans).toHaveLength(1);
+    expect(orphans[0].toolCall.name).toBe('test_barrier_tool');
+    expect(orphans[0].toolCall.id).toBe('barrier-a');
+
+    const saves = mockSafeInvoke.mock.calls.filter((call) => call[0] === 'db_save_message');
+    expect(saves).toHaveLength(1);
+    const saved = saves[0][1] as { message: { id: string; tool_calls: string | null; content: string } };
+    expect(saved.message.id).toBe('assistant-mid');
+    expect(saved.message.tool_calls).toContain('test_barrier_tool');
+    expect(saved.message.tool_calls).toContain('barrier-a');
+  });
+
+  it('clearAssistantPendingToolCalls removes tool_calls after batch completes', async () => {
+    const { set, get } = bindState(makeState([
+      {
+        id: 'assistant-mid',
+        role: 'assistant',
+        content: 'calling',
+        timestamp: 1,
+        tool_calls: [{ id: 'barrier-a', name: 'test_barrier_tool', arguments: '{}' }],
+      },
+    ]));
+
+    const cleared = await clearAssistantPendingToolCalls(
+      'session-scrub',
+      'assistant-mid',
+      set,
+      get,
+      { persist: 'db' },
+    );
+    expect(cleared).toBe(true);
+    expect(listOrphanToolCalls(get().sessions[0].messages)).toEqual([]);
+    expect(get().sessions[0].messages[0].content).toBe('calling');
+    expect(get().sessions[0].messages[0].tool_calls).toBeUndefined();
+  });
+
+  it('reopen/hydrate after mid-tool persist adds interrupted notice (kill never clears)', async () => {
+    // Simulate: Chat persisted orphans while waiting; kill -9 skipped clear.
+    const { set, get } = bindState(makeState([
+      {
+        id: 'u1',
+        role: 'user',
+        content: 'Call ONLY test_barrier_tool with barrier_id soak-crash-a and wait',
+        timestamp: 1,
+      },
+      {
+        id: 'assistant-mid',
+        role: 'assistant',
+        content: '',
+        timestamp: 2,
+      },
+    ]));
+
+    await persistAssistantPendingToolCalls(
+      'session-scrub',
+      'assistant-mid',
+      [{ id: 'soak-a', name: 'test_barrier_tool', arguments: '{"barrier_id":"soak-crash-a"}' }],
+      set,
+      get,
+      { persist: 'db' },
+    );
+
+    // Process death: clearAssistantPendingToolCalls never runs.
+    expect(listOrphanToolCalls(get().sessions[0].messages)).toHaveLength(1);
+
+    mockSafeInvoke.mockClear();
+    const changed = await terminalizeInterruptedToolTurns(
+      'session-scrub',
+      set,
+      get,
+      { kind: 'interrupted', persist: 'db' },
+    );
+    expect(changed).toBe(true);
+
+    const messages = get().sessions[0].messages;
+    expect(listOrphanToolCalls(messages)).toEqual([]);
+    const notice = messages.find((message) => (
+      message.role === 'assistant'
+      && message.content.includes('Tool run interrupted before completion')
+      && message.content.includes('test_barrier_tool')
+    ));
+    expect(notice).toBeDefined();
+    // Scrubbed prior agent row is no longer a blank orphan placeholder
+    const scrubbed = messages.find((message) => message.id === 'assistant-mid');
+    expect(scrubbed?.tool_calls).toBeUndefined();
+    expect((scrubbed?.content ?? '').trim().length).toBeGreaterThan(0);
+
+    // Follow-up API history must not resume the barrier as success
+    const api = buildApiMessages(messages);
+    expect(api.some((message) => Boolean(message.tool_calls?.length))).toBe(false);
+    expect(api.some((message) => (
+      typeof message.content === 'string'
+      && message.content.includes('Tool run interrupted before completion')
+    ))).toBe(true);
   });
 });
