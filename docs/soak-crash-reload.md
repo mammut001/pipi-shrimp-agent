@@ -89,6 +89,8 @@ if building from a minimal image.
 
 Use a local `tauri dev` / packaged build with Danger (or whatever mode allows `test_barrier_tool`).
 
+`test_barrier_tool` is registered in the Rust `ToolRegistry` **and** advertised in the LLM-facing OpenAI tool catalog (`src-tauri/src/claude/http/tool_catalog.rs` `get_tools()`), so the model can call it in Danger mode for Manual D / live soak Sessions A/B. It remains a harness-only tool (block until `release_test_barrier` / cancel) — not for production agent use.
+
 1. **Reset barriers** (DevTools / invoke): `reset_test_barriers`
 2. **Session A:** send a turn that calls `test_barrier_tool` with `barrier_id=soak-crash-a` (do **not** release)
 3. **Session B:** same with `barrier_id=soak-crash-b` (leave waiting)
