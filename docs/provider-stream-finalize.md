@@ -59,6 +59,6 @@ pnpm exec jest \
 ## Residuals (out of scope)
 
 - Project Folder GTK binding UX
-- Danger mode defaults affordance
+- Danger mode defaults affordance — **addressed** (`docs/danger-mode-defaults-affordance.md`)
 - Full Playwright product check of short `ping-ok` prompt against live provider
 - Unknown `finish_reason` values still classify as truncated (`is_truncated_finish_reason` allowlist). Expand the clean allowlist only when a provider ships a new non-truncated terminal reason — avoid false-positive truncated notices later.

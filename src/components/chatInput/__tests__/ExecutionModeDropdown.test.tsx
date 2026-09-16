@@ -27,6 +27,18 @@ describe('ExecutionModeDropdown three-mode surface', () => {
     expect(html).toContain('executionMode.ask.label');
   });
 
+  it('shows Ask defaults affordance hint (no tools until Danger)', () => {
+    const html = render('ask');
+    expect(html).toContain('data-testid="execution-mode-affordance-ask"');
+    expect(html).toContain('executionMode.affordance.ask');
+  });
+
+  it('shows Danger tools-active affordance and keeps risky-approval copy', () => {
+    const html = render('danger');
+    expect(html).toContain('data-testid="execution-mode-affordance-danger"');
+    expect(html).toContain('executionMode.affordance.danger');
+  });
+
   it('renders Danger via i18n instead of the legacy Bypass product name', () => {
     const html = render('danger');
     expect(html).toContain('executionMode.danger.label');
@@ -67,6 +79,8 @@ describe('DangerWarningDialog', () => {
     expect(html).toContain('executionMode.danger.warningTitle');
     expect(html).toContain('executionMode.danger.warningBody');
     expect(html).toContain('executionMode.danger.warningConfirm');
+    expect(html).toContain('data-testid="execution-mode-danger-warning-defaults"');
+    expect(html).toContain('executionMode.affordance.danger');
     expect(html).not.toContain('Enable Bypass');
     expect(html).not.toContain('启用绕过');
   });

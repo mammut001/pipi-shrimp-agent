@@ -25,6 +25,6 @@ docs/concepts/folders-and-runs.md
 
 ## Intentionally not this leftover
 
-- Danger mode defaults affordance (next scout leftover)
+- Danger mode defaults affordance — **addressed** (`docs/danger-mode-defaults-affordance.md`)
 - Stream finalize redo / epoch races / SessionRuntime redesign
 - Playwright mega E2E; replacing native dialog with an in-app path text field

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import {
   EXECUTION_MODES,
   getExecutionMode,
+  getExecutionModeAffordance,
   type ExecutionModeId,
   type ExecutionModeProfile,
 } from '@/services/executionMode';
@@ -64,6 +65,10 @@ export function ExecutionModeDropdown({
   const selected = useMemo(
     () => getExecutionMode(selectedModeId),
     [selectedModeId],
+  );
+  const affordance = useMemo(
+    () => getExecutionModeAffordance(selected.id),
+    [selected.id],
   );
 
   const syncMenuPosition = useCallback(() => {
@@ -205,6 +210,14 @@ export function ExecutionModeDropdown({
                         {t('executionMode.danger.badge')}
                       </span>
                     )}
+                    {profile.isDefault && (
+                      <span
+                        className="shrink-0 rounded-full bg-gray-100 px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-gray-600"
+                        data-testid={`${testId}-default-badge`}
+                      >
+                        {t('executionMode.ask.defaultBadge')}
+                      </span>
+                    )}
                   </div>
                   <div className="mt-0.5 break-words text-[11px] leading-snug text-gray-500">
                     {modeDescription(profile)}
@@ -222,6 +235,7 @@ export function ExecutionModeDropdown({
     : null;
 
   return (
+    <div className="inline-flex max-w-[280px] flex-col gap-0.5" data-testid={`${testId}-wrap`}>
     <div ref={rootRef} className="relative inline-block" data-testid={testId}>
       <button
         ref={triggerRef}
@@ -230,6 +244,7 @@ export function ExecutionModeDropdown({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={t('executionMode.label')}
+        aria-description={coerceRenderableText(t(affordance.hintKey))}
         data-testid={`${testId}-trigger`}
         onClick={() => !disabled && setOpen((value) => !value)}
         onKeyDown={(event) => {
@@ -272,6 +287,16 @@ export function ExecutionModeDropdown({
         />
       )}
     </div>
+      <span
+        className={`px-0.5 text-[10px] leading-snug ${
+          affordance.toolsActive ? 'text-rose-700/90' : 'text-gray-500'
+        }`}
+        data-testid={affordance.testId}
+        title={coerceRenderableText(t(affordance.hintKey))}
+      >
+        {t(affordance.hintKey)}
+      </span>
+    </div>
   );
 }
 
@@ -308,6 +333,12 @@ export function DangerWarningDialog({
         </h3>
         <p id="execution-mode-danger-warning-body" className="mt-2 text-[12px] leading-relaxed text-gray-700">
           {t('executionMode.danger.warningBody')}
+        </p>
+        <p
+          className="mt-2 text-[11px] leading-snug text-gray-500"
+          data-testid="execution-mode-danger-warning-defaults"
+        >
+          {t('executionMode.affordance.danger')}
         </p>
         <div className="mt-4 flex items-center justify-end gap-2">
           <button
