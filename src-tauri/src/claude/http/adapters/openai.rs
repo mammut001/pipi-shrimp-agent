@@ -181,13 +181,24 @@ impl ProviderAdapter for OpenAIAdapter {
         let no_tools = body.get("tools").is_none();
         validate_structured_tool_call_content(&content, &tool_calls, no_tools)?;
 
+        let finish_reason = body
+            .get("choices")
+            .and_then(|choices| choices.as_array())
+            .and_then(|choices| choices.first())
+            .and_then(|choice| choice.get("finish_reason"))
+            .and_then(|value| value.as_str())
+            .map(|value| value.to_string());
+
         Ok(ChatResponse {
             content,
             artifacts,
             model: model_name,
             usage,
             tool_calls,
-        })
+            finish_reason: None,
+            truncated: false,
+        }
+        .with_finish(finish_reason))
     }
 
     fn parse_stream_chunk(
@@ -319,6 +330,8 @@ impl ProviderAdapter for OpenAIAdapter {
                 if let Some(finish_reason) =
                     choice.get("finish_reason").and_then(|value| value.as_str())
                 {
+                    // Record terminal finish so EOF/`[DONE]` finalize can classify truncation.
+                    ctx.finish_reason = Some(finish_reason.to_string());
                     if (finish_reason == "tool_calls"
                         || finish_reason == "stop"
                         || finish_reason == "function_call"
@@ -327,6 +340,9 @@ impl ProviderAdapter for OpenAIAdapter {
                     {
                         events.extend(ctx.emit_pending_tool_calls()?);
                     }
+                    // Emit Done so callers observe finish. stream_response keeps consuming
+                    // until `[DONE]` / EOF so a following usage-only chunk is not dropped.
+                    events.push(StreamEvent::Done);
                 }
             }
         }
@@ -376,7 +392,10 @@ impl ProviderAdapter for OpenAIAdapter {
             model: ctx.model,
             usage: ctx.usage,
             tool_calls: ctx.tool_calls,
-        })
+            finish_reason: None,
+            truncated: false,
+        }
+        .with_finish(ctx.finish_reason))
     }
 }
 
@@ -774,5 +793,81 @@ mod tests {
 
         assert!(error.to_string().contains("malformed_tool_call"));
         assert!(error.to_string().contains("finish_reason"));
+    }
+
+    #[test]
+    fn emits_done_on_finish_reason_stop_and_marks_clean() {
+        let adapter = OpenAIAdapter::openai();
+        let mut ctx = StreamContext::new(3, None, Some("session-done".to_string()));
+
+        let chunk = serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": { "content": "ping-ok" },
+                "finish_reason": "stop"
+            }]
+        });
+
+        let events = adapter
+            .parse_stream_chunk(&chunk.to_string(), &mut ctx)
+            .expect("chunk should parse");
+        assert!(events.iter().any(|event| matches!(event, StreamEvent::Done)));
+        assert_eq!(ctx.finish_reason.as_deref(), Some("stop"));
+
+        let response = adapter
+            .finalize_stream(ctx, &deepseek_config())
+            .expect("stream should finalize cleanly");
+        assert_eq!(response.content, "ping-ok");
+        assert_eq!(response.finish_reason.as_deref(), Some("stop"));
+        assert!(!response.truncated);
+    }
+
+    #[test]
+    fn marks_length_finish_reason_as_truncated() {
+        let adapter = OpenAIAdapter::openai();
+        let mut ctx = StreamContext::new(3, None, Some("session-length".to_string()));
+
+        let chunk = serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": { "content": "ping" },
+                "finish_reason": "length"
+            }]
+        });
+
+        adapter
+            .parse_stream_chunk(&chunk.to_string(), &mut ctx)
+            .expect("chunk should parse");
+
+        let response = adapter
+            .finalize_stream(ctx, &deepseek_config())
+            .expect("length finish should still finalize");
+        assert_eq!(response.content, "ping");
+        assert_eq!(response.finish_reason.as_deref(), Some("length"));
+        assert!(response.truncated);
+    }
+
+    #[test]
+    fn marks_eof_without_finish_reason_as_truncated() {
+        let adapter = OpenAIAdapter::openai();
+        let mut ctx = StreamContext::new(3, None, Some("session-eof".to_string()));
+
+        let chunk = serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": { "content": "half" }
+            }]
+        });
+
+        adapter
+            .parse_stream_chunk(&chunk.to_string(), &mut ctx)
+            .expect("chunk should parse");
+
+        let response = adapter
+            .finalize_stream(ctx, &deepseek_config())
+            .expect("eof finalize should succeed with truncated flag");
+        assert_eq!(response.content, "half");
+        assert!(response.finish_reason.is_none());
+        assert!(response.truncated);
     }
 }

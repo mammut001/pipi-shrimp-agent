@@ -417,7 +417,10 @@ pub fn empty_response() -> ChatResponse {
             output_tokens: 0,
         },
         tool_calls: Vec::new(),
+        finish_reason: None,
+        truncated: false,
     }
+    .with_finish(Some("cancelled".to_string()))
 }
 
 fn provider_label(provider_id: ProviderId) -> &'static str {

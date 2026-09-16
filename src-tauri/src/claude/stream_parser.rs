@@ -36,12 +36,41 @@ pub fn parse_sse_data_line(line: &str) -> Option<String> {
     let data_str = line.strip_prefix("data:")?;
     let data_str = data_str.strip_prefix(' ').unwrap_or(data_str);
 
-    // Empty or [DONE] marker
+    // Empty or [DONE] marker — [DONE] is handled separately via `is_sse_done_line`.
     if data_str.is_empty() || data_str == "[DONE]" {
         return None;
     }
 
     Some(data_str.to_string())
+}
+
+/// True when the SSE line is the OpenAI-style stream terminator `data: [DONE]`.
+pub fn is_sse_done_line(line: &str) -> bool {
+    let line = line.trim();
+    let Some(data_str) = line.strip_prefix("data:") else {
+        return false;
+    };
+    let data_str = data_str.strip_prefix(' ').unwrap_or(data_str);
+    data_str == "[DONE]"
+}
+
+/// Consume any leftover bytes that never saw a trailing newline when the
+/// provider closed the socket. Without this, the last token(s) on a truncated
+/// or newline-less final chunk are silently dropped.
+pub fn take_sse_buffer_remainder(buffer: &mut Vec<u8>) -> Option<String> {
+    if buffer.is_empty() {
+        return None;
+    }
+    let line = String::from_utf8_lossy(buffer).trim().to_string();
+    buffer.clear();
+    if line.is_empty() {
+        return None;
+    }
+    if is_sse_done_line(&line) {
+        // Represent Done as a sentinel the caller can detect.
+        return Some(String::from("[DONE]"));
+    }
+    parse_sse_data_line(&line)
 }
 
 /// Parse SSE data string into StreamEvents using the appropriate adapter
@@ -93,22 +122,26 @@ pub async fn stream_response(
             let line_bytes = buffer.drain(..=newline_pos).collect::<Vec<u8>>();
             let line = String::from_utf8_lossy(&line_bytes).trim().to_string();
 
-            // Parse SSE data line
+            if is_sse_done_line(&line) {
+                if ctx.finish_reason.is_none() {
+                    ctx.finish_reason = Some("done".to_string());
+                }
+                return adapter.finalize_stream(ctx, config);
+            }
+
             let data_str = match parse_sse_data_line(&line) {
                 Some(s) => s,
                 None => continue,
             };
 
-            // Parse using adapter
             match adapter.parse_stream_chunk(&data_str, &mut ctx) {
                 Ok(events) => {
-                    // Check for done or error
                     for event in &events {
                         match event {
-                            StreamEvent::Done => {
-                                // Stream complete
-                                return adapter.finalize_stream(ctx, config);
-                            }
+                            // Soft terminal only: finish_reason may arrive before a
+                            // usage-only trailing frame (`stream_options.include_usage`).
+                            // Keep consuming until `[DONE]` / EOF so usage is not dropped.
+                            StreamEvent::Done => {}
                             StreamEvent::Error(msg) => {
                                 return Err(AppError::ProcessError(format!(
                                     "Stream error: {}",
@@ -132,7 +165,38 @@ pub async fn stream_response(
         }
     }
 
-    // Stream ended without explicit Done - finalize anyway
+    // Flush leftover bytes that never received a trailing newline (common on
+    // abrupt provider close / truncated streams). Without this, the last
+    // token(s) are silently dropped and the UI shows a half-visible reply.
+    if let Some(remainder) = take_sse_buffer_remainder(&mut buffer) {
+        if remainder == "[DONE]" {
+            if ctx.finish_reason.is_none() {
+                ctx.finish_reason = Some("done".to_string());
+            }
+        } else {
+            match adapter.parse_stream_chunk(&remainder, &mut ctx) {
+                Ok(events) => {
+                    for event in &events {
+                        if let StreamEvent::Error(msg) = event {
+                            return Err(AppError::ProcessError(format!(
+                                "Stream error: {}",
+                                msg
+                            )));
+                        }
+                    }
+                }
+                Err(e) => {
+                    let is_tool_protocol_error = e.message.contains("malformed_tool_call");
+                    if is_tool_protocol_error {
+                        return Err(e);
+                    }
+                    eprintln!("⚠️ Failed to parse trailing stream chunk: {}", e);
+                }
+            }
+        }
+    }
+
+    // Stream ended without explicit Done — finalize anyway (may be truncated).
     adapter.finalize_stream(ctx, config)
 }
 
@@ -290,6 +354,33 @@ mod tests {
             Some("{\"foo\":1}".to_string())
         );
         assert_eq!(parse_sse_data_line("data:[DONE]"), None);
+    }
+
+    #[test]
+    fn test_is_sse_done_line() {
+        assert!(is_sse_done_line("data: [DONE]"));
+        assert!(is_sse_done_line("data:[DONE]"));
+        assert!(is_sse_done_line("  data: [DONE]  "));
+        assert!(!is_sse_done_line("data: hello"));
+        assert!(!is_sse_done_line("data: "));
+    }
+
+    #[test]
+    fn test_take_sse_buffer_remainder_flushes_trailing_data_without_newline() {
+        let mut buffer = b"data: {\"choices\":[{\"delta\":{\"content\":\"-ok\"}}]}".to_vec();
+        let remainder = take_sse_buffer_remainder(&mut buffer);
+        assert_eq!(
+            remainder,
+            Some("{\"choices\":[{\"delta\":{\"content\":\"-ok\"}}]}".to_string())
+        );
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn test_take_sse_buffer_remainder_detects_trailing_done() {
+        let mut buffer = b"data: [DONE]".to_vec();
+        assert_eq!(take_sse_buffer_remainder(&mut buffer), Some("[DONE]".to_string()));
+        assert!(buffer.is_empty());
     }
 
     #[test]

@@ -90,6 +90,46 @@ pub struct ChatResponse {
     /// Tool calls (if finish_reason is "tool_calls")
     #[serde(default)]
     pub tool_calls: Vec<ToolCall>,
+    /// Provider finish / stop reason when known (`stop`, `length`, `tool_calls`, …).
+    /// Synthetic values: `done` (SSE `[DONE]` without finish_reason), `cancelled`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finish_reason: Option<String>,
+    /// True when the stream ended without a clean terminal finish (EOF cutoff,
+    /// `length`, `content_filter`, or unknown reason) while partial content exists.
+    #[serde(default)]
+    pub truncated: bool,
+}
+
+/// Classify whether a provider finish reason means the reply was cut short.
+pub fn is_truncated_finish_reason(
+    finish_reason: Option<&str>,
+    has_partial_output: bool,
+) -> bool {
+    match finish_reason {
+        Some("stop")
+        | Some("tool_calls")
+        | Some("function_call")
+        | Some("tool_use")
+        | Some("message_stop")
+        | Some("end_turn")
+        | Some("done")
+        | Some("cancelled") => false,
+        Some("length") | Some("content_filter") => true,
+        // Unknown reasons default to truncated to avoid silent "success" on
+        // partial cutoffs. Expand the clean allowlist above if a provider
+        // introduces a new non-truncated terminal reason.
+        Some(_) => true,
+        None => has_partial_output,
+    }
+}
+
+impl ChatResponse {
+    pub fn with_finish(mut self, finish_reason: Option<String>) -> Self {
+        let has_partial = !self.content.is_empty() || !self.tool_calls.is_empty();
+        self.truncated = is_truncated_finish_reason(finish_reason.as_deref(), has_partial);
+        self.finish_reason = finish_reason;
+        self
+    }
 }
 
 /**
@@ -214,5 +254,37 @@ impl ToolResult {
             tool_call_id,
             result,
         }
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn classifies_truncated_finish_reasons() {
+        assert!(!is_truncated_finish_reason(Some("stop"), true));
+        assert!(!is_truncated_finish_reason(Some("done"), true));
+        assert!(!is_truncated_finish_reason(Some("cancelled"), false));
+        assert!(is_truncated_finish_reason(Some("length"), true));
+        assert!(is_truncated_finish_reason(None, true));
+        assert!(!is_truncated_finish_reason(None, false));
+    }
+
+    #[test]
+    fn with_finish_sets_truncated_flag() {
+        let response = ChatResponse {
+            content: "ping".to_string(),
+            artifacts: vec![],
+            model: "m".to_string(),
+            usage: UsageInfo { input_tokens: 1, output_tokens: 1 },
+            tool_calls: vec![],
+            finish_reason: None,
+            truncated: false,
+        }
+        .with_finish(Some("length".to_string()));
+        assert!(response.truncated);
+        assert_eq!(response.finish_reason.as_deref(), Some("length"));
     }
 }

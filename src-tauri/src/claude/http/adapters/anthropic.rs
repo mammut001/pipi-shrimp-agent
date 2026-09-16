@@ -112,13 +112,21 @@ impl ProviderAdapter for AnthropicAdapter {
 
         let artifacts = detect_artifacts(&content);
 
+        let finish_reason = body
+            .get("stop_reason")
+            .and_then(|value| value.as_str())
+            .map(|value| value.to_string());
+
         Ok(ChatResponse {
             content,
             artifacts,
             model: model_name,
             usage,
             tool_calls,
-        })
+            finish_reason: None,
+            truncated: false,
+        }
+        .with_finish(finish_reason))
     }
 
     fn parse_stream_chunk(
@@ -200,10 +208,20 @@ impl ProviderAdapter for AnthropicAdapter {
                     ctx.usage.output_tokens = usage["output_tokens"].as_i64().unwrap_or(0) as i32;
                     ctx.emit_usage();
                 }
+                if let Some(stop_reason) = json
+                    .get("delta")
+                    .and_then(|delta| delta.get("stop_reason"))
+                    .and_then(|value| value.as_str())
+                {
+                    ctx.finish_reason = Some(stop_reason.to_string());
+                }
             }
             "message_stop" => {
                 if ctx.has_unfinalized_tool_calls() {
                     events.extend(ctx.emit_pending_tool_calls()?);
+                }
+                if ctx.finish_reason.is_none() {
+                    ctx.finish_reason = Some("message_stop".to_string());
                 }
                 events.push(StreamEvent::Done);
             }
@@ -236,6 +254,9 @@ impl ProviderAdapter for AnthropicAdapter {
             model: ctx.model,
             usage: ctx.usage,
             tool_calls: ctx.tool_calls,
-        })
+            finish_reason: None,
+            truncated: false,
+        }
+        .with_finish(ctx.finish_reason))
     }
 }

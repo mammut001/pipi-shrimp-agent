@@ -1,5 +1,6 @@
 pub use super::super::stream_parser::{
-    parse_plain_response, parse_sse_data_line, stream_response, ThinkSegmentIter,
+    is_sse_done_line, parse_plain_response, parse_sse_data_line, stream_response,
+    take_sse_buffer_remainder, ThinkSegmentIter,
 };
 
 pub fn collect_sse_data_lines(buffer: &mut Vec<u8>, chunk: &[u8]) -> Vec<String> {
@@ -32,6 +33,16 @@ mod tests {
         assert_eq!(first, vec!["first".to_string()]);
         let second = collect_sse_data_lines(&mut buffer, b" line\ndata: second\n");
         assert_eq!(second, vec!["second".to_string()]);
+    }
+
+    #[test]
+    fn flushes_trailing_sse_line_without_newline_on_stream_end() {
+        let mut buffer = b"data: {\"delta\":\"tail\"}".to_vec();
+        assert_eq!(
+            take_sse_buffer_remainder(&mut buffer),
+            Some("{\"delta\":\"tail\"}".to_string())
+        );
+        assert!(is_sse_done_line("data: [DONE]"));
     }
 
     #[test]

@@ -32,8 +32,8 @@ pub use request_builder::{
 pub use retry::{run_with_retry, RetryPolicy, DEFAULT_RETRY_POLICY};
 #[allow(unused_imports)]
 pub use stream::{
-    collect_sse_data_lines, parse_plain_response, parse_sse_data_line, split_think_content,
-    stream_response, ThinkSegmentIter,
+    collect_sse_data_lines, is_sse_done_line, parse_plain_response, parse_sse_data_line, split_think_content,
+    stream_response, take_sse_buffer_remainder, ThinkSegmentIter,
 };
 #[allow(unused_imports)]
 pub use telemetry::{sanitize_endpoint, ClaudeHttpTelemetry, ClaudeHttpTelemetryOutcome};

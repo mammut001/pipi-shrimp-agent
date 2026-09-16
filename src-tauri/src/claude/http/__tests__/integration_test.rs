@@ -555,6 +555,111 @@ async fn send_request_finalizes_truncated_openai_stream() {
     assert_eq!(response.content, "hello world");
     assert_eq!(response.usage.input_tokens, 5);
     assert_eq!(response.usage.output_tokens, 2);
+    // No finish_reason / [DONE] → clear truncated terminal state (not silent success).
+    assert!(response.truncated);
+    assert!(response.finish_reason.is_none());
+}
+
+#[tokio::test]
+async fn send_request_finalizes_openai_stream_without_trailing_newline() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                // First line has newline; final token line has NO trailing newline —
+                // historically dropped by the byte buffer loop.
+                .set_body_string(concat!(
+                    "data: {\"id\":\"chatcmpl-stream-2\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ping\"}}]}\n",
+                    "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"-ok\"},\"finish_reason\":\"stop\"}]}"
+                )),
+        )
+        .mount(&server)
+        .await;
+
+    let client = reqwest::Client::new();
+    let base_url = format!("{}/v1", server.uri());
+
+    let response = send_request(
+        &client,
+        &sample_messages(),
+        "test-token",
+        "gpt-4o",
+        Some(&base_url),
+        Some("system"),
+        true,
+        false,
+        None,
+        false,
+        Some("stream-no-trailing-newline"),
+        Some("openai"),
+        Some("openai"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("newline-less final chunk should still finalize");
+
+    assert_eq!(response.content, "ping-ok");
+    assert_eq!(response.finish_reason.as_deref(), Some("stop"));
+    assert!(!response.truncated);
+}
+
+#[tokio::test]
+async fn send_request_consumes_usage_only_chunk_after_finish_reason() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "text/event-stream")
+                // OpenAI stream_options.include_usage shape: finish_reason first,
+                // then a usage-only frame, then [DONE]. Early Done→finalize must
+                // not drop the usage frame.
+                .set_body_string(concat!(
+                    "data: {\"id\":\"chatcmpl-usage\",\"model\":\"gpt-4o\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ping-ok\"},\"finish_reason\":\"stop\"}]}\n",
+                    "data: {\"id\":\"chatcmpl-usage\",\"model\":\"gpt-4o\",\"choices\":[],\"usage\":{\"prompt_tokens\":42,\"completion_tokens\":7,\"total_tokens\":49}}\n",
+                    "data: [DONE]\n"
+                )),
+        )
+        .mount(&server)
+        .await;
+
+    let client = reqwest::Client::new();
+    let base_url = format!("{}/v1", server.uri());
+
+    let response = send_request(
+        &client,
+        &sample_messages(),
+        "test-token",
+        "gpt-4o",
+        Some(&base_url),
+        Some("system"),
+        true,
+        false,
+        None,
+        false,
+        Some("stream-usage-after-finish"),
+        Some("openai"),
+        Some("openai"),
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .expect("usage-only trailing chunk should be consumed");
+
+    assert_eq!(response.content, "ping-ok");
+    assert_eq!(response.finish_reason.as_deref(), Some("stop"));
+    assert!(!response.truncated);
+    // Distinctive usage values prove the trailing frame was observed (not
+    // estimated_input / estimate_tokens fallback after an early cut).
+    assert_eq!(response.usage.input_tokens, 42);
+    assert_eq!(response.usage.output_tokens, 7);
 }
 
 #[tokio::test]
