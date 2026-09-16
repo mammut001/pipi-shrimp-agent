@@ -75,7 +75,7 @@ Docs: `docs/stop-session-switch-polish.md`
 
 ### Intentionally not this knife
 
-- Intermediate `cancelling` step status / terminal vocabulary unify (unless already planned elsewhere)
+- Intermediate `cancelling` step status / terminal vocabulary unify — **follow-up** [`cancelling-status-vocab.md`](./cancelling-status-vocab.md)
 - Truncated replies / Project Folder / Danger affordance (scout leftovers)
 - Full Playwright E2E
 

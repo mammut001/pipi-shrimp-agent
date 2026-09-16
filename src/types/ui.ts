@@ -65,7 +65,7 @@ export interface Notification {
 export interface TaskStep {
   id: string;
   label: string;
-  status: 'pending' | 'validating' | 'awaiting_confirmation' | 'approved' | 'running' | 'done' | 'failed' | 'cancelled' | 'timed_out' | 'rejected';
+  status: 'pending' | 'validating' | 'awaiting_confirmation' | 'approved' | 'running' | 'cancelling' | 'done' | 'failed' | 'cancelled' | 'timed_out' | 'rejected';
   executionId?: string | null;
 }
 

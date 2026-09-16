@@ -1029,18 +1029,30 @@ describe('chatStore sendMessage integration', () => {
       return undefined;
     });
 
+    mockSetTaskProgress.mockClear();
     const stopPromise = useChatStore.getState().stopGeneration();
     // Optimistic UI must clear before native cancel finishes.
     await Promise.resolve();
     expect(useChatStore.getState().isStreaming).toBe(false);
     expect(useChatStore.getState().pendingToolCalls).toBe(0);
     expect(useChatStore.getState().streamingSessionId).toBeNull();
+    // Intermediate cancelling TaskStep while native cancel is in flight.
+    expect(mockSetTaskProgress).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'tool-slow', status: 'cancelling' }),
+      ]),
+    );
 
     releaseCancel();
     await stopPromise;
 
     expect(mockInvoke).toHaveBeenCalledWith('cancel_tool_execution', { executionId: 'exec-slow-1' });
     expect(useChatStore.getState().isStreaming).toBe(false);
+    expect(mockSetTaskProgress).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'tool-slow', status: 'cancelled' }),
+      ]),
+    );
   });
 
   it('soak knife 3: Stop on A does not mutate B history or tool runtime', async () => {

@@ -124,6 +124,47 @@ export function markSessionToolRunning(
   syncCurrentSessionToolRuntime(set, get);
 }
 
+/**
+ * Intermediate Stop UX: mark unresolved (non-terminal) steps as `cancelling`
+ * while native cancel is in flight. Updates TaskStep progress for the current
+ * session without restoring optimistic-cleared pendingToolCalls counters.
+ */
+export function markSessionToolsCancelling(
+  sessionId: string,
+  _set: ChatSetState,
+  get: () => ChatState,
+): void {
+  const runtime = toolRuntimeBySession.get(sessionId);
+  if (!runtime) {
+    return;
+  }
+
+  let changed = false;
+  for (const toolCallId of [...runtime.unresolvedIds]) {
+    const step = runtime.steps.get(toolCallId);
+    const label = step?.label ?? toolCallId;
+    if (step && isTerminalStepStatus(step.status)) {
+      continue;
+    }
+    if (step?.status === 'cancelling') {
+      continue;
+    }
+    setStepStatus(runtime, toolCallId, label, 'cancelling');
+    changed = true;
+  }
+
+  if (!changed) {
+    return;
+  }
+
+  // Keep unresolvedIds so failUnresolved can still terminalize to `cancelled`.
+  // Do not call syncCurrentSessionToolRuntime — that would undo Stop's
+  // optimistic pendingToolCalls / pendingToolResults clear.
+  if (get().currentSessionId === sessionId) {
+    useUIStore.getState().setTaskProgress(buildTaskSteps(runtime));
+  }
+}
+
 export function markSessionToolStatus(
   sessionId: string,
   toolCallId: string,
