@@ -52,12 +52,14 @@ import {
 import { buildToolCancelNoticeContent, scrubDanglingToolCalls } from './scrubDanglingToolCalls';
 import {
   abortChatTurn,
+  bumpChatSessionTurnEpoch,
   clearChatGenerationCancel,
   clearStreamingRoundBuffers,
   consumeChatGenerationCancel,
   createChatTurnAbortController,
   createStreamingAccumulator,
   flushBuffer,
+  getChatSessionTurnEpoch,
   handleStreamChunk,
   requestChatGenerationCancel,
   resolveStreamingOwnerSessionId,
@@ -551,6 +553,9 @@ export function createChatActionMethods({
 
       useUIStore.getState().clearTaskProgress();
       clearChatGenerationCancel(activeSessionId);
+      // Bump turn epoch so an in-flight stopGeneration (optimistic busy clear
+      // before cancel_tool_execution settles) ignores stale cancel completion.
+      bumpChatSessionTurnEpoch(activeSessionId);
       clearSessionToolRuntime(activeSessionId, set, get);
       setError(null);
 
@@ -1237,6 +1242,11 @@ export function createChatActionMethods({
       const executionIds = owningSessionId
         ? listCancellableSessionExecutionIds(owningSessionId)
         : [];
+      // Epoch + diagnostics captured before optimistic clear / await so a
+      // same-session sendMessage that starts mid-cancel is detectable and so
+      // we never cancel a newer diagnostics task registered by that send.
+      const stopEpoch = getChatSessionTurnEpoch(owningSessionId);
+      const diagnosticsTaskIdAtStop = getActiveChatDiagnosticsTaskId(owningSessionId);
 
       // Soak knife 3 — optimistic UI: cancelled feel ≤1s. Clear Stop/busy
       // before awaiting native cancel_tool_execution (can be slow). Capture
@@ -1301,73 +1311,100 @@ export function createChatActionMethods({
             }
           }),
         );
-        useUIStore.getState().clearAllPermissions();
-        getSessionHandle(owningSessionId).cancel('Cancelled by user');
-        failUnresolvedSessionTools(
-          owningSessionId,
-          set,
-          get,
-          (_toolCallId, label) => `Error: ${label} cancelled by user`,
-          'cancelled',
-        );
-        await scrubDanglingToolCalls(owningSessionId, set, get);
-        // Drop an empty assistant placeholder so the cancel notice is not stranded after it.
-        set((state) => ({
-          sessions: state.sessions.map((session) => {
-            if (session.id !== owningSessionId || session.messages.length === 0) {
-              return session;
-            }
-            const last = session.messages[session.messages.length - 1];
-            if (!shouldRemoveEmptyAssistantPlaceholder(last)) {
-              return session;
-            }
-            return { ...session, messages: session.messages.slice(0, -1), updatedAt: Date.now() };
-          }),
-        }));
-        if (unresolvedTools.length > 0) {
-          const toolNames = unresolvedTools.map((tool) => tool.label);
-          const toolCallIds = unresolvedTools.map((tool) => tool.toolCallId);
-          await get().addMessageToSession(
+
+        // If a new same-session turn started after optimistic busy clear,
+        // skip session-mutating cancel completion (handle.cancel without
+        // turnId, failUnresolved, scrub, stop_subprocess, pending wipe).
+        const cancelCompletionStale = getChatSessionTurnEpoch(owningSessionId) !== stopEpoch;
+        if (!cancelCompletionStale) {
+          useUIStore.getState().clearAllPermissions();
+          getSessionHandle(owningSessionId).cancel('Cancelled by user');
+          failUnresolvedSessionTools(
             owningSessionId,
-            createMessage(
-              'assistant',
-              buildToolCancelNoticeContent(toolNames, 'user_cancel', toolCallIds),
-            ),
+            set,
+            get,
+            (_toolCallId, label) => `Error: ${label} cancelled by user`,
+            'cancelled',
           );
+          await scrubDanglingToolCalls(owningSessionId, set, get);
+          // Drop an empty assistant placeholder so the cancel notice is not stranded after it.
+          set((state) => ({
+            sessions: state.sessions.map((session) => {
+              if (session.id !== owningSessionId || session.messages.length === 0) {
+                return session;
+              }
+              const last = session.messages[session.messages.length - 1];
+              if (!shouldRemoveEmptyAssistantPlaceholder(last)) {
+                return session;
+              }
+              return { ...session, messages: session.messages.slice(0, -1), updatedAt: Date.now() };
+            }),
+          }));
+          if (unresolvedTools.length > 0) {
+            const toolNames = unresolvedTools.map((tool) => tool.label);
+            const toolCallIds = unresolvedTools.map((tool) => tool.toolCallId);
+            await get().addMessageToSession(
+              owningSessionId,
+              createMessage(
+                'assistant',
+                buildToolCancelNoticeContent(toolNames, 'user_cancel', toolCallIds),
+              ),
+            );
+          }
+
+          try {
+            await safeInvoke('stop_subprocess', { sessionId: owningSessionId }, { silent: true });
+          } catch (error) {
+            console.error('Failed to stop subprocess:', error);
+            setError(`Failed to stop generation: ${formatError(error)}`);
+          }
+
+          const flushed = flushBuffer({
+            content: finalContent,
+            reasoning: finalReasoning,
+            statusMessages: [],
+          });
+
+          if (flushed.content || flushed.reasoning) {
+            await get().updateLastMessage(flushed.content, undefined, flushed.reasoning, undefined, owningSessionId);
+          }
+
+          // Re-assert idle busy flags after durable cancel work (sync may have
+          // briefly restored pending counters while tools were failing).
+          set({ pendingToolCalls: 0, pendingToolResults: [] });
         }
+      } else {
+        try {
+          await safeInvoke('stop_subprocess', { sessionId: owningSessionId }, { silent: true });
+        } catch (error) {
+          console.error('Failed to stop subprocess:', error);
+          setError(`Failed to stop generation: ${formatError(error)}`);
+        }
+
+        const flushed = flushBuffer({
+          content: finalContent,
+          reasoning: finalReasoning,
+          statusMessages: [],
+        });
+
+        if (flushed.content || flushed.reasoning) {
+          await get().updateLastMessage(flushed.content, undefined, flushed.reasoning, undefined, owningSessionId);
+        }
+
+        set({ pendingToolCalls: 0, pendingToolResults: [] });
       }
 
-      try {
-        await safeInvoke('stop_subprocess', { sessionId: owningSessionId }, { silent: true });
-      } catch (error) {
-        console.error('Failed to stop subprocess:', error);
-        setError(`Failed to stop generation: ${formatError(error)}`);
-      }
-
-      const flushed = flushBuffer({
-        content: finalContent,
-        reasoning: finalReasoning,
-        statusMessages: [],
-      });
-
-      if (owningSessionId && (flushed.content || flushed.reasoning)) {
-        await get().updateLastMessage(flushed.content, undefined, flushed.reasoning, undefined, owningSessionId);
-      }
-
-      // Re-assert idle busy flags after durable cancel work (sync may have
-      // briefly restored pending counters while tools were failing).
-      set({ pendingToolCalls: 0, pendingToolResults: [] });
-      // AUDIT-FIX [audit-1#2] — Look up the task id for the session that
-      // actually owns this stream (the one we just stopped). Fall back to
-      // any still-active task id if we somehow lost the session context.
-      const cancelledTaskId =
-        getActiveChatDiagnosticsTaskId(owningSessionId) ?? getAnyActiveChatDiagnosticsTaskId();
+      // AUDIT-FIX [audit-1#2] — Cancel the diagnostics task that owned this
+      // Stop, not a newer task registered by a same-session send mid-cancel.
+      const cancelledTaskId = diagnosticsTaskIdAtStop ?? getAnyActiveChatDiagnosticsTaskId();
       if (cancelledTaskId) {
         updateDiagnosticsTask(cancelledTaskId, {
           state: 'cancelled',
           cancelable: false,
         });
-        setActiveChatDiagnosticsTaskId(owningSessionId, null);
+        if (getActiveChatDiagnosticsTaskId(owningSessionId) === cancelledTaskId) {
+          setActiveChatDiagnosticsTaskId(owningSessionId, null);
+        }
       }
     },
 

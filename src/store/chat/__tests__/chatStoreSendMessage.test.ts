@@ -150,10 +150,17 @@ jest.mock('../../../i18n', () => ({
 
 import { useChatStore } from '../index';
 import {
+  listCancellableSessionExecutionIds,
+  listUnresolvedSessionTools,
   resetAllSessionToolRuntime,
   setSessionToolExecutionId,
   seedSessionToolRuntime,
+  clearSessionToolRuntime,
 } from '../toolRuntimeState';
+import {
+  bumpChatSessionTurnEpoch,
+  resetChatSessionTurnEpochForTests,
+} from '../chatStreaming';
 
 async function* streamOneAssistantReply() {
   yield { type: 'text_delta' as const, content: 'Hello ' };
@@ -269,6 +276,7 @@ describe('chatStore sendMessage integration', () => {
   beforeEach(() => {
     jest.useFakeTimers();
     resetAllSessionToolRuntime();
+    resetChatSessionTurnEpochForTests();
     mockInvoke.mockReset();
     mockRunChatTurn.mockReset();
     mockAddNotification.mockReset();
@@ -1117,6 +1125,17 @@ describe('chatStore sendMessage integration', () => {
     expect(cancelCalls).toEqual([
       ['cancel_tool_execution', { executionId: 'exec-a-1' }],
     ]);
+
+    // B's in-flight tool runtime remains complete (not just history untouched).
+    expect(listUnresolvedSessionTools('session-B')).toEqual([
+      expect.objectContaining({
+        toolCallId: 'tool-b',
+        label: 'execute_command',
+        executionId: 'exec-b-1',
+      }),
+    ]);
+    expect(listCancellableSessionExecutionIds('session-B')).toEqual(['exec-b-1']);
+    expect(listUnresolvedSessionTools('session-1')).toEqual([]);
   });
 
   it('soak knife 3: selectSession rebinds busy flags to the selected session only', async () => {
@@ -1146,13 +1165,117 @@ describe('chatStore sendMessage integration', () => {
       pendingToolResults: [{ toolCallId: 'x', result: '' }],
     });
 
+    // B already has in-flight tools while A is selected — switch must rebind
+    // global busy to B's runtime, not merely clear to idle.
+    seedSessionToolRuntime(
+      'session-B',
+      [{ id: 'tool-b', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-B',
+      'tool-b',
+      'execute_command',
+      'exec-b-rebind',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+
     useChatStore.getState().selectSession('session-B');
 
     expect(useChatStore.getState().currentSessionId).toBe('session-B');
     expect(useChatStore.getState().isStreaming).toBe(false);
     expect(useChatStore.getState().streamingSessionId).toBeNull();
-    expect(useChatStore.getState().pendingToolCalls).toBe(0);
+    expect(useChatStore.getState().pendingToolCalls).toBe(1);
     expect(useChatStore.getState().pendingToolResults).toEqual([]);
+    expect(listUnresolvedSessionTools('session-B')).toEqual([
+      expect.objectContaining({
+        toolCallId: 'tool-b',
+        executionId: 'exec-b-rebind',
+      }),
+    ]);
+  });
+
+  it('soak knife 3: same-session new-turn race — stale Stop completion does not wipe post-Stop turn', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-old', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-old',
+      'execute_command',
+      'exec-old-1',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    useChatStore.setState({
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      pendingToolCalls: 1,
+    });
+
+    let releaseCancel!: () => void;
+    const cancelGate = new Promise<void>((resolve) => {
+      releaseCancel = resolve;
+    });
+    mockInvoke.mockImplementation(async (command: unknown) => {
+      if (command === 'cancel_tool_execution') {
+        await cancelGate;
+        return { cancelled: true, status: 'cancelled' };
+      }
+      return undefined;
+    });
+
+    const stopPromise = useChatStore.getState().stopGeneration();
+    await Promise.resolve();
+    expect(useChatStore.getState().isStreaming).toBe(false);
+
+    // Simulate sendMessage starting a new same-session turn while cancel settles.
+    bumpChatSessionTurnEpoch('session-1');
+    clearSessionToolRuntime('session-1', useChatStore.setState, useChatStore.getState);
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-new', name: 'read_file' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-new',
+      'read_file',
+      'exec-new-1',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    useChatStore.setState({
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      pendingToolCalls: 1,
+    });
+
+    releaseCancel();
+    await stopPromise;
+
+    expect(listUnresolvedSessionTools('session-1')).toEqual([
+      expect.objectContaining({
+        toolCallId: 'tool-new',
+        label: 'read_file',
+        executionId: 'exec-new-1',
+      }),
+    ]);
+    expect(useChatStore.getState().pendingToolCalls).toBe(1);
+    expect(useChatStore.getState().isStreaming).toBe(true);
+    expect(useChatStore.getState().streamingSessionId).toBe('session-1');
   });
 
 });
