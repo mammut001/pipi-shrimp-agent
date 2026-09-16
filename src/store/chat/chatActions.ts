@@ -316,6 +316,11 @@ async function tryRecoverFromToolPolicyError(
 
 let currentStreamingBuffer = '';
 
+/** Test-only: inspect module stream buffer (Stop→send race proofs). */
+export function getCurrentStreamingBufferForTests(): string {
+  return currentStreamingBuffer;
+}
+
 export function createChatActionMethods({
   set,
   get,
@@ -1117,9 +1122,7 @@ export function createChatActionMethods({
           console.debug('[ReactiveCompact] Check failed:', error);
         });
       } catch (error) {
-        currentStreamingBuffer = '';
         if (isChatGenerationCancelledError(error)) {
-          clearChatGenerationCancel(activeSessionId);
           // Always mark THIS turn's diagnostics cancelled; never touch a newer
           // turn's UI/runtime when the epoch has moved (Stop→send race).
           updateDiagnosticsTask(diagnosticsTaskId, {
@@ -1132,6 +1135,11 @@ export function createChatActionMethods({
           if (getChatSessionTurnEpoch(activeSessionId) !== turnEpoch) {
             return;
           }
+          // Epoch still matches: safe to clear THIS turn's stream buffer + cancel
+          // marker. Doing either before the guard lets a stale cancelled turn wipe
+          // a newer same-session turn's buffer / Stop marker.
+          currentStreamingBuffer = '';
+          clearChatGenerationCancel(activeSessionId);
           setStreaming(false);
           set({
             streamingContent: '',
@@ -1156,6 +1164,12 @@ export function createChatActionMethods({
           }));
           syncSessionToolRuntimeToCurrentSession(set, get);
           return;
+        }
+
+        // Real errors: only clear the shared stream buffer if this turn still owns
+        // the epoch (otherwise a late failure would blank a newer turn's buffer).
+        if (getChatSessionTurnEpoch(activeSessionId) === turnEpoch) {
+          currentStreamingBuffer = '';
         }
 
         turnHadError = true;
@@ -1216,7 +1230,10 @@ export function createChatActionMethods({
           }),
         }));
       } finally {
-        clearChatGenerationCancel(activeSessionId);
+        // Stale turn must not clear a newer same-session Stop/cancel marker.
+        if (getChatSessionTurnEpoch(activeSessionId) === turnEpoch) {
+          clearChatGenerationCancel(activeSessionId);
+        }
       }
     },
 

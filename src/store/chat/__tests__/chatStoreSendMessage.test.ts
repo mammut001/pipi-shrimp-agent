@@ -159,9 +159,14 @@ import {
 } from '../toolRuntimeState';
 import {
   bumpChatSessionTurnEpoch,
+  consumeChatGenerationCancel,
+  requestChatGenerationCancel,
   resetChatSessionTurnEpochForTests,
 } from '../chatStreaming';
-import { resetActiveChatDiagnosticsTaskIdsForTests } from '../chatActions';
+import {
+  getCurrentStreamingBufferForTests,
+  resetActiveChatDiagnosticsTaskIdsForTests,
+} from '../chatActions';
 import { useTaskRegistryStore } from '../../taskRegistryStore';
 
 async function* streamOneAssistantReply() {
@@ -1459,6 +1464,227 @@ describe('chatStore sendMessage integration', () => {
     expect(after).toBeDefined();
     expect(after!.state).toBe('completed');
     expect(after!.state).not.toBe('cancelled');
+  });
+
+  it('GPT FIX: stale cancel catch must not clear newer turn streaming buffer', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+
+    let releaseOldStream!: (mode: 'abort' | 'continue') => void;
+    const oldStreamGate = new Promise<'abort' | 'continue'>((resolve) => {
+      releaseOldStream = resolve;
+    });
+    let releaseNewStream!: () => void;
+    const newStreamGate = new Promise<void>((resolve) => {
+      releaseNewStream = resolve;
+    });
+    let runChatTurnCalls = 0;
+
+    mockRunChatTurn.mockImplementation(() => {
+      runChatTurnCalls += 1;
+      if (runChatTurnCalls === 1) {
+        return (async function* () {
+          yield { type: 'text_delta' as const, content: 'old-stale ' };
+          const mode = await oldStreamGate;
+          if (mode === 'abort') {
+            const err = new Error('aborted');
+            err.name = 'AbortError';
+            throw err;
+          }
+          yield {
+            type: 'turn_complete' as const,
+            tokenUsage: { input_tokens: 1, output_tokens: 1, model: 'mock-model' },
+          };
+        })();
+      }
+      return (async function* () {
+        yield { type: 'text_delta' as const, content: 'NEW-TURN-BUFFER-KEEP' };
+        // Hold mid-stream so buffer is populated while old cancel catch runs.
+        await newStreamGate;
+        yield {
+          type: 'turn_complete' as const,
+          tokenUsage: { input_tokens: 2, output_tokens: 2, model: 'mock-model' },
+        };
+      })();
+    });
+
+    let releaseCancel!: () => void;
+    const cancelGate = new Promise<void>((resolve) => {
+      releaseCancel = resolve;
+    });
+    mockInvoke.mockImplementation(async (command: unknown) => {
+      if (command === 'cancel_tool_execution') {
+        await cancelGate;
+        return { cancelled: true, status: 'cancelled' };
+      }
+      return undefined;
+    });
+
+    const sendOld = useChatStore.getState().sendMessage('old for buffer race');
+    for (let i = 0; i < 50 && !useChatStore.getState().isStreaming; i += 1) {
+      await Promise.resolve();
+    }
+    expect(useChatStore.getState().isStreaming).toBe(true);
+
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-old', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-old',
+      'execute_command',
+      'exec-buffer-race',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    useChatStore.setState({ pendingToolCalls: 1 });
+
+    const stopPromise = useChatStore.getState().stopGeneration();
+    await Promise.resolve();
+    expect(useChatStore.getState().isStreaming).toBe(false);
+
+    jest.advanceTimersByTime(25);
+    const sendNew = useChatStore.getState().sendMessage('new for buffer race');
+    for (let i = 0; i < 80; i += 1) {
+      if (getCurrentStreamingBufferForTests().includes('NEW-TURN-BUFFER-KEEP')) {
+        break;
+      }
+      await Promise.resolve();
+    }
+    expect(getCurrentStreamingBufferForTests()).toContain('NEW-TURN-BUFFER-KEEP');
+
+    // Stale cancelled turn's catch runs while new turn owns the buffer.
+    releaseOldStream('abort');
+    await sendOld;
+
+    expect(getCurrentStreamingBufferForTests()).toContain('NEW-TURN-BUFFER-KEEP');
+
+    releaseNewStream();
+    releaseCancel();
+    await Promise.all([stopPromise, sendNew]);
+
+    const session = useChatStore.getState().sessions.find((s) => s.id === 'session-1')!;
+    expect(session.messages.some((m) => (
+      m.role === 'assistant' && typeof m.content === 'string' && m.content.includes('NEW-TURN-BUFFER-KEEP')
+    ))).toBe(true);
+  });
+
+  it('GPT FIX: stale send finally must not clear newer turn cancel marker', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+
+    let releaseOldStream!: (mode: 'abort' | 'continue') => void;
+    const oldStreamGate = new Promise<'abort' | 'continue'>((resolve) => {
+      releaseOldStream = resolve;
+    });
+    let releaseNewStream!: () => void;
+    const newStreamGate = new Promise<void>((resolve) => {
+      releaseNewStream = resolve;
+    });
+    let runChatTurnCalls = 0;
+
+    mockRunChatTurn.mockImplementation(() => {
+      runChatTurnCalls += 1;
+      if (runChatTurnCalls === 1) {
+        return (async function* () {
+          yield { type: 'text_delta' as const, content: 'old-cancel-marker ' };
+          const mode = await oldStreamGate;
+          if (mode === 'abort') {
+            const err = new Error('aborted');
+            err.name = 'AbortError';
+            throw err;
+          }
+          yield {
+            type: 'turn_complete' as const,
+            tokenUsage: { input_tokens: 1, output_tokens: 1, model: 'mock-model' },
+          };
+        })();
+      }
+      return (async function* () {
+        yield { type: 'text_delta' as const, content: 'new-still-streaming' };
+        // Hold AFTER first chunk was pulled+consume-checked, so a later
+        // requestChatGenerationCancel stays parked for the finally proof.
+        await newStreamGate;
+        yield {
+          type: 'turn_complete' as const,
+          tokenUsage: { input_tokens: 2, output_tokens: 2, model: 'mock-model' },
+        };
+      })();
+    });
+
+    let releaseCancel!: () => void;
+    const cancelGate = new Promise<void>((resolve) => {
+      releaseCancel = resolve;
+    });
+    mockInvoke.mockImplementation(async (command: unknown) => {
+      if (command === 'cancel_tool_execution') {
+        await cancelGate;
+        return { cancelled: true, status: 'cancelled' };
+      }
+      return undefined;
+    });
+
+    const sendOld = useChatStore.getState().sendMessage('old for cancel-marker race');
+    for (let i = 0; i < 50 && !useChatStore.getState().isStreaming; i += 1) {
+      await Promise.resolve();
+    }
+
+    seedSessionToolRuntime(
+      'session-1',
+      [{ id: 'tool-old', name: 'execute_command' }],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tool-old',
+      'execute_command',
+      'exec-cancel-marker-race',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    useChatStore.setState({ pendingToolCalls: 1 });
+
+    const stopPromise = useChatStore.getState().stopGeneration();
+    await Promise.resolve();
+    expect(useChatStore.getState().isStreaming).toBe(false);
+
+    jest.advanceTimersByTime(25);
+    const sendNew = useChatStore.getState().sendMessage('new for cancel-marker race');
+    // Wait until new turn has processed its first delta (consume check already ran).
+    for (let i = 0; i < 80; i += 1) {
+      if (getCurrentStreamingBufferForTests().includes('new-still-streaming')) {
+        break;
+      }
+      await Promise.resolve();
+    }
+    expect(getCurrentStreamingBufferForTests()).toContain('new-still-streaming');
+    expect(useChatStore.getState().isStreaming).toBe(true);
+
+    // New turn is mid-stream past its consume check: Stop marker belongs to it.
+    requestChatGenerationCancel('session-1');
+
+    // Stale old send settles; unguarded finally would clear the new turn's marker.
+    releaseOldStream('abort');
+    await sendOld;
+
+    // Marker must still be present for the new turn to observe Stop.
+    expect(consumeChatGenerationCancel('session-1')).toBe(true);
+
+    releaseNewStream();
+    releaseCancel();
+    await Promise.all([stopPromise, sendNew]);
   });
 
 });
