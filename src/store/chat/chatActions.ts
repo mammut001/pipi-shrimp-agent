@@ -1834,9 +1834,13 @@ export function createChatActionMethods({
           reasoning: get().streamingReasoning,
           statusMessages: [],
         });
+        // Background session streams must update their own messages, but must
+        // not paint into the selected session's stream chrome after a switch.
+        const updateSelectedStreamChrome = currentSessionId === targetSessionId;
         set((state) => ({
-          streamingContent: newContent,
-          lastUiUpdateTime: now,
+          ...(updateSelectedStreamChrome
+            ? { streamingContent: newContent, lastUiUpdateTime: now }
+            : { lastUiUpdateTime: now }),
           sessions: state.sessions.map((session) => {
             if (session.id !== targetSessionId || session.messages.length === 0) {
               return session;

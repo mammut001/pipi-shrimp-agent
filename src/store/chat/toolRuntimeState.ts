@@ -323,11 +323,9 @@ export function clearSessionToolRuntime(
 }
 
 // AUDIT-FIX [audit-1#2] — Releases runtime state for every session that is NOT
-// the currently-selected one. Previously the module-level Map would only lose
-// entries on explicit clear()/delete(sessionId) calls; switching sessions via
-// selectSession() would clear the store-side counters but leave behind every
-// non-current session's tool runtime, leaking memory and (worse) keeping stale
-// task steps alive past session boundaries.
+// the currently-selected one. Used on delete/multi-delete paths. selectSession
+// must NOT call this: background sessions keep in-flight tool runtime so a
+// switch can rebind busy UI without cancelling tools.
 export function clearNonCurrentSessionToolRuntime(
   set: ChatSetState,
   get: () => ChatState,

@@ -162,6 +162,7 @@ import {
 import { shouldShowStopControl } from '../chatSelectors';
 import {
   bumpChatSessionTurnEpoch,
+  clearChatGenerationCancel,
   consumeChatGenerationCancel,
   getChatSessionTurnEpoch,
   requestChatGenerationCancel,
@@ -288,6 +289,9 @@ describe('chatStore sendMessage integration', () => {
     jest.useFakeTimers();
     resetAllSessionToolRuntime();
     resetChatSessionTurnEpochForTests();
+    clearChatGenerationCancel('session-1');
+    clearChatGenerationCancel('session-B');
+    clearChatGenerationCancel('session-2');
     resetActiveChatDiagnosticsTaskIdsForTests();
     useTaskRegistryStore.getState().clearTasks();
     mockInvoke.mockReset();
@@ -959,7 +963,7 @@ describe('chatStore sendMessage integration', () => {
     expect(useChatStore.getState().streamingSessionId).toBeNull();
   });
 
-  it('P0-2 regression: switching session while streaming cancels turn and prevents replaying to new session', async () => {
+  it('P0-2 regression: switching session while streaming does not bleed into new session', async () => {
     const currentSessions = useChatStore.getState().sessions;
     useChatStore.setState({
       sessions: [
@@ -980,16 +984,29 @@ describe('chatStore sendMessage integration', () => {
       yield { type: 'text_delta' as const, content: 'chunk from session 1' };
       useChatStore.getState().selectSession('session-2');
       yield { type: 'text_delta' as const, content: 'bleed chunk' };
+      yield {
+        type: 'turn_complete' as const,
+        tokenUsage: { input_tokens: 1, output_tokens: 1, model: 'mock-model' },
+      };
     }
     mockRunChatTurn.mockImplementation(() => streamToSwitch());
 
     await useChatStore.getState().sendMessage('send in session 1');
 
+    const session1 = useChatStore.getState().sessions.find((s) => s.id === 'session-1');
     const session2 = useChatStore.getState().sessions.find((s) => s.id === 'session-2');
     // Session 2 should have NO messages from session 1
     expect(session2?.messages).toEqual([]);
     expect(useChatStore.getState().currentSessionId).toBe('session-2');
     expect(useChatStore.getState().isStreaming).toBe(false);
+    // Background turn on session 1 keeps writing to session 1 (no cancel-on-switch)
+    const session1Text = (session1?.messages ?? [])
+      .filter((m) => m.role === 'assistant')
+      .map((m) => m.content)
+      .join('');
+    expect(session1Text).toContain('chunk from session 1');
+    expect(session1Text).toContain('bleed chunk');
+    expect(session1Text).not.toMatch(/Tool execution cancelled before completion/);
   });
 
   it('soak knife 3: Stop clears busy UI before slow native cancel resolves (≤1s feel)', async () => {
@@ -1334,6 +1351,122 @@ describe('chatStore sendMessage integration', () => {
         executionId: 'exec-b-rebind',
       }),
     ]);
+  });
+
+  it('session switch must not cancel in-flight tools on the previous session', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+    const current = useChatStore.getState().sessions;
+    const historyA = [
+      createMessage('user', 'run barrier'),
+      {
+        ...createMessage('assistant', 'calling tools'),
+        tool_calls: [
+          { id: 'tc-a-barrier', name: 'test_barrier_tool', arguments: '{}' },
+          { id: 'tc-a-exec', name: 'execute_command', arguments: '{}' },
+        ],
+      },
+    ];
+    useChatStore.setState({
+      sessions: [
+        { ...current[0]!, messages: historyA, updatedAt: Date.now() },
+        {
+          id: 'session-B',
+          title: 'Session B',
+          messages: [createMessage('user', 'idle B')],
+          createdAt: 2,
+          updatedAt: 2,
+          permissionMode: 'auto-edits',
+          executionMode: 'agent',
+        },
+      ],
+      currentSessionId: 'session-1',
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      pendingToolCalls: 2,
+      pendingToolResults: [],
+    });
+
+    seedSessionToolRuntime(
+      'session-1',
+      [
+        { id: 'tc-a-barrier', name: 'test_barrier_tool' },
+        { id: 'tc-a-exec', name: 'execute_command' },
+      ],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tc-a-barrier',
+      'test_barrier_tool',
+      'exec-a-barrier',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tc-a-exec',
+      'execute_command',
+      'exec-a-cmd',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+
+    const invokeCallsBefore = mockInvoke.mock.calls.length;
+    // Isolate from prior Stop tests that may leave a parked cancel token.
+    clearChatGenerationCancel('session-1');
+    useChatStore.getState().selectSession('session-B');
+
+    expect(useChatStore.getState().currentSessionId).toBe('session-B');
+    expect(useChatStore.getState().isStreaming).toBe(false);
+    expect(useChatStore.getState().streamingSessionId).toBeNull();
+    // B idle → busy flags rebound to empty for selected session
+    expect(useChatStore.getState().pendingToolCalls).toBe(0);
+    expect(shouldShowStopControl({
+      isStreaming: useChatStore.getState().isStreaming,
+      pendingToolCalls: useChatStore.getState().pendingToolCalls,
+      pendingToolResultsLength: useChatStore.getState().pendingToolResults.length,
+    })).toBe(false);
+
+    // A's tools remain unresolved / cancellable — switch did not fail/scrub them
+    expect(listUnresolvedSessionTools('session-1')).toEqual([
+      expect.objectContaining({ toolCallId: 'tc-a-barrier', executionId: 'exec-a-barrier' }),
+      expect.objectContaining({ toolCallId: 'tc-a-exec', executionId: 'exec-a-cmd' }),
+    ]);
+    expect(listCancellableSessionExecutionIds('session-1')).toEqual(
+      expect.arrayContaining(['exec-a-barrier', 'exec-a-cmd']),
+    );
+    // selectSession must not arm a generation-cancel token for A
+    expect(consumeChatGenerationCancel('session-1')).toBe(false);
+
+    const sessionA = useChatStore.getState().sessions.find((s) => s.id === 'session-1')!;
+    expect(sessionA.messages.some((m) => (
+      typeof m.content === 'string'
+      && (
+        m.content.includes('[Tool execution cancelled before completion.]')
+        || m.content.includes('cancelled due to session change')
+        || m.content.includes('cancelled by user')
+      )
+    ))).toBe(false);
+
+    const newInvokes = mockInvoke.mock.calls.slice(invokeCallsBefore);
+    expect(newInvokes.some((call) => call[0] === 'stop_subprocess')).toBe(false);
+    expect(newInvokes.some((call) => call[0] === 'cancel_tool_execution')).toBe(false);
+
+    // Switching back rebinds busy UI to A's still-running tools (Stop visible)
+    useChatStore.getState().selectSession('session-1');
+    expect(useChatStore.getState().pendingToolCalls).toBe(2);
+    expect(shouldShowStopControl({
+      isStreaming: useChatStore.getState().isStreaming,
+      pendingToolCalls: useChatStore.getState().pendingToolCalls,
+      pendingToolResultsLength: useChatStore.getState().pendingToolResults.length,
+    })).toBe(true);
+    expect(listUnresolvedSessionTools('session-1')).toHaveLength(2);
   });
 
   it('soak knife 3: same-session new-turn race — stale Stop completion does not wipe post-Stop turn', async () => {
