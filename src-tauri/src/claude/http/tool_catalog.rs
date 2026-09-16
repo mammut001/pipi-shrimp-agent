@@ -679,14 +679,6 @@ pub fn get_tools(allow_browser_tools: bool) -> Vec<Value> {
                     "barrierId": {
                         "type": "string",
                         "description": "CamelCase alias for barrier_id."
-                    },
-                    "executionId": {
-                        "type": "string",
-                        "description": "Optional execution identifier used to cancel this wait via cancel_tool_execution."
-                    },
-                    "execution_id": {
-                        "type": "string",
-                        "description": "Legacy snake_case alias for executionId."
                     }
                 },
                 "required": ["barrier_id"],
@@ -802,6 +794,13 @@ mod tests {
         assert!(
             required.iter().any(|v| v.as_str() == Some("barrier_id")),
             "barrier_id must be required"
+        );
+        let props = barrier["input_schema"]["properties"]
+            .as_object()
+            .expect("properties object");
+        assert!(
+            !props.contains_key("executionId") && !props.contains_key("execution_id"),
+            "LLM catalog must not expose runtime-owned executionId/execution_id (model could invent them)"
         );
     }
 
