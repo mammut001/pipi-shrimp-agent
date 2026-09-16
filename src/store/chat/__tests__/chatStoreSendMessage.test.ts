@@ -1009,6 +1009,84 @@ describe('chatStore sendMessage integration', () => {
     expect(session1Text).not.toMatch(/Tool execution cancelled before completion/);
   });
 
+  it('background session A completion must not flip B stream chrome', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+    const currentSessions = useChatStore.getState().sessions;
+    useChatStore.setState({
+      sessions: [
+        ...currentSessions,
+        {
+          id: 'session-B',
+          title: 'Session B',
+          messages: [createMessage('user', 'idle on B')],
+          createdAt: 2,
+          updatedAt: 2,
+          permissionMode: 'auto-edits',
+          executionMode: 'agent',
+        },
+      ],
+    });
+
+    async function* streamAThenCompleteInBackground() {
+      yield { type: 'text_delta' as const, content: 'A-chunk-1' };
+      useChatStore.getState().selectSession('session-B');
+      // Simulate B's selected-session chrome after switch (idle→busy UI or local buffer).
+      useChatStore.setState({
+        isStreaming: true,
+        streamingContent: 'B-buffer',
+        streamingReasoning: 'B-reason',
+        streamingSessionId: 'session-B',
+      });
+      const chromeBeforeComplete = {
+        isStreaming: useChatStore.getState().isStreaming,
+        streamingContent: useChatStore.getState().streamingContent,
+        streamingReasoning: useChatStore.getState().streamingReasoning,
+        streamingSessionId: useChatStore.getState().streamingSessionId,
+      };
+      expect(chromeBeforeComplete).toEqual({
+        isStreaming: true,
+        streamingContent: 'B-buffer',
+        streamingReasoning: 'B-reason',
+        streamingSessionId: 'session-B',
+      });
+
+      yield { type: 'text_delta' as const, content: 'A-chunk-2' };
+      yield { type: 'reasoning_delta' as const, content: 'A-think' };
+      yield {
+        type: 'turn_complete' as const,
+        tokenUsage: { input_tokens: 1, output_tokens: 1, model: 'mock-model' },
+      };
+    }
+    mockRunChatTurn.mockImplementation(() => streamAThenCompleteInBackground());
+
+    await useChatStore.getState().sendMessage('send in session A');
+
+    expect(useChatStore.getState().currentSessionId).toBe('session-B');
+    // B chrome must be untouched by A's background completion.
+    expect(useChatStore.getState().isStreaming).toBe(true);
+    expect(useChatStore.getState().streamingContent).toBe('B-buffer');
+    expect(useChatStore.getState().streamingReasoning).toBe('B-reason');
+    expect(useChatStore.getState().streamingSessionId).toBe('session-B');
+
+    const sessionA = useChatStore.getState().sessions.find((s) => s.id === 'session-1');
+    const sessionB = useChatStore.getState().sessions.find((s) => s.id === 'session-B');
+    const sessionAText = (sessionA?.messages ?? [])
+      .filter((m) => m.role === 'assistant')
+      .map((m) => m.content)
+      .join('');
+    expect(sessionAText).toContain('A-chunk-1');
+    expect(sessionAText).toContain('A-chunk-2');
+    // B history unchanged (no A bleed into B messages)
+    expect(sessionB?.messages).toEqual([
+      expect.objectContaining({ role: 'user', content: 'idle on B' }),
+    ]);
+  });
+
   it('soak knife 3: Stop clears busy UI before slow native cancel resolves (≤1s feel)', async () => {
     resetChatState({
       executionMode: 'agent',

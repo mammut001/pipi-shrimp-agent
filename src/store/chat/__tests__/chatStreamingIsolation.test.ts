@@ -7,6 +7,7 @@ import {
   getChatSessionTurnEpoch,
   requestChatGenerationCancel,
   resetChatSessionTurnEpochForTests,
+  ownsSelectedStreamChrome,
   resolveStreamingOwnerSessionId,
 } from '../chatStreaming';
 
@@ -40,3 +41,11 @@ describe('chat streaming session isolation (TOP-15-01)', () => {
     expect(getChatSessionTurnEpoch('session-b')).toBe(0);
   });
 });
+
+  it('ownsSelectedStreamChrome is true only when owning session is selected', () => {
+    expect(ownsSelectedStreamChrome('session-a', 'session-a')).toBe(true);
+    expect(ownsSelectedStreamChrome('session-a', 'session-b')).toBe(false);
+    expect(ownsSelectedStreamChrome(null, 'session-b')).toBe(false);
+    expect(ownsSelectedStreamChrome('session-a', null)).toBe(false);
+  });
+
