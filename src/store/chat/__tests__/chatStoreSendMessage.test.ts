@@ -1151,6 +1151,73 @@ describe('chatStore sendMessage integration', () => {
     }
   });
 
+  it('background A completion with stale streamingSessionId must not clear B streamingTimeoutId', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+    const currentSessions = useChatStore.getState().sessions;
+    useChatStore.setState({
+      sessions: [
+        ...currentSessions,
+        {
+          id: 'session-B',
+          title: 'Session B',
+          messages: [createMessage('user', 'idle on B')],
+          createdAt: 2,
+          updatedAt: 2,
+          permissionMode: 'auto-edits',
+          executionMode: 'agent',
+        },
+      ],
+    });
+
+    const bTimeoutId = setTimeout(() => {
+      throw new Error('B streamingTimeoutId must not fire during stale-pointer test');
+    }, 60_000);
+    const clearTimeoutSpy = jest.spyOn(global, 'clearTimeout');
+
+    async function* streamAWithStaleOwnerPointer() {
+      yield { type: 'text_delta' as const, content: 'A-chunk-1' };
+      // Simulate: user on B with B's timeout, but streamingSessionId still names A
+      // (stale ownership pointer). Background A completion must drop the pointer
+      // only — never clearTimeout/null B's streamingTimeoutId.
+      useChatStore.setState({
+        currentSessionId: 'session-B',
+        isStreaming: true,
+        streamingContent: 'B-buffer',
+        streamingReasoning: 'B-reason',
+        streamingSessionId: 'session-1',
+        streamingTimeoutId: bTimeoutId,
+      });
+      expect(useChatStore.getState().streamingTimeoutId).toBe(bTimeoutId);
+
+      yield { type: 'text_delta' as const, content: 'A-chunk-2' };
+      yield {
+        type: 'turn_complete' as const,
+        tokenUsage: { input_tokens: 1, output_tokens: 1, model: 'mock-model' },
+      };
+    }
+    mockRunChatTurn.mockImplementation(() => streamAWithStaleOwnerPointer());
+
+    try {
+      await useChatStore.getState().sendMessage('send in session A');
+
+      expect(useChatStore.getState().currentSessionId).toBe('session-B');
+      expect(useChatStore.getState().streamingTimeoutId).toBe(bTimeoutId);
+      expect(useChatStore.getState().isStreaming).toBe(true);
+      expect(useChatStore.getState().streamingContent).toBe('B-buffer');
+      // Stale A pointer dropped; B timeout untouched.
+      expect(useChatStore.getState().streamingSessionId).toBeNull();
+      expect(clearTimeoutSpy).not.toHaveBeenCalledWith(bTimeoutId);
+    } finally {
+      clearTimeoutSpy.mockRestore();
+      clearTimeout(bTimeoutId);
+    }
+  });
+
   it('soak knife 3: Stop clears busy UI before slow native cancel resolves (≤1s feel)', async () => {
     resetChatState({
       executionMode: 'agent',

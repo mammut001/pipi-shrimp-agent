@@ -389,9 +389,10 @@ export function getCurrentStreamingBufferForTests(): string {
  * selected. Background completion/cancel must not flip another session's
  * isStreaming / stream buffers / busy chrome / streamingTimeoutId.
  *
- * `streamingTimeoutId` is selected-session chrome: only clear/reset it when this
- * owning session owns the selected stream, or still holds `streamingSessionId`
- * (stale ownership pointer for the completing background turn).
+ * Owner-gated timeout cleanup: `streamingTimeoutId` is selected-session chrome.
+ * Only clear/reset it when this owning session is the selected session. A
+ * background completion may drop a stale `streamingSessionId` pointer that still
+ * names the completing session, but must never clearTimeout/null B's timeout.
  */
 function clearStreamChromeIfSelected(
   set: ChatActionFactoryDeps['set'],
@@ -403,13 +404,10 @@ function clearStreamChromeIfSelected(
   const ownsSelected = ownsSelectedStreamChrome(owningSessionId, currentSessionId);
 
   if (!ownsSelected) {
-    // Drop ownership pointer if it still names this background session.
-    // Only then may we clearTimeout — never touch B's streamingTimeoutId while A completes.
+    // Drop stale ownership pointer only. Never touch streamingTimeoutId — after
+    // switch, B may already own the selected-session timeout timer.
     if (streamingSessionId === owningSessionId) {
-      if (streamingTimeoutId) {
-        clearTimeout(streamingTimeoutId);
-      }
-      set({ streamingSessionId: null, streamingTimeoutId: null });
+      set({ streamingSessionId: null });
     }
     return;
   }
