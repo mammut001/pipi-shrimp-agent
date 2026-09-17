@@ -89,7 +89,7 @@ Items remediated per [README remediation section](./README.md#修复进展remedi
 | ----- | ----- |
 | **Lane** | A. P0 / Safety / Data Loss |
 | **Severity** | P0 |
-| **Status** | `fixed` — needs regression tests |
+| **Status** | `fixed` — regression covered 2026-09-17 (TOP-15-01 / T-01) |
 | **Why it matters** | Streaming deltas could corrupt another session's message history — silent data loss |
 | **Affected files** | `src/store/chat/chatActions.ts` |
 | **Smallest PR scope** | Add `sessionIsolation` regression tests only (no behavior change) |
@@ -105,7 +105,7 @@ Items remediated per [README remediation section](./README.md#修复进展remedi
 | ----- | ----- |
 | **Lane** | A. P0 / Safety / Data Loss |
 | **Severity** | P0 |
-| **Status** | `fixed` — needs regression tests |
+| **Status** | `fixed` — regression covered 2026-09-17 (TOP-15-01; soak: no cancel-on-switch, Stop explicit) |
 | **Why it matters** | Background `for await` continued after switch — wasted tokens, wrong-session side effects |
 | **Affected files** | `src/store/createChatStore.ts`, `src/store/chat/chatActions.ts` |
 | **Smallest PR scope** | Test `requestChatGenerationCancel` on `selectSession` |

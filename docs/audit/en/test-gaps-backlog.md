@@ -12,7 +12,7 @@ Chinese version: [../test-gaps-backlog.md](../test-gaps-backlog.md)
 
 | # | Module | Test description | Related finding | Remediation |
 | --- | ------ | ---------------- | --------------- | ----------- |
-| T-01 | Chat | `selectSession` during streaming: content does not leak across sessions; generator is cancelled | R1-01, R1-02 | Code fixed; regression test needed |
+| T-01 | Chat | `selectSession` during streaming: content does not leak; selected chrome cleared; background turn continues on owning session (no cancel-on-switch) ✅ Fixed 2026-09-17 | R1-01, R1-02 | Regression: `sessionIsolation` + `chatStreamingIsolation` + `chatStoreSendMessage` P0-2 |
 | T-02 | Shell | `browserDockMode=split`: `ChatInput` visible or explicit UX documented | R1-03 | Code fixed; regression test needed |
 | T-03 | Core | `QueryEngine` tool_batch with no resolve → timeout/reject | R4-03 | Code fixed; regression test needed |
 | T-04 | AutoResearch | `chatAdapter` AbortSignal propagated to `runHeadlessAgentTurn` | R5-01 | Code fixed; regression test needed |

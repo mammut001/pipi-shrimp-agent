@@ -1,3 +1,11 @@
+/**
+ * TOP-15-01 companion — pure chatStreaming helpers for session ownership.
+ * Store-level selectSession contracts live in sessionIsolation.test.ts;
+ * end-to-end stream-while-switch lives in chatStoreSendMessage.test.ts (P0-2).
+ *
+ * Cancel tokens here prove Stop/session-scoped cancel isolation — selectSession
+ * itself must not request cancel (see sessionIsolation TOP-15-01 describe).
+ */
 import { describe, expect, it, beforeEach } from '@jest/globals';
 
 import {
