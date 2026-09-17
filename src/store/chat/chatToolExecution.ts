@@ -696,6 +696,7 @@ async function resolveSerialToolPermission(
   });
 
   const approved = await swarm.enqueuePermissionInUI({
+    sessionId: activeSessionId,
     teamId: runtimeTeam.id,
     agentId: runtimeAgent.id,
     agentName: String(parsedAgentArgs.name),
