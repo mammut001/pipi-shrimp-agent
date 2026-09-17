@@ -54,3 +54,20 @@ Scope: §1 live dual-session retry on `DISPLAY=:3`; no `kill -9` or process kill
 - B permission was approved; both A and B were observed with red Stop controls / processing state in separate chats.
 - Stopped A, switched to B and confirmed B still mid-tool (a permission prompt resurfaced and was approved), then stopped B. Both ended with tool-cancelled-before-completion records.
 - Result: PASS for dual-session concurrency and cross-chat isolation; noted composer focus required the view toggle workaround.
+
+## §2 kill/reopen
+
+Scope: live mid-tool kill → reopen → hydrate on `DISPLAY=:3`; main tip `11120b6`.
+
+| Step | Result | Evidence / notes |
+|---|---|---|
+| Preconditions: fresh A, Project Folder, 危险/Danger | PASS | Chat 52 bound to `/workspace/pipi-shrimp-agent`; red 危险 mode visible. |
+| 1. Start A with exact `只用 execute_command 运行: sleep 600; echo soak-crash-a`; approve; mid-tool | PASS | Permission sheet showed `sleep 600; echo soak-crash-a` and workdir `/workspace/pipi-shrimp-agent`; processing with red Stop visible. Screenshot: `file:///home/box/sand-data/agents/051467ec-3546-40b5-a423-0af3c4aa0caf/assets/2a1b5455a89682e384fb2f15ce7d173af2ef29e5e6a5acbbbdfe369b38f386c7.webp` |
+| 2. Force-kill app binary, not desktop | PASS | `pgrep -af target/debug/pipi-shrimp-agent` found PID `3606114`; issued `kill -9 3606114`. |
+| 3. Restart on DISPLAY=:3 and reopen | PASS | Restarted with `cd /workspace/pipi-shrimp-agent && DISPLAY=:3 WEBKIT_DISABLE_COMPOSITING_MODE=1 pnpm run tauri:dev`; app returned to Chat 52. |
+| 4. Hydrate A: interrupted notice; no dangling tool success | PASS | History showed `[Tool run interrupted before completion (session reloaded): execute_command ...]` with cancelled tool-call id and explicit terminal-cancel/no-retry wording; no Stop/busy state and no `soak-crash-a` success. Screenshot: `file:///home/box/sand-data/agents/051467ec-3546-40b5-a423-0af3c4aa0caf/assets/b35d62dc6c8f7a69f6b9437a001c5df01d782ae8c66ea9250ecb9599b101420c.webp` |
+| 5. Follow-up short message on A | PASS | Sent `跟进检查：请只回复 ok，不要运行工具。`; new turn returned `ok`, with no tool invocation and no resume-as-success. Screenshot: `file:///home/box/sand-data/agents/051467ec-3546-40b5-a423-0af3c4aa0caf/assets/5e39612b6b38a6bd539d0ae3612bdc207377fba860f0ec1efaaf7952d32a7055.webp` |
+| Optional B | NOT RUN | A alone satisfied the kill soak; no sibling session created, so no B ghost-notice check was applicable. |
+
+### §2 verdict
+**PASS** — A was killed during an approved long-running execute_command, reopened with an interrupted hydrate notice and terminalized tool call, and accepted a new no-tool follow-up without treating the killed sleep as success.
