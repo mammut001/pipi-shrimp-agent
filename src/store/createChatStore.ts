@@ -771,7 +771,6 @@ export const useChatStore = create<ChatState>()(
       if (!session) {
         return;
       }
-      const pendingPermissions = get().currentSessionId === sessionId ? [...useUIStore.getState().permissionQueue] : [];
       const executionMode = executionModeFromPermissionMode(permissionMode);
       const updatedSession = hydrateSessionModes({
         ...session,
@@ -782,12 +781,15 @@ export const useChatStore = create<ChatState>()(
       set((state) => ({ sessions: state.sessions.map((candidate) => (candidate.id === sessionId ? updatedSession : candidate)) }));
       await safeInvoke('db_save_session', { session: sessionToDb(updatedSession) });
 
-      if (pendingPermissions.length === 0) {
-        return;
-      }
-      useUIStore.getState().clearPermissionsForSession(sessionId);
-      for (const request of pendingPermissions) {
-        request._resolve?.(permissionMode === 'bypass' || permissionMode === 'auto-edits');
+      // Session-scoped: settle only this session's pending approvals once.
+      // Do not snapshot the whole queue (other sessions) and do not
+      // clearPermissionsForSession + re-resolve (double-settle).
+      const approved = permissionMode === 'bypass' || permissionMode === 'auto-edits';
+      const pendingForSession = useUIStore.getState().permissionQueue.filter(
+        (request) => request.sessionId === sessionId,
+      );
+      for (const request of pendingForSession) {
+        useUIStore.getState().resolvePermissionRequest(approved, request.id);
       }
     },
 
@@ -814,17 +816,14 @@ export const useChatStore = create<ChatState>()(
       }));
       await safeInvoke('db_save_session', { session: sessionToDb(updatedSession) });
 
-      // Mirror behavior of updateSessionPermissionMode: if the new mode
-      // auto-approves safe tools, resolve any pending permission requests.
+      // Mirror updateSessionPermissionMode: auto-approve modes settle only
+      // this session's pending approvals once (sessionId-gated; no double-settle).
       if (profile.permissionMode === 'bypass' || profile.permissionMode === 'auto-edits') {
-        const pendingPermissions = get().currentSessionId === sessionId
-          ? [...useUIStore.getState().permissionQueue]
-          : [];
-        if (pendingPermissions.length > 0) {
-          useUIStore.getState().clearPermissionsForSession(sessionId);
-          for (const request of pendingPermissions) {
-            request._resolve?.(true);
-          }
+        const pendingForSession = useUIStore.getState().permissionQueue.filter(
+          (request) => request.sessionId === sessionId,
+        );
+        for (const request of pendingForSession) {
+          useUIStore.getState().resolvePermissionRequest(true, request.id);
         }
       }
     },
