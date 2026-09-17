@@ -448,15 +448,17 @@ export const AgentPanel: React.FC = () => {
 
         {/* Working Folders Section */}
         <Section
-          title="Working folders"
-          count={((syncedFiles.length) + allWorkingFiles.length).toString()}
+          title={t('agentPanel.workingFolders.title')}
+          count={((syncedFiles.length) + allWorkingFiles.length) > 0
+            ? ((syncedFiles.length) + allWorkingFiles.length).toString()
+            : undefined}
         >
-          <div className="pt-2 space-y-1">
+          <div className="pt-1.5 space-y-0.5">
             {/* Render Disk-Synced Files */}
             {syncedFiles.length > 0 && syncedFiles.map((file) => (
               <div 
                 key={file.path} 
-                className="group flex items-center gap-3 p-2 hover:bg-gray-100/50 rounded-xl transition-all cursor-pointer"
+                className="group flex items-center gap-2 px-2 py-1.5 hover:bg-gray-100/50 rounded-lg transition-all cursor-pointer"
                 onClick={() => {
                    invoke('reveal_in_finder', { path: file.path }).catch(console.error);
                 }}
@@ -490,7 +492,7 @@ export const AgentPanel: React.FC = () => {
                   }
                 };
                 return (
-                  <div key={file.id} className="group flex items-center gap-3 p-2 hover:bg-gray-100/50 rounded-xl transition-all">
+                  <div key={file.id} className="group flex items-center gap-2 px-2 py-1.5 hover:bg-gray-100/50 rounded-lg transition-all">
                     <FileIcon filename={file.name} />
                     <span className="flex-1 text-[11px] text-gray-700 truncate font-medium" title={file.path}>
                       {file.name}
@@ -513,13 +515,21 @@ export const AgentPanel: React.FC = () => {
               })
             ) : (
               syncedFiles.length === 0 && (
-                <div className="py-6 flex flex-col items-center justify-center opacity-25">
-                  <p className="text-[10px] font-bold uppercase tracking-tight text-center px-4 leading-normal">Drop files here to add to context</p>
+                <div
+                  data-testid="working-folders-empty"
+                  className="mt-0.5 rounded-lg border border-dashed border-gray-200 bg-gray-50/60 px-3 py-3 flex flex-col items-center justify-center text-center"
+                >
+                  <p className="text-[11px] font-semibold text-gray-500 leading-snug">
+                    {t('agentPanel.workingFolders.emptyTitle')}
+                  </p>
+                  <p className="mt-1 text-[10px] text-gray-400 leading-relaxed max-w-[220px]">
+                    {t('agentPanel.workingFolders.emptyHint')}
+                  </p>
                 </div>
               )
             )}
             {globalImportedFiles.length > 0 && (
-              <div className="mt-2 pt-2 border-t border-gray-100 flex items-center justify-between">
+              <div className="mt-1.5 pt-1.5 border-t border-gray-100 flex items-center justify-between">
                 <span className="text-[9px] text-gray-400 font-medium">
                   {globalImportedFiles.length} global file{globalImportedFiles.length !== 1 ? 's' : ''} (all sessions)
                 </span>

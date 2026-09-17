@@ -133,3 +133,25 @@ describe('FileDropOverlay context files copy', () => {
     expect(source).toMatch(/label:\s*t\('chat\.useAsWorkspace'\)/);
   });
 });
+
+describe('AgentPanel Working folders empty copy', () => {
+  const source = readSource('src/components/AgentPanel.tsx');
+
+  it('uses i18n empty-state keys instead of hardcoded Drop-files copy', () => {
+    // Soak/debug glance: empty Working Folders should read clearly in
+    // both locales, not a faint "Drop files here…" stub.
+    expect(source).toMatch(/agentPanel\.workingFolders\.title/);
+    expect(source).toMatch(/agentPanel\.workingFolders\.emptyTitle/);
+    expect(source).toMatch(/agentPanel\.workingFolders\.emptyHint/);
+    expect(source).toMatch(/data-testid="working-folders-empty"/);
+    expect(source).not.toMatch(/Drop files here to add to context/);
+  });
+
+  it('hides the Working folders count badge when the list is empty', () => {
+    // Progress already omits count at 0; Working folders should match
+    // so a "0" chip does not clutter the empty glance.
+    expect(source).toMatch(
+      /count=\{\(\(syncedFiles\.length\) \+ allWorkingFiles\.length\) > 0/,
+    );
+  });
+});

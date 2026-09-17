@@ -1479,6 +1479,11 @@ const zhCN: TranslationKeys = {
   'chat.input.contextFilesSubtitle': '这些文件只是本次对话的参考，不会改变工作区文件夹。',
   'chat.input.contextFilesNotWorkspace': '参考文件不会自动成为工作区文件夹。',
 
+  // AgentPanel — Working folders
+  'agentPanel.workingFolders.title': '工作文件夹',
+  'agentPanel.workingFolders.emptyTitle': '暂无工作文件夹',
+  'agentPanel.workingFolders.emptyHint': '将文件拖入对话作为参考，或绑定项目文件夹以在此同步磁盘文件。',
+
   // Browser Intent
   'browserIntent.confirmTitle': '看起来你想操作网页，要使用浏览器模式吗？',
   'browserIntent.useBrowser': '用浏览器执行',

@@ -903,6 +903,9 @@ export type TranslationKeys = {
   'chat.input.contextFilesHeader': string;
   'chat.input.contextFilesSubtitle': string;
   'chat.input.contextFilesNotWorkspace': string;
+  'agentPanel.workingFolders.title': string;
+  'agentPanel.workingFolders.emptyTitle': string;
+  'agentPanel.workingFolders.emptyHint': string;
 
   // Browser Intent
   'browserIntent.confirmTitle': string;

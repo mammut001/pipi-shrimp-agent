@@ -59,6 +59,9 @@ describe('i18n key parity', () => {
       'chat.input.contextFilesHeader',
       'chat.input.contextFilesSubtitle',
       'chat.input.contextFilesNotWorkspace',
+      'agentPanel.workingFolders.title',
+      'agentPanel.workingFolders.emptyTitle',
+      'agentPanel.workingFolders.emptyHint',
     ];
     for (const key of requiredKeys) {
       const value = enUS[key];
@@ -90,6 +93,9 @@ describe('i18n key parity', () => {
       'chat.input.contextFilesHeader',
       'chat.input.contextFilesSubtitle',
       'chat.input.contextFilesNotWorkspace',
+      'agentPanel.workingFolders.title',
+      'agentPanel.workingFolders.emptyTitle',
+      'agentPanel.workingFolders.emptyHint',
     ];
     for (const key of requiredKeys) {
       const value = zhCN[key];
