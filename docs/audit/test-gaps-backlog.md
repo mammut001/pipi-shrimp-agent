@@ -8,7 +8,7 @@
 
 | # | 模块 | 测试描述 | 关联 finding |
 | --- | ---- | -------- | ------------ |
-| T-01 | Chat | 流式中 `selectSession`：内容不串会话、generator 被取消 | R1-01, R1-02 |
+| T-01 | Chat | 流式中 `selectSession`：内容不串会话、选中会话 chrome 清空；后台 turn 继续写 owning session（不在切换时 cancel）✅ Fixed 2026-09-17 | R1-01, R1-02 |
 | T-02 | Shell | `browserDockMode=split` 时 ChatInput 可见性或明确 UX | R1-03 |
 | T-03 | Core | `QueryEngine` tool_batch 无 resolve → timeout/reject | R4-03 |
 | T-04 | AutoResearch | `chatAdapter` AbortSignal 传到 `runHeadlessAgentTurn` | R5-01 |

@@ -1,6 +1,13 @@
 /**
- * GPT P0 knife 2 — session-switch + delete cancellation matrix (deterministic).
- * Covers cancel A → switch B, reopen A hydrate terminalize, delete while cancelling.
+ * GPT P0 knife 2 — explicit-Stop cancel + session-switch + delete persistence matrix
+ * (deterministic).
+ *
+ * Soak knife-3 / R1-02 product contract:
+ * - `selectSession` does NOT cancel in-flight generation or tools
+ * - Background work continues; stream/tool writes stay on the owning session
+ * - Only explicit Stop cancels (user_cancel terminalize)
+ *
+ * Covers: Stop-cancel A → switch B; orphan A → switch B → reopen hydrate; delete while cancelling.
  */
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 
@@ -30,7 +37,7 @@ import {
   wireSafeInvokeToDb,
 } from './cancellationPersistenceTestUtils';
 
-describe('sessionSwitchCancellation matrix', () => {
+describe('sessionSwitchCancellation matrix (Stop cancel + switch/delete; not cancel-on-switch)', () => {
   const db = new InMemoryMessageDb();
 
   beforeEach(() => {
@@ -72,7 +79,8 @@ describe('sessionSwitchCancellation matrix', () => {
       messages: [...cancelled.scrubbedById.values(), cancelled.notice!].map((m) => messageToDb(m, sessionA)),
     });
 
-    // Switch to B (selectSession equivalent: scrub prior if needed — already clean)
+    // Switch to B (selectSession: chrome-only; does NOT cancel). A already Stop-terminalized;
+    // scrub below is a no-op safety check in this matrix, not selectSession behavior.
     await scrubDanglingToolCalls(sessionA, set, get);
     set({
       currentSessionId: sessionB,
@@ -123,10 +131,12 @@ describe('sessionSwitchCancellation matrix', () => {
       makeSession(sessionB, historyB),
     ], sessionA));
 
-    // Switch away: selectSession scrubs A in memory (fire-and-forget) but we model
-    // the harsh case where DB still has orphans (scrub write lost / not yet flushed).
+    // Switch away without Stop (R1-02: no cancel-on-switch). Model orphans still in DB
+    // (crash / incomplete terminalize), then reopen A → hydrate interrupted terminalize.
+    // In-memory scrub + DB re-seed below only exercises the harsh "persist lost" hydrate branch —
+    // it is NOT selectSession behavior under soak knife-3.
     await scrubDanglingToolCalls(sessionA, set, get);
-    // Simulate scrub DB write failing / lost: re-seed orphans in DB
+    // Simulate terminalize DB write failing / lost: re-seed orphans in DB
     db.seed(sessionA, orphanHistoryA);
     set({
       currentSessionId: sessionB,

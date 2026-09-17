@@ -89,7 +89,7 @@ Items remediated per [README remediation section](./README.md#修复进展remedi
 | ----- | ----- |
 | **Lane** | A. P0 / Safety / Data Loss |
 | **Severity** | P0 |
-| **Status** | `fixed` — needs regression tests |
+| **Status** | `fixed` — regression covered 2026-09-17 (TOP-15-01 / T-01) |
 | **Why it matters** | Streaming deltas could corrupt another session's message history — silent data loss |
 | **Affected files** | `src/store/chat/chatActions.ts` |
 | **Smallest PR scope** | Add `sessionIsolation` regression tests only (no behavior change) |
@@ -99,18 +99,18 @@ Items remediated per [README remediation section](./README.md#修复进展remedi
 | **UI behavior** | No |
 | **Split PRs?** | No — tests can be one PR |
 
-### R1-02 — `selectSession` did not cancel in-flight generation
+### R1-02 — Session switch must not cancel in-flight generation (Stop only)
 
 | Field | Value |
 | ----- | ----- |
 | **Lane** | A. P0 / Safety / Data Loss |
 | **Severity** | P0 |
-| **Status** | `fixed` — needs regression tests |
-| **Why it matters** | Background `for await` continued after switch — wasted tokens, wrong-session side effects |
+| **Status** | `fixed` — regression covered 2026-09-17 (TOP-15-01; soak knife-3) |
+| **Why it matters** | Early audit framed cancel-on-switch as the fix; current product contract is the opposite — `selectSession` must **not** cancel in-flight generation/tools. Background work continues; stream/tool writes target the **owning session**; only explicit **Stop** cancels. Cross-session corruption is prevented by owning-session writes (R1-01), not by aborting on switch. |
 | **Affected files** | `src/store/createChatStore.ts`, `src/store/chat/chatActions.ts` |
-| **Smallest PR scope** | Test `requestChatGenerationCancel` on `selectSession` |
-| **Suggested tests** | T-01 (shared with R1-01) |
-| **Dependencies** | None |
+| **Smallest PR scope** | Regression only: `selectSession` clears selected-session stream chrome; does **not** call `requestChatGenerationCancel` / stop / scrub prior session; background A keeps writing owning session; Stop is the sole cancel path |
+| **Suggested tests** | T-01 / `sessionIsolation.test.ts` (shared with R1-01); companions: knife-3 in `chatStoreSendMessage`, `sessionSwitchCancellation` (explicit-Stop + switch/delete persistence) |
+| **Dependencies** | R1-01 (owning-session stream writes) |
 | **Runtime behavior** | Yes |
 | **UI behavior** | No |
 | **Split PRs?** | No |
@@ -627,7 +627,7 @@ Also see **R4-04–R4-24** (store/workflow cross-cuts) in [round-04](./round-04-
 
 | # | Test | Audit IDs | Status |
 | --- | ---- | --------- | ------ |
-| 1 | Session switch streaming isolation | R1-01, R1-02 | test gap only |
+| 1 | Session switch streaming isolation | R1-01, R1-02 | **fixed** 2026-09-17 (TOP-15-01 / T-01; soak knife-3: no cancel-on-switch, owning-session writes, Stop explicit) |
 | 2 | Shell split layout + ChatInput | R1-03 | test gap only |
 | 3 | `useChatMessageScroll` debounce/unmount | R1-11, R10-13 | sample fixed 2026-09-17 (`useChatMessageScroll.test.tsx`) |
 | 4 | `listenerGuard` ref-count order | R4-01 | test gap only |

@@ -207,7 +207,7 @@ Checked `remediation-backlog.json` on **2026-06-24**:
 | ID | Summary |
 | --- | ------- |
 | TOP-15-07 | Legacy vs batch Rust policy parity |
-| TOP-15-01 | Session switch streaming isolation |
+| TOP-15-01 | Session switch streaming isolation ✅ Fixed 2026-09-17 |
 | TOP-15-04 | `listenerGuard` ref-count order |
 | TOP-15-05 | `QueryEngine` tool_batch timeout |
 | T-14 | Workflow stop/cancel regression |
@@ -227,7 +227,7 @@ Checked `remediation-backlog.json` on **2026-06-24**:
 | 6 | R7-12 | **fix(security): Telegram invoke / Rust handler parity** | `telegramService.ts`, `src-tauri/src/lib.rs`, `telegram.rs` | T-15 contract test, `check-tauri-commands.mjs` | High | ✅ Shipped 2026-09-17 — dynamic parity test + `check-tauri-commands.mjs` |
 | 7 | R7-04 | **fix(security): reject artifacts when workDir undefined** | `artifactDetector.ts` | `/etc/passwd` rejected | High | ✅ Shipped 2026-09-17 — fail-closed when no workDir/outputDir roots; `/etc/passwd` + previewable `/etc/*` regressions |
 | 8 | INFRA-01 | **chore(test): add @testing-library/react** | `package.json`, hook sample test | `useChatMessageScroll` sample | Low | ✅ Shipped 2026-09-17 — RTL + jest-dom/user-event + useChatMessageScroll sample |
-| 9 | TOP-15-01 | **test: chat P0 session isolation regression** | `src/store/chat/__tests__/` | T-01, T-02 | Low | Guard fixed R1-01/02/03 before chat refactors |
+| 9 | TOP-15-01 | **test: chat P0 session isolation regression** ✅ Fixed 2026-09-17 | `src/store/chat/__tests__/` | T-01 | Low | Guard fixed R1-01/02 (T-02 / R1-03 remains TOP-15-02) |
 | 10 | AG-02 | **refactor: extract preflight from loopEngine.ts** | `loopEngine.ts` → new module | `loopEngine.integration.test.ts` | Low | 1920 LOC exceeds governance cap; aligns with R5-02 fix |
 
 ---
