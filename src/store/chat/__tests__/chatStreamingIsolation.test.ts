@@ -12,6 +12,8 @@ import {
   resetChatSessionTurnEpochForTests,
   resetStreamingBuffersForTests,
   ownsSelectedStreamChrome,
+  resolveSessionStreamReasoning,
+  resolveSessionStreamText,
   resolveStreamingOwnerSessionId,
   setStreamingBuffer,
 } from '../chatStreaming';
@@ -71,6 +73,19 @@ describe('chat streaming session isolation (TOP-15-01)', () => {
     clearStreamingBuffer('session-a');
     expect(getStreamingBuffer('session-a')).toBe('');
     expect(getStreamingBuffer('session-b')).toBe('BBB');
+  });
+
+
+  it('resolveSessionStreamText: empty A buffer must not inherit B selected chrome', () => {
+    expect(resolveSessionStreamText('session-a', 'B-chrome', 'session-b')).toBe('');
+    expect(resolveSessionStreamText('session-b', 'B-chrome', 'session-b')).toBe('B-chrome');
+    setStreamingBuffer('session-a', 'A-only');
+    expect(resolveSessionStreamText('session-a', 'B-chrome', 'session-b')).toBe('A-only');
+  });
+
+  it('resolveSessionStreamReasoning: background A must not read B streamingReasoning', () => {
+    expect(resolveSessionStreamReasoning('session-a', 'B-reason', 'session-b')).toBe('');
+    expect(resolveSessionStreamReasoning('session-b', 'B-reason', 'session-b')).toBe('B-reason');
   });
 
   it('appendStreamingBuffer seeds from fallback only when session buffer empty', () => {

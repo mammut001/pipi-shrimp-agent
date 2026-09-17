@@ -72,6 +72,8 @@ import {
   handleStreamChunk,
   requestChatGenerationCancel,
   ownsSelectedStreamChrome,
+  resolveSessionStreamReasoning,
+  resolveSessionStreamText,
   resolveStreamingOwnerSessionId,
   shouldFlushStreamingUpdate,
   STREAMING_TIMEOUT_MS,
@@ -1045,8 +1047,16 @@ export function createChatActionMethods({
               set,
               get,
               {
-                content: getStreamingBuffer(activeSessionId) || streamSnapshot.streamingContent || '',
-                reasoning: streamSnapshot.streamingReasoning || undefined,
+                content: resolveSessionStreamText(
+                  activeSessionId,
+                  streamSnapshot.streamingContent,
+                  streamSnapshot.currentSessionId,
+                ) || '',
+                reasoning: resolveSessionStreamReasoning(
+                  activeSessionId,
+                  streamSnapshot.streamingReasoning,
+                  streamSnapshot.currentSessionId,
+                ) || undefined,
               },
             );
             // After mid-tool persist await: Stop / cancel / newer Send may have
@@ -1115,8 +1125,15 @@ export function createChatActionMethods({
         const streamed = flushBuffer(streamState);
         const completionOwnsTurn = getChatSessionTurnEpoch(activeSessionId) === turnEpoch;
         // Prefer closed-over streamState when stale so we do not read/clear a newer turn's buffer.
+        const completionSnapshot = get();
         const finalContent = completionOwnsTurn
-          ? (getStreamingBuffer(activeSessionId) || get().streamingContent || streamed.content)
+          ? (
+            resolveSessionStreamText(
+              activeSessionId,
+              completionSnapshot.streamingContent,
+              completionSnapshot.currentSessionId,
+            ) || streamed.content
+          )
           : streamed.content;
         if (completionOwnsTurn) {
           clearStreamingBuffer(activeSessionId);
@@ -1139,7 +1156,13 @@ export function createChatActionMethods({
           displayContent,
           undefined,
           mergeReasoningParts(
-            getChatSessionTurnEpoch(activeSessionId) === turnEpoch ? get().streamingReasoning : '',
+            getChatSessionTurnEpoch(activeSessionId) === turnEpoch
+              ? resolveSessionStreamReasoning(
+                activeSessionId,
+                get().streamingReasoning,
+                get().currentSessionId,
+              )
+              : '',
             streamed.reasoning,
             parsed.reasoning,
           ),
@@ -1371,10 +1394,17 @@ export function createChatActionMethods({
         // closed-over streamState when stale so we do not copy a newer turn's
         // live streamingContent onto the old placeholder.
         const errorOwnsTurn = getChatSessionTurnEpoch(activeSessionId) === turnEpoch;
-        const { streamingContent: errContent, streamingReasoning: errReasoning, updateLastMessage: saveLastMsg } = get();
+        const {
+          streamingContent: errContent,
+          streamingReasoning: errReasoning,
+          currentSessionId: errCurrentSessionId,
+          updateLastMessage: saveLastMsg,
+        } = get();
         const flushed = flushBuffer(streamState);
         const parsed = parseThinkContent(
-          (errorOwnsTurn ? errContent : '') || flushed.content || '',
+          (errorOwnsTurn
+            ? resolveSessionStreamText(activeSessionId, errContent, errCurrentSessionId)
+            : '') || flushed.content || '',
         );
         const finalContent = parsed.content.trim()
           ? `${parsed.content}\n\n⚠️ **Error:** ${errorMsg}`
@@ -1385,7 +1415,9 @@ export function createChatActionMethods({
             finalContent,
             undefined,
             mergeReasoningParts(
-              errorOwnsTurn ? errReasoning : '',
+              errorOwnsTurn
+                ? resolveSessionStreamReasoning(activeSessionId, errReasoning, errCurrentSessionId)
+                : '',
               flushed.reasoning,
               parsed.reasoning,
             ),
@@ -1484,8 +1516,17 @@ export function createChatActionMethods({
       // Soak knife 3 — optimistic UI: cancelled feel ≤1s. Clear Stop/busy
       // before awaiting native cancel_tool_execution (can be slow). Capture
       // stream text first; only the owning session is cancelled (A≠B).
-      const finalContent = getStreamingBuffer(owningSessionId) || streamingContent;
-      const finalReasoning = streamingReasoning;
+      // Empty per-session buffer must not inherit selected chrome from another session.
+      const finalContent = resolveSessionStreamText(
+        owningSessionId,
+        streamingContent,
+        currentSessionId,
+      );
+      const finalReasoning = resolveSessionStreamReasoning(
+        owningSessionId,
+        streamingReasoning,
+        currentSessionId,
+      );
       clearStreamingBuffer(owningSessionId);
       if (streamingTimeoutId) {
         clearTimeout(streamingTimeoutId);
@@ -1881,14 +1922,15 @@ export function createChatActionMethods({
       const now = Date.now();
 
       if (shouldFlushStreamingUpdate(now, lastUiUpdateTime)) {
+        const updateSelectedStreamChrome = ownsSelectedStreamChrome(targetSessionId, currentSessionId);
         const flushed = flushBuffer({
           content: newContent,
-          reasoning: get().streamingReasoning,
+          // Background A must not merge B's streamingReasoning into A's message.
+          reasoning: updateSelectedStreamChrome ? get().streamingReasoning : '',
           statusMessages: [],
         });
         // Background session streams must update their own messages, but must
         // not paint into the selected session's stream chrome after a switch.
-        const updateSelectedStreamChrome = ownsSelectedStreamChrome(targetSessionId, currentSessionId);
         set((state) => ({
           ...(updateSelectedStreamChrome
             ? { streamingContent: newContent, lastUiUpdateTime: now }
@@ -1923,9 +1965,11 @@ export function createChatActionMethods({
         || streamingSessionId == null;
       if (!streaming) {
         // Flush/clear only the stream owner's per-session buffer — never a shared global.
-        const finalContent = (
-          flushTargetId ? getStreamingBuffer(flushTargetId) : ''
-        ) || (clearSelectedChrome ? streamingContent : '');
+        const finalContent = resolveSessionStreamText(
+          flushTargetId,
+          streamingContent,
+          currentSessionId,
+        );
         if (flushTargetId) {
           clearStreamingBuffer(flushTargetId);
         }
@@ -1937,7 +1981,11 @@ export function createChatActionMethods({
         if (flushTargetId && finalContent) {
           const flushed = flushBuffer({
             content: finalContent,
-            reasoning: get().streamingReasoning,
+            reasoning: resolveSessionStreamReasoning(
+              flushTargetId,
+              get().streamingReasoning,
+              currentSessionId,
+            ),
             statusMessages: [],
           });
           set((state) => ({

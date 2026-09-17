@@ -1146,6 +1146,59 @@ describe('chatStore sendMessage integration', () => {
     expect(getCurrentStreamingBufferForTests('session-1')).toBe('A-seed-A-more');
   });
 
+  it('empty-buffer gate: background A must not pick up B streamingContent when B selected', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+      messages: [
+        createMessage('user', 'ask A'),
+        createMessage('assistant', ''),
+      ],
+    });
+    const currentSessions = useChatStore.getState().sessions;
+    useChatStore.setState({
+      sessions: [
+        ...currentSessions,
+        {
+          id: 'session-B',
+          title: 'Session B',
+          messages: [
+            createMessage('user', 'idle on B'),
+            createMessage('assistant', ''),
+          ],
+          createdAt: 2,
+          updatedAt: 2,
+          permissionMode: 'auto-edits',
+          executionMode: 'agent',
+        },
+      ],
+      currentSessionId: 'session-B',
+      isStreaming: true,
+      streamingContent: 'B-SELECTED-CHROME',
+      streamingReasoning: 'B-SELECTED-REASON',
+      streamingSessionId: 'session-B',
+      // Force throttle flush so message content is updated.
+      lastUiUpdateTime: 0,
+    });
+
+    // A buffer empty — append must seed '' not B chrome.
+    expect(getCurrentStreamingBufferForTests('session-1')).toBe('');
+    useChatStore.getState().appendStreamingContent('A-first', undefined, 'session-1');
+    expect(getCurrentStreamingBufferForTests('session-1')).toBe('A-first');
+    expect(getCurrentStreamingBufferForTests('session-B')).toBe('');
+    expect(useChatStore.getState().streamingContent).toBe('B-SELECTED-CHROME');
+    expect(useChatStore.getState().streamingReasoning).toBe('B-SELECTED-REASON');
+
+    const sessionA = useChatStore.getState().sessions.find((s) => s.id === 'session-1');
+    const lastA = sessionA?.messages[sessionA.messages.length - 1];
+    expect(lastA?.role).toBe('assistant');
+    expect(lastA?.content).toBe('A-first');
+    // Must not have merged B reasoning into A.
+    expect(lastA?.reasoning ?? '').not.toContain('B-SELECTED-REASON');
+  });
+
   it('background session A completion must not clear B streamingTimeoutId', async () => {
     resetChatState({
       executionMode: 'agent',

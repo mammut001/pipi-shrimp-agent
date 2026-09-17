@@ -138,6 +138,36 @@ export function appendStreamingBuffer(
   return next;
 }
 
+
+/**
+ * Prefer the per-session module buffer. Fall back to selected chrome text only
+ * when this session owns selected stream chrome — empty background buffers must
+ * not inherit another session's streamingContent.
+ */
+export function resolveSessionStreamText(
+  sessionId: string | null | undefined,
+  selectedChrome: string,
+  currentSessionId: string | null | undefined,
+): string {
+  const buffered = getStreamingBuffer(sessionId);
+  if (buffered) {
+    return buffered;
+  }
+  return ownsSelectedStreamChrome(sessionId, currentSessionId) ? selectedChrome : '';
+}
+
+/**
+ * Selected-session reasoning chrome only — background sessions have no shared
+ * reasoning buffer and must not read another session's streamingReasoning.
+ */
+export function resolveSessionStreamReasoning(
+  sessionId: string | null | undefined,
+  selectedReasoning: string,
+  currentSessionId: string | null | undefined,
+): string {
+  return ownsSelectedStreamChrome(sessionId, currentSessionId) ? selectedReasoning : '';
+}
+
 export function resetStreamingBuffersForTests(): void {
   streamingBuffersBySession.clear();
 }
