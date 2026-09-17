@@ -24,6 +24,7 @@
 import type { BrowserPageState } from '@/types/browserPageState';
 import type { BrowserActionPermissionMode } from '@/types/browserEngine';
 import type { SupportedActionName } from './browserAgentActionSchema';
+import { resolveBrowserActionTarget } from './browserPageStateModel';
 
 export type BrowserActionPolicyDecision = 'allow' | 'ask' | 'block';
 export type BrowserActionPolicyRisk = 'low' | 'medium' | 'high';
@@ -143,27 +144,33 @@ export const matchesSensitiveLabel = (label: string): boolean => {
   return SENSITIVE_LABEL_PATTERNS.some((pattern) => pattern.test(label));
 };
 
-const findSensitiveElementForClick = (pageState: BrowserPageState | null | undefined, payload: Record<string, unknown> | null | undefined) => {
+const findElementFromPayload = (
+  pageState: BrowserPageState | null | undefined,
+  payload: Record<string, unknown> | null | undefined,
+) => {
   if (!pageState || !payload) return null;
-  const backendNodeId = Number(payload.backend_node_id ?? payload.backendNodeId ?? 0);
-  const elementId = Number(payload.id ?? payload.element_id ?? payload.elementId ?? 0);
+  // Honor selector the same way the native executor does (R3-09) so policy
+  // cannot silently miss sensitive controls targeted only by selector.
+  const target = resolveBrowserActionTarget(pageState, payload);
+  if (!target) return null;
   return (
-    pageState.elements.find((element) => backendNodeId && element.backend_node_id === backendNodeId) ||
-    pageState.elements.find((element) => elementId && element.index === elementId) ||
+    pageState.elements.find(
+      (element) => target.backendNodeId != null && element.backend_node_id === target.backendNodeId,
+    ) ||
+    pageState.elements.find((element) => target.elementId != null && element.index === target.elementId) ||
     null
   );
 };
 
-const findSensitiveElementForInput = (pageState: BrowserPageState | null | undefined, payload: Record<string, unknown> | null | undefined) => {
-  if (!pageState || !payload) return null;
-  const backendNodeId = Number(payload.backend_node_id ?? payload.backendNodeId ?? 0);
-  const elementId = Number(payload.id ?? payload.element_id ?? payload.elementId ?? 0);
-  return (
-    pageState.elements.find((element) => backendNodeId && element.backend_node_id === backendNodeId) ||
-    pageState.elements.find((element) => elementId && element.index === elementId) ||
-    null
-  );
-};
+const findSensitiveElementForClick = (
+  pageState: BrowserPageState | null | undefined,
+  payload: Record<string, unknown> | null | undefined,
+) => findElementFromPayload(pageState, payload);
+
+const findSensitiveElementForInput = (
+  pageState: BrowserPageState | null | undefined,
+  payload: Record<string, unknown> | null | undefined,
+) => findElementFromPayload(pageState, payload);
 
 const assessClick = (
   ctx: BrowserActionPolicyContext,

@@ -212,11 +212,96 @@ describe('nativeBrowserAgent', () => {
       await jest.runAllTimersAsync();
 
       await expect(resultPromise).resolves.toBe('Clicked');
+      // selector-used assertion: executor must resolve selector → element and click it
+      expect(clickBrowserElementMock).toHaveBeenCalledTimes(1);
       expect(clickBrowserElementMock).toHaveBeenCalledWith({
         elementId: 7,
         backendNodeId: 88,
         navigationId: 'nav-1',
       });
+    });
+
+    it('input_text_with_selector_uses_resolved_element', async () => {
+      const editableState = {
+        ...livePageState,
+        elements: [
+          {
+            ...livePageState.elements[0],
+            index: 3,
+            backend_node_id: 55,
+            role: 'textbox',
+            name: 'Search',
+            tag_name: 'input',
+            is_editable: true,
+            is_clickable: false,
+            selector_hint: 'input[name=\"q\"]',
+          },
+        ],
+      };
+      getBrowserPageStateMock.mockResolvedValue(editableState);
+      invokeMock
+        .mockResolvedValueOnce({
+          content: JSON.stringify({
+            thought: 'Type via selector.',
+            action: { input_text: { selector: 'input[name="q"]', text: 'shrimp' } },
+          }),
+        })
+        .mockResolvedValueOnce({
+          content: JSON.stringify({
+            thought: 'Typed.',
+            action: { done: { text: 'Typed via selector', success: true } },
+          }),
+        });
+
+      const resultPromise = executeNativeBrowserTask('Search', 'api-key', 'model', {
+        approveAction: () => Promise.resolve(true),
+      });
+      await jest.runAllTimersAsync();
+
+      await expect(resultPromise).resolves.toBe('Typed via selector');
+      expect(typeIntoBrowserElementMock).toHaveBeenCalledTimes(1);
+      expect(typeIntoBrowserElementMock).toHaveBeenCalledWith(
+        {
+          elementId: 3,
+          backendNodeId: 55,
+          navigationId: 'nav-1',
+        },
+        'shrimp',
+      );
+    });
+
+    it('navigate_passes_wait_selector_to_client', async () => {
+      getBrowserPageStateMock.mockResolvedValue(livePageState);
+      invokeMock
+        .mockResolvedValueOnce({
+          content: JSON.stringify({
+            thought: 'Go and wait for ready.',
+            action: {
+              navigate: {
+                url: 'https://example.com/app',
+                wait_selector: '#app-ready',
+              },
+            },
+          }),
+        })
+        .mockResolvedValueOnce({
+          content: JSON.stringify({
+            thought: 'Loaded.',
+            action: { done: { text: 'Navigated with wait', success: true } },
+          }),
+        });
+
+      const resultPromise = executeNativeBrowserTask('Open app', 'api-key', 'model', {
+        approveAction: () => Promise.resolve(true),
+      });
+      await jest.runAllTimersAsync();
+
+      await expect(resultPromise).resolves.toBe('Navigated with wait');
+      // selector-used assertion: wait_selector must not be silently dropped
+      expect(navigateBrowserPageMock).toHaveBeenCalledWith(
+        'https://example.com/app',
+        '#app-ready',
+      );
     });
 
     it('invalid_selector_returns_safe_failure_feedback', async () => {

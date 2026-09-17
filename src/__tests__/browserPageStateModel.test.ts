@@ -2,6 +2,7 @@ import type { BrowserPageState } from '@/types/browserPageState';
 import {
   describeBrowserElementForAgent,
   formatBrowserPageStateForPrompt,
+  normalizeSelectorHint,
   resolveBrowserActionTarget,
 } from '@/utils/browserPageStateModel';
 
@@ -73,5 +74,27 @@ describe('browserPageStateModel', () => {
 
   it('returns null for unknown selector without crashing (R3-09)', () => {
     expect(resolveBrowserActionTarget(pageState, { selector: '#missing' })).toBeNull();
+  });
+
+  it('matches selector despite escaped quotes in selector_hint (R3-09)', () => {
+    const withEscaped = {
+      ...pageState,
+      elements: [
+        {
+          ...pageState.elements[0],
+          selector_hint: 'button[data-provider=\"google\"]',
+        },
+      ],
+    };
+    expect(normalizeSelectorHint('button[data-provider=\"google\"]')).toBe(
+      'button[data-provider="google"]',
+    );
+    expect(
+      resolveBrowserActionTarget(withEscaped, { selector: 'button[data-provider="google"]' }),
+    ).toEqual({
+      elementId: 7,
+      backendNodeId: 88,
+      navigationId: 'nav-1',
+    });
   });
 });

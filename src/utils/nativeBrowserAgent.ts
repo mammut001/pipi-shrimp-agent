@@ -1136,7 +1136,7 @@ async function executeEnvelope(args: {
             targetLabel: '',
             elementCount: pageState?.elements.length ?? 0,
             errorCode: 'invalid_input',
-            errorMessage: 'click payload missing id/backend_node_id',
+            errorMessage: 'click payload missing id/backend_node_id/selector (or selector did not match page state)',
           };
         }
         const targetLabel = describeBrowserActionTarget(target);
@@ -1165,7 +1165,7 @@ async function executeEnvelope(args: {
             targetLabel: '',
             elementCount: pageState?.elements.length ?? 0,
             errorCode: 'invalid_input',
-            errorMessage: 'input_text payload missing target or text',
+            errorMessage: 'input_text payload missing target (id/backend_node_id/selector) or text',
           };
         }
         const targetLabel = describeBrowserActionTarget(target);
@@ -1234,13 +1234,17 @@ async function executeEnvelope(args: {
             errorMessage: 'navigate payload missing url',
           };
         }
-        log('info', `[NativeAgent] Navigating to: ${url}`);
+        const waitSelector = readString(payload.wait_selector) || null;
+        log(
+          'info',
+          `[NativeAgent] Navigating to: ${url}${waitSelector ? ` (wait_selector=${waitSelector})` : ''}`,
+        );
         try {
-          await navigateBrowserPage(url);
+          await navigateBrowserPage(url, waitSelector);
           return {
             ...base,
             success: true,
-            targetLabel: url,
+            targetLabel: waitSelector ? `${url} [wait:${waitSelector}]` : url,
             elementCount: pageState?.elements.length ?? 0,
             url,
           };
@@ -1248,7 +1252,7 @@ async function executeEnvelope(args: {
           return {
             ...base,
             success: false,
-            targetLabel: url,
+            targetLabel: waitSelector ? `${url} [wait:${waitSelector}]` : url,
             elementCount: pageState?.elements.length ?? 0,
             errorCode: 'navigation_failed',
             errorMessage: String(error),

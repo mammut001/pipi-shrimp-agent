@@ -193,7 +193,7 @@ Checked `remediation-backlog.json` on **2026-06-24**:
 | --- | ---- | ------- |
 | R3-07 | Browser | Overlay not removed on error path ✅ Fixed 2026-09-17 |
 | R3-08 | Browser | `closeWindow` doesn't stop CDP task ✅ Fixed 2026-09-17 |
-| R3-09 | Browser | Selector param ignored in executor |
+| R3-09 | Browser | Selector param ignored in executor ✅ Fixed 2026-09-17 |
 | R3-10 | Browser | `press_enter` not wired to `pressBrowserKey` |
 | R5-02 | AutoResearch | Preflight abort controller leak |
 | R7-04 | Security | `artifactDetector` no filter when `workDir` undefined |
@@ -221,7 +221,7 @@ Checked `remediation-backlog.json` on **2026-06-24**:
 | --- | -------- | ----- | ------------ | ----- | ---- | -------- |
 | 1 | R3-07 | **fix(browser): remove overlay on CDP error path** | `browserAgentStore.ts`, `nativeBrowserAgent.ts` | `browserOverlayCleanup.test.ts` + native overlay describe | Medium | ✅ Shipped 2026-09-17 — store+finally overlay cleanup |
 | 2 | R3-08 | **fix(browser): stopTask in closeWindow** | `browserAgentStore.ts`, `BrowserPanel.tsx` | `browserCloseWindow.test.ts` | Medium | ✅ Shipped 2026-09-17 — always stopTask + late abort ownership guard |
-| 3 | R3-09 | **fix(browser): honor selector in native executor** | `nativeBrowserAgent.ts` | selector-used assertion | Medium | Silent no-op tool calls — agent reliability |
+| 3 | R3-09 | **fix(browser): honor selector in native executor** | `nativeBrowserAgent.ts`, `browserPageStateModel.ts`, `browserActionPolicy.ts` | selector-used assertion | Medium | ✅ Shipped 2026-09-17 — normalize hints, navigate wait_selector, policy resolve |
 | 4 | R3-10 | **fix(browser): wire press_enter to pressBrowserKey** | `nativeBrowserAgent.ts` | enter key sent test | Medium | Form submit failures in common flows |
 | 5 | R5-02 | **fix(autoresearch): clear abort controller on preflight fail** | `loopEngine.ts` | controller null after preflight fail | Medium | Blocks clean loop restart after setup failure |
 | 6 | R7-12 | **fix(security): Telegram invoke / Rust handler parity** | `telegramService.ts`, `src-tauri/src/lib.rs`, `telegram.rs` | T-15 contract test, `check-tauri-commands.mjs` | High | Dead invokes cause runtime failures |

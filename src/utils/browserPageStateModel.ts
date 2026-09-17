@@ -113,6 +113,12 @@ export const formatBrowserPageStateForPrompt = (
   return lines.join('\n');
 };
 
+
+/** Normalize CSS selector hints so escaped quotes from Rust hints match LLM selectors. */
+export const normalizeSelectorHint = (value: string): string => {
+  return value.trim().replace(/\\"/g, '"').replace(/\\'/g, "'");
+};
+
 export const resolveBrowserActionTarget = (
   pageState: BrowserPageState | null,
   payload: Record<string, unknown> | null | undefined,
@@ -148,12 +154,13 @@ export const resolveBrowserActionTarget = (
     return null;
   }
 
+  const normalizedSelector = normalizeSelectorHint(selector);
   const matchedBySelector = pageState?.elements.find((element) => {
     const hint = element.selector_hint?.trim();
     if (!hint) {
       return false;
     }
-    return hint === selector;
+    return normalizeSelectorHint(hint) === normalizedSelector;
   });
 
   if (!matchedBySelector) {
