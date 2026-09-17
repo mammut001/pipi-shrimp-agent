@@ -20,13 +20,14 @@
 > **R3-07** fixed 2026-09-17: try/finally + store `removeBrowserAgentOverlay` on CDP error/abort.
 > **R3-08** fixed 2026-09-17: `closeWindow` always `stopTask`; late AbortError/error cannot clobber closed state.
 > **R3-09** fixed 2026-09-17: honor selector (normalize hints, navigate wait_selector, policy resolve).
+> **R3-10** fixed 2026-09-17: `input_text.press_enter` → `pressBrowserKey('Enter')`; distinct `press_enter_failed`.
 
 | ID | Summary |
 | --- | ------- |
 | R3-07 | overlay 异常路径未 remove，留全屏遮罩 ✅ Fixed 2026-09-17 |
 | R3-08 | `closeWindow` 不 stop CDP task ✅ Fixed 2026-09-17 |
 | R3-09 | schema 允许 selector 但 executor 忽略 ✅ Fixed 2026-09-17 |
-| R3-10 | `input_text.press_enter` 未调 `pressBrowserKey` |
+| R3-10 | `input_text.press_enter` 未调 `pressBrowserKey` ✅ Fixed 2026-09-17 |
 | R3-11 | malformed JSON 计数累计非连续 |
 | R3-12 | 双 timer 系统导致 stale auto-reset |
 | R3-13 | `forceResumeWithoutAuth` 绕过登录 |

@@ -1169,13 +1169,33 @@ async function executeEnvelope(args: {
           };
         }
         const targetLabel = describeBrowserActionTarget(target);
+        const shouldPressEnter = payload.press_enter === true;
         log('info', `[NativeAgent] Typing: "${text.slice(0, 80)}" into ${targetLabel}`);
         try {
           const result = await typeIntoBrowserElement(target, text);
-          if (payload.press_enter === true) {
-            await pressBrowserKey('Enter');
+          // R3-10: form submit — wire press_enter to native pressBrowserKey('Enter')
+          if (shouldPressEnter) {
+            log('info', `[NativeAgent] Pressing Enter after input into ${targetLabel}`);
+            try {
+              await pressBrowserKey('Enter');
+            } catch (enterError) {
+              return {
+                ...base,
+                success: false,
+                targetLabel,
+                elementCount: pageState?.elements.length ?? 0,
+                errorCode: 'press_enter_failed',
+                errorMessage: String(enterError),
+              };
+            }
           }
-          return { ...base, success: true, targetLabel, elementCount: pageState?.elements.length ?? 0, errorMessage: result };
+          return {
+            ...base,
+            success: true,
+            targetLabel,
+            elementCount: pageState?.elements.length ?? 0,
+            errorMessage: shouldPressEnter ? `${result}; pressed Enter` : result,
+          };
         } catch (error) {
           return {
             ...base,

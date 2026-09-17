@@ -28,7 +28,7 @@ Earlier post-audit fixes (still need regression tests): R1-01–03, R4-01–03, 
 
 | Category | Examples |
 | -------- | -------- |
-| **High — browser** | R3-07 overlay cleanup ✅, R3-08 closeWindow+stopTask ✅, R3-09 selector ✅, R3-10 press_enter |
+| **High — browser** | R3-07 overlay cleanup ✅, R3-08 closeWindow+stopTask ✅, R3-09 selector ✅, R3-10 press_enter ✅ |
 | **High — security** | R7-04 artifact sandbox, R7-06 outputDir, R7-12 Telegram Rust parity |
 | **High — AutoResearch** | R5-02 preflight abort controller leak |
 | **Test infra** | INFRA-01 `@testing-library/react`, TOP-15 regression suites |
@@ -546,7 +546,7 @@ Items remediated per [README remediation section](./README.md#修复进展remedi
 | R3-07 | Overlay not removed on error | High | fixed (2026-09-17) | Full-screen stuck overlay | store + nativeAgent | finally + store removeBrowserAgentOverlay | overlay cleanup tests | Yes | Yes | No |
 | R3-08 | `closeWindow` doesn't stop CDP | High | fixed (2026-09-17) | Orphan agent after close | store | always stopTask + late abort ownership | `browserCloseWindow.test.ts` | Yes | Yes | No |
 | R3-09 | Selector ignored in executor | High | fixed (2026-09-17) | Tool calls no-op silently | model + nativeAgent + policy | Honor selector / wait_selector | selector-used tests | Yes | No | No |
-| R3-10 | `press_enter` not wired | High | open | Form submit fails | agent | Call `pressBrowserKey` | enter key sent | Yes | No | No |
+| R3-10 | `press_enter` not wired | High | fixed (2026-09-17) | Form submit fails | nativeAgent | Call `pressBrowserKey` after type | enter key sent tests | Yes | No | No |
 | R3-11–R3-27 | Medium/Low browser items | Med–Low | open | Perf, UX, edge cases | various | One anchor per PR | per round-03 | Mixed | Mixed | Yes |
 
 ---
