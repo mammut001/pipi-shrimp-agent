@@ -24,7 +24,7 @@ Chinese version: [../round-03-browser-automation.md](../round-03-browser-automat
 | ID | Summary | Status |
 | --- | ------- | ------ |
 | R3-07 | Overlay not removed on error path — fullscreen mask remains | ✅ Fixed 2026-09-17 |
-| R3-08 | `closeWindow` does not stop CDP task | ❌ Open |
+| R3-08 | `closeWindow` does not stop CDP task | ✅ Fixed 2026-09-17 |
 | R3-09 | Schema allows selector but executor ignores it | ❌ Open |
 | R3-10 | `input_text.press_enter` does not call `pressBrowserKey` | ❌ Open |
 | R3-11 | Malformed JSON count accumulates non-consecutively | ❌ Open |

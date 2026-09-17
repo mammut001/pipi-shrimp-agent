@@ -602,12 +602,13 @@ export const useBrowserAgentStore = create<BrowserAgentState & BrowserAgentActio
   },
 
   closeWindow: async () => {
-    const { addLog, _abortController, status } = get();
+    const { addLog } = get();
 
     try {
-      if (_abortController || status === 'running') {
-        get().stopTask();
-      }
+      // R3-08: always stop the CDP/LLM loop before tearing down the panel so
+      // closing the browser surface cannot leave an orphan agent run.
+      // stopTask is idempotent when no controller is active.
+      get().stopTask();
 
       addLog('info', t('browserAgent.log.closingBrowser'));
 
@@ -1150,11 +1151,20 @@ Complete the task efficiently and call "done" when finished.`;
         if (useCdpFailure) {
           void useCdpStore.getState().refreshCdpRuntimeState();
         }
+        // R3-08: stopTask/closeWindow may already own lifecycle state — do not
+        // clobber closeWindow's uninitialized teardown with a late idle write.
+        if (!shouldAcceptTaskCompletion()) {
+          return;
+        }
         set({ status: 'idle', _abortController: null });
         updateDiagnosticsTask(currentTask.id, {
           state: 'cancelled',
           cancelable: false,
         });
+        return;
+      }
+      // Same ownership guard for late failures after close/stop.
+      if (!shouldAcceptTaskCompletion()) {
         return;
       }
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';

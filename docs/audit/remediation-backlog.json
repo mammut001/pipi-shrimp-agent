@@ -325,7 +325,7 @@
     "lane": "D. Browser Automation",
     "severity": "High",
     "status": "fixed",
-    "fixNote": "2026-06-24: closeWindow calls stopTask when _abortController set or status running.",
+    "fixNote": "2026-09-17: closeWindow always calls stopTask before teardown; executeTask AbortError/error paths guard shouldAcceptTaskCompletion so late CDP abort cannot clobber closeWindow uninitialized state; pending approval cleared via stopTask; browserCloseWindow regression tests.",
     "whyItMatters": "Orphan CDP agent after closing browser panel",
     "files": ["src/store/browserAgentStore.ts"],
     "smallestPrScope": "stopTask before closeEmbeddedSurface",
