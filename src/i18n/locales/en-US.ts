@@ -1479,6 +1479,11 @@ Fill structured browser forms while re-checking PageState before risky actions.
   'chat.input.contextFilesSubtitle': 'These files are references for the chat. They will not change the workspace folder.',
   'chat.input.contextFilesNotWorkspace': 'Context files do not set the workspace folder.',
 
+  // AgentPanel — Working folders
+  'agentPanel.workingFolders.title': 'Working folders',
+  'agentPanel.workingFolders.emptyTitle': 'No working folders yet',
+  'agentPanel.workingFolders.emptyHint': 'Drop files into chat for context, or bind a Project Folder to sync disk files here.',
+
   // Browser Intent
   'browserIntent.confirmTitle': 'It looks like you want to work with a webpage. Use browser mode?',
   'browserIntent.useBrowser': 'Use browser mode',

@@ -175,10 +175,11 @@ jest.mock('../AutoResearchPanel', () => ({
 jest.mock('../ui/Section', () => {
   const React = require('react');
   return {
-    Section: ({ title, children }: { title: string; children: React.ReactNode }) => React.createElement(
+    Section: ({ title, count, children }: { title: string; count?: string; children: React.ReactNode }) => React.createElement(
       'section',
-      { 'data-section-title': title },
+      { 'data-section-title': title, 'data-section-count': count ?? '' },
       React.createElement('h2', null, title),
+      count ? React.createElement('span', { 'data-testid': 'section-count' }, count) : null,
       children,
     ),
   };
@@ -192,6 +193,9 @@ jest.mock('../ui/FileIcon', () => {
 });
 
 import { AgentPanel } from '../AgentPanel';
+import { setLocale, t } from '@/i18n';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 const mountedRoots: Array<{ root: Root; container: HTMLDivElement }> = [];
 
@@ -214,6 +218,7 @@ describe('AgentPanel', () => {
   });
 
   beforeEach(() => {
+    setLocale('en-US');
     mockInvoke.mockReset();
     mockAddNotification.mockReset();
     mockUseUIStore.setState({
@@ -300,5 +305,31 @@ describe('AgentPanel', () => {
 
     expect(cancelButton).toBeUndefined();
     expect(view.container.textContent).toContain('Thinking');
+  });
+
+  it('shows an i18n empty state for Working folders when nothing is synced or imported', () => {
+    const view = renderPanel();
+    const empty = view.container.querySelector('[data-testid="working-folders-empty"]');
+    expect(empty).toBeTruthy();
+    expect(empty?.textContent).toContain(t('agentPanel.workingFolders.emptyTitle'));
+    expect(empty?.textContent).toContain(t('agentPanel.workingFolders.emptyHint'));
+
+    const section = view.container.querySelector(
+      `[data-section-title="${t('agentPanel.workingFolders.title')}"]`,
+    );
+    expect(section).toBeTruthy();
+    // Hide the noisy "0" badge when the section is empty (Progress already does this).
+    expect(section?.getAttribute('data-section-count')).toBe('');
+    expect(section?.querySelector('[data-testid="section-count"]')).toBeNull();
+  });
+
+  it('wires Working folders title/empty copy through i18n keys (source guard)', () => {
+    const source = readFileSync(join(process.cwd(), 'src/components/AgentPanel.tsx'), 'utf8');
+    expect(source).toMatch(/agentPanel\.workingFolders\.title/);
+    expect(source).toMatch(/agentPanel\.workingFolders\.emptyTitle/);
+    expect(source).toMatch(/agentPanel\.workingFolders\.emptyHint/);
+    expect(source).toMatch(/data-testid="working-folders-empty"/);
+    // Count badge only when there is something to count — avoid "0" noise.
+    expect(source).toMatch(/count=\{\(\(syncedFiles\.length\) \+ allWorkingFiles\.length\) > 0/);
   });
 });
