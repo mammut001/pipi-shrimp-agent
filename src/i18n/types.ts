@@ -340,10 +340,12 @@ export type TranslationKeys = {
   'executionMode.affordance.ask': string;
   'executionMode.affordance.plan': string;
   'executionMode.affordance.danger': string;
+  'executionMode.affordance.switchToDanger': string;
   'executionMode.upgrade.title': string;
   'executionMode.upgrade.body.browser': string;
   'executionMode.upgrade.body.workspace': string;
   'executionMode.upgrade.body.general': string;
+  'executionMode.upgrade.recommendDanger': string;
   'executionMode.upgrade.agentButton': string;
   'executionMode.upgrade.bypassButton': string;
   'executionMode.upgrade.cancel': string;

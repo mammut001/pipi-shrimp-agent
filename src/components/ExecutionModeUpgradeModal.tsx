@@ -11,10 +11,11 @@ import { useEffect, useState } from 'react';
 import { useUIStore } from '@/store/uiStore';
 import { t } from '@/i18n';
 import type { AskModeToolNeedReason } from '@/services/executionMode/askModeToolNeed';
+import type { TranslationKeys } from '@/i18n/types';
 import { DangerWarningDialog } from './chatInput/ExecutionModeDropdown';
 import { EXECUTION_MODES } from '@/services/executionMode';
 
-function bodyKeyForReason(reason: AskModeToolNeedReason): string {
+function bodyKeyForReason(reason: AskModeToolNeedReason): keyof TranslationKeys {
   switch (reason) {
     case 'browser':
       return 'executionMode.upgrade.body.browser';
@@ -64,7 +65,7 @@ export function ExecutionModeUpgradeModal() {
             {t('executionMode.upgrade.title')}
           </h3>
           <p id="execution-mode-upgrade-body" className="mt-2 text-[12px] leading-relaxed text-gray-600">
-            {t(bodyKeyForReason(reason) as 'executionMode.upgrade.body.general')}
+            {t(bodyKeyForReason(reason))}
           </p>
           {messagePreview && (
             <p className="mt-3 line-clamp-3 rounded-xl border border-gray-100 bg-gray-50 px-3 py-2 text-[11px] leading-relaxed text-gray-500">
@@ -95,9 +96,17 @@ export function ExecutionModeUpgradeModal() {
               type="button"
               onClick={() => setPendingDanger(true)}
               data-testid="execution-mode-upgrade-danger"
-              className="rounded-lg bg-rose-600 px-3 py-2 text-[12px] font-semibold text-white hover:bg-rose-700"
+              className="inline-flex items-center justify-center gap-1.5 rounded-lg bg-rose-600 px-3 py-2 text-[12px] font-semibold text-white hover:bg-rose-700"
             >
-              {t('executionMode.danger.label')}
+              <span>{t('executionMode.danger.label')}</span>
+              {reason === 'general' && (
+                <span
+                  data-testid="execution-mode-upgrade-recommend-danger"
+                  className="rounded bg-rose-700/80 px-1.5 py-0.5 text-[10px] font-medium text-rose-100"
+                >
+                  {t('executionMode.upgrade.recommendDanger')}
+                </span>
+              )}
             </button>
           </div>
         </div>

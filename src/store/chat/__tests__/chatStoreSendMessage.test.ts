@@ -924,6 +924,11 @@ describe('chatStore sendMessage integration', () => {
     });
     const session = useChatStore.getState().sessions.find((candidate) => candidate.id === 'session-1');
     expect(session?.executionMode).toBe('plan');
+    expect(mockAddNotification).toHaveBeenCalledWith(
+      'info',
+      'executionMode.upgrade.switchedToPlan',
+      'session-1',
+    );
     expect(mockRunChatTurn).not.toHaveBeenCalledWith(
       'session-1',
       expect.any(Array),
@@ -932,6 +937,25 @@ describe('chatStore sendMessage integration', () => {
       false,
       undefined,
       expect.objectContaining({ noTools: true }),
+    );
+  });
+
+  it('upgrades Ask mode to Danger when a shell-requiring message is sent and bypass choice is selected', async () => {
+    mockShowExecutionModeUpgradePrompt.mockImplementationOnce(async () => 'bypass' as const);
+    resetChatState({ executionMode: 'ask', permissionMode: 'plan-only' });
+
+    await useChatStore.getState().sendMessage('运行 npm test');
+
+    expect(mockShowExecutionModeUpgradePrompt).toHaveBeenCalledWith({
+      reason: 'general',
+      messagePreview: '运行 npm test',
+    });
+    const session = useChatStore.getState().sessions.find((candidate) => candidate.id === 'session-1');
+    expect(session?.executionMode).toBe('danger');
+    expect(mockAddNotification).toHaveBeenCalledWith(
+      'info',
+      'executionMode.upgrade.switchedToDanger',
+      'session-1',
     );
   });
 

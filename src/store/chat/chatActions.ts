@@ -353,6 +353,13 @@ async function tryRecoverFromToolPolicyError(
   if (getChatSessionTurnEpoch(activeSessionId) !== turnEpoch) {
     return false;
   }
+  useUIStore.getState().addNotification(
+    'info',
+    choice === 'bypass'
+      ? t('executionMode.upgrade.switchedToDanger')
+      : t('executionMode.upgrade.switchedToPlan'),
+    activeSessionId,
+  );
   pinChatSession(activeSessionId, get);
 
   clearStreamingBuffer(activeSessionId);
