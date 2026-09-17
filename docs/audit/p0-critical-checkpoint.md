@@ -228,7 +228,7 @@ Checked `remediation-backlog.json` on **2026-06-24**:
 | 7 | R7-04 | **fix(security): reject artifacts when workDir undefined** | `artifactDetector.ts` | `/etc/passwd` rejected | High | ✅ Shipped 2026-09-17 — fail-closed when no workDir/outputDir roots; `/etc/passwd` + previewable `/etc/*` regressions |
 | 8 | INFRA-01 | **chore(test): add @testing-library/react** | `package.json`, hook sample test | `useChatMessageScroll` sample | Low | ✅ Shipped 2026-09-17 — RTL + jest-dom/user-event + useChatMessageScroll sample |
 | 9 | TOP-15-01 | **test: chat P0 session isolation regression** ✅ Fixed 2026-09-17 | `src/store/chat/__tests__/` | T-01 | Low | Guard fixed R1-01/02 (T-02 / R1-03 remains TOP-15-02) |
-| 10 | AG-02 | **refactor: extract preflight/iteration/metrics from loopEngine.ts (PR2a+PR2b)** | `loopEngine.ts` → `loopEngine.preflightPhase.ts`, `loopEngine.iterationPhase.ts`, `loopEngine.metricsPhase.ts` | `loopEngine.preflightPhase.test.ts`, `loopEngine.iterationPhase.test.ts`, `loopEngine.metricsPhase.test.ts`, `loopEngine.integration.test.ts` | Low | ✅ PR2a+PR2b shipped 2026-09-17 — loopEngine.ts under 800 LOC governance cap |
+| 10 | AG-02 | **refactor: extract preflight/iteration/metrics from loopEngine.ts (PR2a+PR2b)** | `loopEngine.ts` → `loopEngine.preflightPhase.ts`, `loopEngine.iterationPhase.ts`, `loopEngine.metricsPhase.ts`, `loopEngine.iteration*.ts` | `loopEngine.preflightPhase.test.ts`, `loopEngine.iterationPhase.test.ts`, `loopEngine.metricsPhase.test.ts`, `loopEngine.integration.test.ts` | Low | ✅ PR2a+PR2b shipped 2026-09-17 — loopEngine.ts & all extracted .ts ≤800 LOC governance cap |
 
 ---
 

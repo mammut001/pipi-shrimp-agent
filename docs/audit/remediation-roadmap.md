@@ -32,7 +32,7 @@ Earlier post-audit fixes (still need regression tests): R1-01–03, R4-01–03, 
 | **High — security** | R7-04 artifact sandbox ✅, R7-06 outputDir, R7-12 Telegram Rust parity ✅ |
 | **High — AutoResearch** | R5-02 preflight abort controller leak ✅ |
 | **Test infra** | INFRA-01 `@testing-library/react`, TOP-15 regression suites |
-| **Architecture** | AG-02 `loopEngine.ts` (**PR2a+PR2b** shipped 2026-09-17 — under 800 LOC), AG-05 `browserAgentStore.ts`, AG-10 `web.rs` splits |
+| **Architecture** | AG-02 `loopEngine.ts` (**PR2a+PR2b** shipped 2026-09-17 — loopEngine.ts & iterationPhase split modules all ≤800 LOC), AG-05 `browserAgentStore.ts`, AG-10 `web.rs` splits |
 | **Rust High (round-02)** | R2-05–R2-12 — not yet in backlog JSON |
 
 **Open P0/Critical in backlog:** 0.
@@ -654,7 +654,7 @@ Per [complexity-governance.md](../architecture/complexity-governance.md) and `np
 | ID | File | LOC | Suggested action | Block feature work? | Split PRs? |
 | --- | ---- | --- | ---------------- | ------------------- | ---------- |
 | AG-01 | `src-tauri/src/database.rs` | 2473 | Extract backup/restore/migration modules | Yes | Yes — 3+ PRs |
-| AG-02 | `src/services/autoresearch/loopEngine.ts` | ~370 | Extract preflight, iteration, metrics phases — **PR2a+PR2b** shipped 2026-09-17; under 800 LOC governance cap | No | Done — PR2a/PR2b; aligns with R5-02 |
+| AG-02 | `src/services/autoresearch/loopEngine.ts` | ~370 | Extract preflight, iteration, metrics phases — **PR2a+PR2b** shipped 2026-09-17; follow-up split iterationPhase under 800 LOC (every extracted .ts ≤800) | No | Done — PR2a/PR2b; aligns with R5-02 |
 | AG-03 | `src-tauri/src/commands/chat.rs` | 1514 | Remove legacy path (R2-01) then split handlers | Yes | Yes — fix before split |
 | AG-04 | `src/components/Sidebar.tsx` | 1499 | Extract session list, bulk actions, settings link | Yes | Yes |
 | AG-05 | `src/store/browserAgentStore.ts` | 1413 | Extract CDP task runner (R3-05) | Yes | Yes — aligns with browser lane |

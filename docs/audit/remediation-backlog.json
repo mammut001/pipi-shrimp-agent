@@ -1242,12 +1242,16 @@
     "lane": "I. Architecture Governance",
     "severity": "Governance",
     "status": "fixed",
-    "fixNote": "2026-09-17: AG-02 PR2a shipped — extracted loop preflight phase to loopEngine.preflightPhase.ts. 2026-09-17: AG-02 PR2b shipped — extracted iteration phase to loopEngine.iterationPhase.ts (runExperimentIteration + workspace/prompt helpers) and metrics phase helpers to loopEngine.metricsPhase.ts; preserved R5-02 outer try/finally and clearActiveLoopHandle lifecycle in startExperimentLoop; loopEngine.ts now under the 800 LOC governance cap.",
+    "fixNote": "2026-09-17: AG-02 PR2a shipped — extracted loop preflight phase to loopEngine.preflightPhase.ts. 2026-09-17: AG-02 PR2b shipped — extracted iteration phase to loopEngine.iterationPhase.ts and metrics phase helpers to loopEngine.metricsPhase.ts; follow-up split modularized loopEngine.iterationPhase.ts into iterationAbort, iterationPrompt, iterationWorkspace, and iterationFailure so every extracted .ts is ≤800 LOC (hard governance limit); preserved R5-02 outer try/finally and clearActiveLoopHandle lifecycle in startExperimentLoop; loopEngine.ts and all extracted modules now under the 800 LOC governance cap.",
     "whyItMatters": "AutoResearch core exceeds hard limit; aligns with R5-02",
     "files": [
       "src/services/autoresearch/loopEngine.ts",
       "src/services/autoresearch/loopEngine.preflightPhase.ts",
       "src/services/autoresearch/loopEngine.iterationPhase.ts",
+      "src/services/autoresearch/loopEngine.iterationAbort.ts",
+      "src/services/autoresearch/loopEngine.iterationPrompt.ts",
+      "src/services/autoresearch/loopEngine.iterationWorkspace.ts",
+      "src/services/autoresearch/loopEngine.iterationFailure.ts",
       "src/services/autoresearch/loopEngine.metricsPhase.ts"
     ],
     "smallestPrScope": "PR2a+PR2b done (preflight, iteration, metrics)",
