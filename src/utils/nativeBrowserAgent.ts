@@ -108,6 +108,11 @@ async function removeOverlay(): Promise<void> {
   }
 }
 
+/** Best-effort CDP page overlay teardown (R3-07). Safe to call from store error paths. */
+export async function removeBrowserAgentOverlay(): Promise<void> {
+  await removeOverlay();
+}
+
 // ─── Agent logging ─────────────────────────────────────────────────────────
 
 type AgentLogLevel = 'info' | 'success' | 'error' | 'warning';
@@ -591,9 +596,10 @@ KEY RULES:
     }
   }
   await delay(1200, options.signal);
-  await injectOverlay();
 
   try {
+  // Inject after the try begins so every exit (success/error/abort) hits finally cleanup (R3-07).
+  await injectOverlay();
   for (let step = 0; step < maxSteps && !isDone; step += 1) {
     assertNotAborted(options.signal);
     const stepStartedAt = Date.now();

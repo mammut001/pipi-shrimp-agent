@@ -80,6 +80,7 @@ jest.mock('../../../utils/browserPageStateClient', () => ({
 
 jest.mock('../../../utils/nativeBrowserAgent', () => ({
   executeNativeBrowserTask: (...args: unknown[]) => executeCdpTaskMock(...args),
+  removeBrowserAgentOverlay: jest.fn(async () => undefined),
 }));
 
 const sensitiveVerdict: BrowserActionPolicyVerdict = {

@@ -78,7 +78,7 @@ All thirteen anchors from the remediation wave are **`fixed`** in `remediation-b
 | **Problem** | Stop button did not abort the native CDP/LLM loop; late results could commit `completed` status after user abort. |
 | **Fix summary** | Per-run `AbortController` in `stopTask`; signal passed into `executeNativeBrowserTask`; late CDP/LLM results guarded from committing. |
 | **Tests added** | `src/store/browser/__tests__/browserTaskStop.test.ts`, `src/__tests__/nativeBrowserAgent.test.ts`. |
-| **Remaining risk** | `closeWindow` does not call `stopTask` (R3-08); overlay may stick on error (R3-07). |
+| **Remaining risk** | `closeWindow` does not call `stopTask` (R3-08). Overlay stuck-on-error (R3-07) fixed 2026-09-17. |
 | **Follow-up** | R3-08 `closeWindow` + stopTask; AG-05 split `browserAgentStore.ts`. |
 
 #### R3-06 — Rust `cdp_execute_script` has no policy gate
@@ -191,7 +191,7 @@ Checked `remediation-backlog.json` on **2026-06-24**:
 
 | ID | Lane | Summary |
 | --- | ---- | ------- |
-| R3-07 | Browser | Overlay not removed on error path |
+| R3-07 | Browser | Overlay not removed on error path ✅ Fixed 2026-09-17 |
 | R3-08 | Browser | `closeWindow` doesn't stop CDP task |
 | R3-09 | Browser | Selector param ignored in executor |
 | R3-10 | Browser | `press_enter` not wired to `pressBrowserKey` |
@@ -219,7 +219,7 @@ Checked `remediation-backlog.json` on **2026-06-24**:
 
 | # | Audit ID | Title | Likely files | Tests | Risk | Why next |
 | --- | -------- | ----- | ------------ | ----- | ---- | -------- |
-| 1 | R3-07 | **fix(browser): remove overlay on CDP error path** | `browserAgentStore.ts` | error-path overlay cleanup test | Medium | UX blocker — stuck full-screen overlay after agent failure |
+| 1 | R3-07 | **fix(browser): remove overlay on CDP error path** | `browserAgentStore.ts`, `nativeBrowserAgent.ts` | `browserOverlayCleanup.test.ts` + native overlay describe | Medium | ✅ Shipped 2026-09-17 — store+finally overlay cleanup |
 | 2 | R3-08 | **fix(browser): stopTask in closeWindow** | `browserAgentStore.ts`, `BrowserPanel.tsx` | close stops loop test | Medium | Orphan CDP agent after window close — resource leak |
 | 3 | R3-09 | **fix(browser): honor selector in native executor** | `nativeBrowserAgent.ts` | selector-used assertion | Medium | Silent no-op tool calls — agent reliability |
 | 4 | R3-10 | **fix(browser): wire press_enter to pressBrowserKey** | `nativeBrowserAgent.ts` | enter key sent test | Medium | Form submit failures in common flows |
