@@ -233,6 +233,20 @@ describe('AgentPanel', () => {
       currentArtifactId: undefined,
       activeSkill: null,
     });
+    mockUseChatStore.setState({
+      currentSessionId: 'session-1',
+      sessions: [{
+        id: 'session-1',
+        permissionMode: 'standard',
+        workingFiles: [],
+        workDir: '/tmp/workspace',
+      }],
+      isStreaming: false,
+      pendingToolCalls: 1,
+    });
+    mockUseSettingsStore.setState({
+      importedFiles: [],
+    });
   });
 
   afterEach(() => {
@@ -321,6 +335,36 @@ describe('AgentPanel', () => {
     // Hide the noisy "0" badge when the section is empty (Progress already does this).
     expect(section?.getAttribute('data-section-count')).toBe('');
     expect(section?.querySelector('[data-testid="section-count"]')).toBeNull();
+  });
+
+  it('displays count badge and working files when folders count is greater than 0', () => {
+    mockUseChatStore.setState({
+      currentSessionId: 'session-1',
+      sessions: [{
+        id: 'session-1',
+        permissionMode: 'standard',
+        workingFiles: [{
+          id: 'wf-1',
+          name: 'notes.md',
+          path: '/tmp/notes.md',
+          addedAt: 1,
+        }],
+        workDir: '/tmp/workspace',
+      }],
+    });
+
+    const view = renderPanel();
+    expect(view.container.querySelector('[data-testid="working-folders-empty"]')).toBeNull();
+
+    const section = view.container.querySelector(
+      `[data-section-title="${t('agentPanel.workingFolders.title')}"]`,
+    );
+    expect(section).toBeTruthy();
+    expect(section?.getAttribute('data-section-count')).toBe('1');
+    const countBadge = section?.querySelector('[data-testid="section-count"]');
+    expect(countBadge).toBeTruthy();
+    expect(countBadge?.textContent).toBe('1');
+    expect(view.container.textContent).toContain('notes.md');
   });
 
   it('wires Working folders title/empty copy through i18n keys (source guard)', () => {
