@@ -927,6 +927,9 @@ export type TranslationKeys = {
   'sidebar.localUser': string;
   'sidebar.accountSuffix': string;
   'sidebar.noApiConfig': string;
+  'sidebar.openAccountPicker': string;
+  'sidebar.accountPickerLabel': string;
+  'sidebar.manageAccountsInSettings': string;
   'sidebar.justNow': string;
   'sidebar.minutesAgo': string;
   'sidebar.hoursAgo': string;

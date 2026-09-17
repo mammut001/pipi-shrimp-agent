@@ -13,13 +13,14 @@ import { createPortal } from 'react-dom';
 import { useChatStore, useUIStore, useWorkflowStore, useSettingsStore } from '@/store';
 import type { Session } from '@/types/chat';
 import { t } from '@/i18n';
-import { getProvider } from '@/shared/providers';
 import { calculateRequestCost, formatCostCompact } from '@/utils/pricing';
 import { getSessionTokenUsage, formatTokenCount } from '@/utils/chat';
 import { invoke } from '@tauri-apps/api/core';
 import { workflowEngine } from '@/services/workflowEngine';
 import { startNewChatFlow } from '@/services/newChatFlow';
 import { SearchInput } from '@/components/ui';
+
+import { SidebarAccountChip } from '@/components/sidebar/SidebarAccountChip';
 
 
 /**
@@ -52,17 +53,11 @@ export function Sidebar() {
   const apiConfigs = useSettingsStore((s) => s.apiConfigs);
   const activeConfigId = useSettingsStore((s) => s.activeConfigId);
 
-  // Footer profile info (derived from active API config; fallback to first config)
+  // Active API config (shared with session cost pricing fallback)
   const activeApiConfig = useMemo(
     () => apiConfigs.find((c) => c.id === activeConfigId) || apiConfigs[0] || null,
     [apiConfigs, activeConfigId],
   );
-  const profileName = activeApiConfig?.name?.trim() || t('sidebar.localUser');
-  const providerLabel = activeApiConfig
-    ? (getProvider(activeApiConfig.provider)?.label ?? activeApiConfig.provider)
-    : null;
-  const profileSubtitle = providerLabel ? `${providerLabel} ${t('sidebar.accountSuffix')}` : t('sidebar.noApiConfig');
-  const profileInitial = (profileName.charAt(0) || 'U').toUpperCase();
 
   // Projects state
   const [expandedProjects, setExpandedProjects] = useState<Set<string>>(() => {
@@ -1464,20 +1459,12 @@ export function Sidebar() {
 
       {/* Footer / User Profile & Settings */}
       <div className="p-4 border-t border-gray-100 bg-gray-50/50">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full bg-gray-900 flex items-center justify-center text-white shadow-sm ring-2 ring-white select-none">
-              <span className="font-bold text-sm">{profileInitial}</span>
-            </div>
-            <div className="min-w-0 select-none">
-              <p className="text-sm font-semibold text-gray-900 truncate leading-none mb-1">{profileName}</p>
-              <p className="text-[10px] text-gray-500 uppercase font-bold tracking-wider opacity-60">{profileSubtitle}</p>
-            </div>
-          </div>
+        <div className="flex items-center justify-between gap-2">
+          <SidebarAccountChip />
 
           <button
             onClick={toggleSettings}
-            className="p-2 rounded-xl hover:bg-white hover:shadow-md text-gray-500 hover:text-gray-900 transition-all active:scale-95"
+            className="p-2 rounded-xl hover:bg-white hover:shadow-md text-gray-500 hover:text-gray-900 transition-all active:scale-95 flex-shrink-0"
             title={t('nav.settings')}
           >
             <svg
