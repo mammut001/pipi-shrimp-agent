@@ -160,7 +160,7 @@ export function Chat() {
    */
   const handleApprovePermission = async () => {
     if (!pendingPermission) return;
-    resolvePermissionRequest(true);
+    resolvePermissionRequest(true, pendingPermission.id);
   };
 
   /**
@@ -169,7 +169,7 @@ export function Chat() {
   const handleDenyPermission = () => {
     if (!pendingPermission) return;
     addNotification('info', t('permission.deniedMessage'));
-    resolvePermissionRequest(false);
+    resolvePermissionRequest(false, pendingPermission.id);
   };
 
   /**
