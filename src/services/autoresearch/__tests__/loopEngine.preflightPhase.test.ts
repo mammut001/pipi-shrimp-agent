@@ -99,7 +99,11 @@ import {
 import { rebuildLivingDoc } from '../livingDoc';
 import { emitAutoResearchRuntimeEvent, setAutoResearchPhase } from '../runtimeEvents';
 import { createNotifier } from '../notifier';
-import { runExperimentLoopPreflight } from '../loopEngine.preflightPhase';
+import {
+  buildDirtyRepoMessage,
+  runExperimentLoopPreflight,
+  toExperimentEntry,
+} from '../loopEngine.preflightPhase';
 
 const ensureSshpassAvailable = remoteExecModule.ensureSshpassAvailable as jest.MockedFunction<
   typeof remoteExecModule.ensureSshpassAvailable
@@ -368,5 +372,39 @@ describe('runExperimentLoopPreflight (AG-02 PR2a)', () => {
       expect(r.ctx.notifier).toBeDefined();
     }
     expect(createNotifier).toHaveBeenCalled();
+  });
+});
+
+describe('preflightPhase helpers', () => {
+  it('buildDirtyRepoMessage constructs expected message with dirtyFileCount', () => {
+    const summary = {
+      dirtyFileCount: 5,
+    } as any;
+    expect(buildDirtyRepoMessage(summary)).toBe(
+      'Experiment repository has 5 uncommitted change(s). AutoResearch will not reset a dirty repository automatically. Commit or stash those changes before starting a run.',
+    );
+  });
+
+  it('toExperimentEntry maps IterationMetrics with fallback defaults', () => {
+    const entry = toExperimentEntry({
+      iteration: 1,
+      hypothesis: 'Test hypothesis',
+      metricValue: 42,
+      status: 'KEEP',
+      finishedAt: '2026-09-17T12:00:00Z',
+      durationMs: 1200,
+    } as any);
+
+    expect(entry).toEqual({
+      iteration: 1,
+      hypothesis: 'Test hypothesis',
+      change: 'Applied via Agent tool calls',
+      metricValue: 42,
+      status: 'KEEP',
+      failReason: undefined,
+      reasoning: '',
+      timestamp: '2026-09-17T12:00:00Z',
+      durationMs: 1200,
+    });
   });
 });

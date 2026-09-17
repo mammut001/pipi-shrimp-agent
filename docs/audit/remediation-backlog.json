@@ -1241,12 +1241,19 @@
     "title": "Split loopEngine.ts (>1920 LOC)",
     "lane": "I. Architecture Governance",
     "severity": "Governance",
-    "status": "partially fixed",
-    "fixNote": "2026-06-24: Extracted prepareLoopStartupContext to preflight.ts; loopEngine.ts reduced; full split still open.",
+    "status": "fixed",
+    "fixNote": "2026-09-17: Extracted loop preflight phase to loopEngine.preflightPhase.ts (runExperimentLoopPreflight, types, and helpers); removed dead buildDirtyRepoMessage duplicate; preserved R5-02 outer try/finally and clearActiveLoopHandle lifecycle.",
     "whyItMatters": "AutoResearch core exceeds hard limit; aligns with R5-02",
-    "files": ["src/services/autoresearch/loopEngine.ts"],
+    "files": [
+      "src/services/autoresearch/loopEngine.ts",
+      "src/services/autoresearch/loopEngine.preflightPhase.ts"
+    ],
     "smallestPrScope": "Extract preflight phase module",
-    "tests": ["loopEngine.integration.test.ts"],
+    "tests": [
+      "loopEngine.preflightPhase.test.ts",
+      "loopEnginePreflightAbort.test.ts",
+      "loopEngine.integration.test.ts"
+    ],
     "dependencies": ["R5-02"],
     "runtimeBehavior": false,
     "uiBehavior": false,
