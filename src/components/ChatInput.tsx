@@ -12,9 +12,13 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { safeInvoke, safeInvokeOrNull } from '@/utils/safeInvoke';
 import { buildImageDataUrl, fileToImageAttachment } from '@/services/vision/imageAttachments';
-import { useChatStore } from '@/store';
-import { useUIStore } from '@/store';
-import { shouldShowStopControl } from '@/store/chat/chatSelectors';
+import { useChatStore, useUIStore } from '@/store';
+import {
+  COMPOSER_SEND_CONTROL_TEST_ID,
+  COMPOSER_STOP_BUSY_HINT_TEST_ID,
+  COMPOSER_STOP_CONTROL_TEST_ID,
+  resolveComposerSendStopAffordance,
+} from '@/store/chat/chatSelectors';
 import { useSessionGoalStore } from '@/store/sessionGoalStore';
 import { useMCPStore } from '@/store/mcpStore';
 import { MCPChatButton, MCPDropdown } from '@/components/mcp';
@@ -211,11 +215,12 @@ export function ChatInput({
     clearSessionPipiOutputDir,
     updateSessionExecutionMode,
   } = useChatStore();
-  const showStopControl = shouldShowStopControl({
+  const sendStopAffordance = resolveComposerSendStopAffordance({
     isStreaming,
     pendingToolCalls,
     pendingToolResultsLength: pendingToolResults.length,
   });
+  const showStopControl = sendStopAffordance.showStop;
   const { toggleSettings, addNotification } = useUIStore();
   const { setDropdownOpen } = useMCPStore();
   const toggleTerminalPanel = useUIStore((s) => s.toggleTerminalPanel);
@@ -1005,12 +1010,26 @@ export function ChatInput({
               </svg>
             </button>
 
+            {/* Busy hint when stop shown */}
+            {showStopControl && sendStopAffordance.busyHintKey && (
+              <span
+                data-testid={COMPOSER_STOP_BUSY_HINT_TEST_ID}
+                className="px-1 text-[10px] leading-snug text-gray-500 select-none"
+                title={t(sendStopAffordance.busyHintKey)}
+              >
+                {t(sendStopAffordance.busyHintKey)}
+              </span>
+            )}
+
             {/* Send/Stop Button */}
             {showStopControl ? (
               <button
                 onClick={handleStop}
+                type="button"
+                data-testid={sendStopAffordance.stopTestId}
+                aria-label={t(sendStopAffordance.stopTitleKey)}
+                title={t(sendStopAffordance.stopTitleKey)}
                 className={`${actionButtonClassName} bg-red-600 hover:bg-red-700 text-white transition-colors`}
-                title={t('chat.stop')}
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"
@@ -1028,9 +1047,12 @@ export function ChatInput({
             ) : (
               <button
                 onClick={() => { void handleSubmit(); }}
+                type="button"
                 disabled={isDisabled || (attachments.length === 0 && !canSendFromComposer(composerOpen ? composerBlocks : [], input))}
-                className={`${actionButtonClassName} bg-gray-900 hover:bg-gray-800 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed`}
+                data-testid={sendStopAffordance.sendTestId}
+                aria-label={t('chat.send')}
                 title={t('chat.send')}
+                className={`${actionButtonClassName} bg-gray-900 hover:bg-gray-800 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed`}
               >
                 <svg
                   xmlns="http://www.w3.org/2000/svg"

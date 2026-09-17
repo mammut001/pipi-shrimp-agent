@@ -145,6 +145,9 @@ export type TranslationKeys = {
   'chat.inputPlaceholder': string;
   'chat.send': string;
   'chat.stop': string;
+  'chat.stopStreaming': string;
+  'chat.stopTools': string;
+  'chat.stopBusyHint': string;
   'chat.thinking': string;
   'chat.aiThinking': string;
   'chat.tokenUsage': string;

@@ -10,7 +10,7 @@ Companion plan: [`soak-polish-plan.md`](./soak-polish-plan.md) · scout: [`soak-
 | --- | --- |
 | **≤1s cancelled feel** | `stopGeneration` clears `isStreaming` / pending counters **before** awaiting `cancel_tool_execution` |
 | **A ≠ B isolation** | Stop cancels only `owningSessionId` tools/messages; B history untouched |
-| **Stop visible while streaming / long tool** | `shouldShowStopControl` — Stop when `isStreaming` **or** pending tools/results |
+| **Stop visible while streaming / long tool** | `shouldShowStopControl` + `resolveComposerSendStopAffordance` — Stop when `isStreaming` **or** pending tools/results; primary Stop action with distinct streaming/tools titles and stable `composer-stop-control`/`composer-send-control` testIds |
 | **Session-switch / new chat busy binding** | `selectSession` and `startSession` clear selected-session stream chrome (and rebind/idle as appropriate); **do not** cancel/stop/scrub/fail the previous session's in-flight tools |
 | **Permission approval isolation** | Pending `waitForPermission` promises are **session-scoped**; `startSession` / `selectSession` must **not** `clearAllPermissions` (that denies other sessions). UI shows only the selected session's queue entry. Stop / delete still clears the owning session via `clearPermissionsForSession`. Mode updates (`updateSessionPermissionMode` / `updateSessionExecutionMode`) settle **only** the owning `sessionId` queue entries, once (no cross-session resolve / no double-settle). **Swarm** `enqueuePermissionInUI` / `toUIPermissionRequest` must tag owning `sessionId` (same filter); otherwise the shell hides the modal and the bridge TTL (~60s) auto-denies. |
 | **Background completion ≠ selected chrome** | Stream completion / cancel / reasoning chrome updates only when `ownsSelectedStreamChrome(owning, current)`; A completing in background must not flip B `isStreaming` / stream buffer / busy chrome / `streamingTimeoutId` (owner-gated timeout cleanup) |
@@ -23,8 +23,8 @@ Companion plan: [`soak-polish-plan.md`](./soak-polish-plan.md) · scout: [`soak-
 ```
 src/store/chat/chatActions.ts          # stopGeneration optimistic clear
 src/store/chat/chatStreaming.ts        # per-session streamingBuffersBySession map
-src/store/chat/chatSelectors.ts        # shouldShowStopControl
-src/components/ChatInput.tsx           # Send/Stop toggles on shouldShowStopControl
+src/store/chat/chatSelectors.ts        # shouldShowStopControl + resolveComposerSendStopAffordance
+src/components/ChatInput.tsx           # Send/Stop affordance wiring (composer-stop-control, composer-send-control, composer-stop-busy-hint)
 src/store/createChatStore.ts           # selectSession busy rebind + startSession
 src/store/chat/sessionIsolation.ts     # resetTransientSessionStateForNewChat UI-only clear
 src/store/chat/__tests__/chatSelectors.test.ts
