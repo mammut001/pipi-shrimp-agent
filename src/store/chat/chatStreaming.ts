@@ -98,6 +98,80 @@ export function ownsSelectedStreamChrome(
   return Boolean(owningSessionId && currentSessionId && owningSessionId === currentSessionId);
 }
 
+/**
+ * Per-session module stream text buffers.
+ * Selected-session chrome (`streamingContent`) is already owner-gated; this map
+ * keeps the high-frequency append buffer from being shared across concurrent
+ * sessions (background A must not corrupt B when both stream / on switch).
+ */
+const streamingBuffersBySession = new Map<string, string>();
+
+export function getStreamingBuffer(sessionId: string | null | undefined): string {
+  if (!sessionId) {
+    return '';
+  }
+  return streamingBuffersBySession.get(sessionId) ?? '';
+}
+
+export function setStreamingBuffer(sessionId: string | null | undefined, content: string): void {
+  if (!sessionId) {
+    return;
+  }
+  streamingBuffersBySession.set(sessionId, content);
+}
+
+export function clearStreamingBuffer(sessionId: string | null | undefined): void {
+  if (!sessionId) {
+    return;
+  }
+  streamingBuffersBySession.delete(sessionId);
+}
+
+/** Append delta onto the session buffer; seeds from fallbackChrome when empty. */
+export function appendStreamingBuffer(
+  sessionId: string,
+  delta: string,
+  fallbackChrome = '',
+): string {
+  const next = (streamingBuffersBySession.get(sessionId) ?? fallbackChrome) + delta;
+  streamingBuffersBySession.set(sessionId, next);
+  return next;
+}
+
+
+/**
+ * Prefer the per-session module buffer. Fall back to selected chrome text only
+ * when this session owns selected stream chrome — empty background buffers must
+ * not inherit another session's streamingContent.
+ */
+export function resolveSessionStreamText(
+  sessionId: string | null | undefined,
+  selectedChrome: string,
+  currentSessionId: string | null | undefined,
+): string {
+  const buffered = getStreamingBuffer(sessionId);
+  if (buffered) {
+    return buffered;
+  }
+  return ownsSelectedStreamChrome(sessionId, currentSessionId) ? selectedChrome : '';
+}
+
+/**
+ * Selected-session reasoning chrome only — background sessions have no shared
+ * reasoning buffer and must not read another session's streamingReasoning.
+ */
+export function resolveSessionStreamReasoning(
+  sessionId: string | null | undefined,
+  selectedReasoning: string,
+  currentSessionId: string | null | undefined,
+): string {
+  return ownsSelectedStreamChrome(sessionId, currentSessionId) ? selectedReasoning : '';
+}
+
+export function resetStreamingBuffersForTests(): void {
+  streamingBuffersBySession.clear();
+}
+
 const cancellationRequestedSessions = new Set<string>();
 const chatTurnAbortControllers = new Map<string, AbortController>();
 

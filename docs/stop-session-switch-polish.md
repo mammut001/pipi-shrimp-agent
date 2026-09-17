@@ -14,6 +14,7 @@ Companion plan: [`soak-polish-plan.md`](./soak-polish-plan.md) · scout: [`soak-
 | **Session-switch / new chat busy binding** | `selectSession` and `startSession` clear selected-session stream chrome (and rebind/idle as appropriate); **do not** cancel/stop/scrub/fail the previous session's in-flight tools |
 | **Permission approval isolation** | Pending `waitForPermission` promises are **session-scoped**; `startSession` / `selectSession` must **not** `clearAllPermissions` (that denies other sessions). UI shows only the selected session's queue entry. Stop / delete still clears the owning session via `clearPermissionsForSession`. Mode updates (`updateSessionPermissionMode` / `updateSessionExecutionMode`) settle **only** the owning `sessionId` queue entries, once (no cross-session resolve / no double-settle). **Swarm** `enqueuePermissionInUI` / `toUIPermissionRequest` must tag owning `sessionId` (same filter); otherwise the shell hides the modal and the bridge TTL (~60s) auto-denies. |
 | **Background completion ≠ selected chrome** | Stream completion / cancel / reasoning chrome updates only when `ownsSelectedStreamChrome(owning, current)`; A completing in background must not flip B `isStreaming` / stream buffer / busy chrome / `streamingTimeoutId` (owner-gated timeout cleanup) |
+| **Per-session module stream buffer** | `streamingBuffersBySession` map in `chatStreaming.ts`; append/clear/flush keyed by owning `sessionId`. Empty-buffer chrome fallback is **selected-owner gated** (`resolveSessionStreamText` / `resolveSessionStreamReasoning`) — background A with empty buffer must not inherit B's `streamingContent` / `streamingReasoning`. Selected chrome remains single-selected UI. |
 | **Same-session Stop→send race** | Per-session turn epoch: `sendMessage` bumps; `stopGeneration` **eager-scrubs dangling tool_calls before slow native cancel**; `sendMessage` re-scrubs before `buildApiMessages` and **re-checks epoch after scrub await** plus **immediately before createChatTurnAbortController / runChatTurn** (stale post-scrub path must not take over the abort controller or abort a newer turn); cancel-notice `addMessageToSession` re-checks epoch after DB await and discards stale local append; stale cancel completion **re-checks epoch after every await** before placeholder/`stop_subprocess`/pending wipe; placeholder/message ops id-bound to stopped turn; diagnostics cancel uses Stop snapshot only |
 | **Stop A leaves B runtime** | Stop cancels only A's executionIds; B unresolved tools / executionIds remain |
 
@@ -21,6 +22,7 @@ Companion plan: [`soak-polish-plan.md`](./soak-polish-plan.md) · scout: [`soak-
 
 ```
 src/store/chat/chatActions.ts          # stopGeneration optimistic clear
+src/store/chat/chatStreaming.ts        # per-session streamingBuffersBySession map
 src/store/chat/chatSelectors.ts        # shouldShowStopControl
 src/components/ChatInput.tsx           # Send/Stop toggles on shouldShowStopControl
 src/store/createChatStore.ts           # selectSession busy rebind + startSession
@@ -43,5 +45,5 @@ src/store/chat/chatToolExecution.ts        # enqueuePermissionInUI({ sessionId: 
 - Long-tool intermediate `cancelling` TaskStep status / vocabulary unify — **done** in [`cancelling-status-vocab.md`](./cancelling-status-vocab.md)
 - Truncated replies / Project Folder UX / Danger defaults (scout leftovers)
 - Playwright mega-framework; OTel; durable half-tool resume
-- Shared module `currentStreamingBuffer` for true concurrent multi-session streams — not fully per-session; chrome is gated, buffer hardening is a follow-up
+- Selected-session stream chrome (`streamingContent` / `streamingReasoning` / `isStreaming` / `streamingTimeoutId`) remains a single selected-session UI surface (by design); background turns update their own message + per-session module buffer only
 - Legacy FIFO permission modal in `Chat.tsx` (`permissionQueue[0]`) — not the main shell path (`ChatBrowserWorkspaceShell` is session-filtered)

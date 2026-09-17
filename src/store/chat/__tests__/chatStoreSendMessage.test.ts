@@ -172,6 +172,8 @@ import {
   getChatSessionTurnEpoch,
   requestChatGenerationCancel,
   resetChatSessionTurnEpochForTests,
+  resetStreamingBuffersForTests,
+  setStreamingBuffer,
 } from '../chatStreaming';
 import {
   getCurrentStreamingBufferForTests,
@@ -294,6 +296,7 @@ describe('chatStore sendMessage integration', () => {
     jest.useFakeTimers();
     resetAllSessionToolRuntime();
     resetChatSessionTurnEpochForTests();
+    resetStreamingBuffersForTests();
     clearChatGenerationCancel('session-1');
     clearChatGenerationCancel('session-B');
     clearChatGenerationCancel('session-2');
@@ -1091,6 +1094,109 @@ describe('chatStore sendMessage integration', () => {
     expect(sessionB?.messages).toEqual([
       expect.objectContaining({ role: 'user', content: 'idle on B' }),
     ]);
+  });
+
+  it('per-session streaming buffer: background A append must not corrupt B buffer', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+    const currentSessions = useChatStore.getState().sessions;
+    useChatStore.setState({
+      sessions: [
+        ...currentSessions,
+        {
+          id: 'session-B',
+          title: 'Session B',
+          messages: [
+            createMessage('user', 'idle on B'),
+            createMessage('assistant', ''),
+          ],
+          createdAt: 2,
+          updatedAt: 2,
+          permissionMode: 'auto-edits',
+          executionMode: 'agent',
+        },
+      ],
+      currentSessionId: 'session-B',
+      isStreaming: true,
+      streamingContent: 'B-chrome',
+      streamingSessionId: 'session-B',
+      // Avoid throttle flush so chrome assertions stay stable.
+      lastUiUpdateTime: Date.now(),
+    });
+
+    // Seed both module buffers independently (simulates concurrent streams).
+    setStreamingBuffer('session-1', 'A-seed-');
+    setStreamingBuffer('session-B', 'B-seed-');
+    expect(getCurrentStreamingBufferForTests('session-1')).toBe('A-seed-');
+    expect(getCurrentStreamingBufferForTests('session-B')).toBe('B-seed-');
+
+    // Background A keeps appending while B is selected — must not touch B buffer/chrome.
+    useChatStore.getState().appendStreamingContent('A-more', undefined, 'session-1');
+    expect(getCurrentStreamingBufferForTests('session-1')).toBe('A-seed-A-more');
+    expect(getCurrentStreamingBufferForTests('session-B')).toBe('B-seed-');
+    expect(useChatStore.getState().streamingContent).toBe('B-chrome');
+
+    // B appends must not see A's buffer; A must stay intact.
+    useChatStore.getState().appendStreamingContent('B-more', undefined, 'session-B');
+    expect(getCurrentStreamingBufferForTests('session-B')).toBe('B-seed-B-more');
+    expect(getCurrentStreamingBufferForTests('session-1')).toBe('A-seed-A-more');
+  });
+
+  it('empty-buffer gate: background A must not pick up B streamingContent when B selected', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+      messages: [
+        createMessage('user', 'ask A'),
+        createMessage('assistant', ''),
+      ],
+    });
+    const currentSessions = useChatStore.getState().sessions;
+    useChatStore.setState({
+      sessions: [
+        ...currentSessions,
+        {
+          id: 'session-B',
+          title: 'Session B',
+          messages: [
+            createMessage('user', 'idle on B'),
+            createMessage('assistant', ''),
+          ],
+          createdAt: 2,
+          updatedAt: 2,
+          permissionMode: 'auto-edits',
+          executionMode: 'agent',
+        },
+      ],
+      currentSessionId: 'session-B',
+      isStreaming: true,
+      streamingContent: 'B-SELECTED-CHROME',
+      streamingReasoning: 'B-SELECTED-REASON',
+      streamingSessionId: 'session-B',
+      // Force throttle flush so message content is updated.
+      lastUiUpdateTime: 0,
+    });
+
+    // A buffer empty — append must seed '' not B chrome.
+    expect(getCurrentStreamingBufferForTests('session-1')).toBe('');
+    useChatStore.getState().appendStreamingContent('A-first', undefined, 'session-1');
+    expect(getCurrentStreamingBufferForTests('session-1')).toBe('A-first');
+    expect(getCurrentStreamingBufferForTests('session-B')).toBe('');
+    expect(useChatStore.getState().streamingContent).toBe('B-SELECTED-CHROME');
+    expect(useChatStore.getState().streamingReasoning).toBe('B-SELECTED-REASON');
+
+    const sessionA = useChatStore.getState().sessions.find((s) => s.id === 'session-1');
+    const lastA = sessionA?.messages[sessionA.messages.length - 1];
+    expect(lastA?.role).toBe('assistant');
+    expect(lastA?.content).toBe('A-first');
+    // Must not have merged B reasoning into A.
+    expect(lastA?.reasoning ?? '').not.toContain('B-SELECTED-REASON');
   });
 
   it('background session A completion must not clear B streamingTimeoutId', async () => {
@@ -2148,18 +2254,18 @@ describe('chatStore sendMessage integration', () => {
     jest.advanceTimersByTime(25);
     const sendNew = useChatStore.getState().sendMessage('new for buffer race');
     for (let i = 0; i < 80; i += 1) {
-      if (getCurrentStreamingBufferForTests().includes('NEW-TURN-BUFFER-KEEP')) {
+      if (getCurrentStreamingBufferForTests('session-1').includes('NEW-TURN-BUFFER-KEEP')) {
         break;
       }
       await Promise.resolve();
     }
-    expect(getCurrentStreamingBufferForTests()).toContain('NEW-TURN-BUFFER-KEEP');
+    expect(getCurrentStreamingBufferForTests('session-1')).toContain('NEW-TURN-BUFFER-KEEP');
 
     // Stale cancelled turn's catch runs while new turn owns the buffer.
     releaseOldStream('abort');
     await sendOld;
 
-    expect(getCurrentStreamingBufferForTests()).toContain('NEW-TURN-BUFFER-KEEP');
+    expect(getCurrentStreamingBufferForTests('session-1')).toContain('NEW-TURN-BUFFER-KEEP');
 
     releaseNewStream();
     releaseCancel();
@@ -2260,12 +2366,12 @@ describe('chatStore sendMessage integration', () => {
     const sendNew = useChatStore.getState().sendMessage('new for cancel-marker race');
     // Wait until new turn has processed its first delta (consume check already ran).
     for (let i = 0; i < 80; i += 1) {
-      if (getCurrentStreamingBufferForTests().includes('new-still-streaming')) {
+      if (getCurrentStreamingBufferForTests('session-1').includes('new-still-streaming')) {
         break;
       }
       await Promise.resolve();
     }
-    expect(getCurrentStreamingBufferForTests()).toContain('new-still-streaming');
+    expect(getCurrentStreamingBufferForTests('session-1')).toContain('new-still-streaming');
     expect(useChatStore.getState().isStreaming).toBe(true);
 
     // New turn is mid-stream past its consume check: Stop marker belongs to it.
@@ -2373,12 +2479,12 @@ describe('chatStore sendMessage integration', () => {
     jest.advanceTimersByTime(25);
     const sendNew = useChatStore.getState().sendMessage('new for real-error race');
     for (let i = 0; i < 80; i += 1) {
-      if (getCurrentStreamingBufferForTests().includes('NEW-TURN-KEEP-STREAMING')) {
+      if (getCurrentStreamingBufferForTests('session-1').includes('NEW-TURN-KEEP-STREAMING')) {
         break;
       }
       await Promise.resolve();
     }
-    expect(getCurrentStreamingBufferForTests()).toContain('NEW-TURN-KEEP-STREAMING');
+    expect(getCurrentStreamingBufferForTests('session-1')).toContain('NEW-TURN-KEEP-STREAMING');
     expect(useChatStore.getState().isStreaming).toBe(true);
     expect(useChatStore.getState().error).toBeNull();
 
@@ -2390,7 +2496,7 @@ describe('chatStore sendMessage integration', () => {
 
     expect(useChatStore.getState().isStreaming).toBe(true);
     expect(useChatStore.getState().streamingSessionId).toBe('session-1');
-    expect(getCurrentStreamingBufferForTests()).toContain('NEW-TURN-KEEP-STREAMING');
+    expect(getCurrentStreamingBufferForTests('session-1')).toContain('NEW-TURN-KEEP-STREAMING');
     expect(useChatStore.getState().error).toBeNull();
     expect(mockSetActiveSkill).not.toHaveBeenCalledWith(null);
 
