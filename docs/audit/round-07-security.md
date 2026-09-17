@@ -6,6 +6,8 @@
 
 ## High
 
+> **R7-12** fixed 2026-09-17: every `telegramService.ts` `telegram_*` invoke is registered in `lib.rs` / `telegram.rs`; T-15 dynamic parity test + `tools/check-tauri-commands.mjs`.
+
 | ID | Location | Description | Suggested test |
 | --- | -------- | ----------- | -------------- |
 | R7-01 | `pathValidation.ts:84,109` | TS 仍用 `startsWith` 非 `isWithinDir`；sibling-prefix 逃逸（Rust 已修 TS 未修） | `/project2` inside `/project` |
@@ -14,7 +16,7 @@
 | R7-07 | `ChatMessage.tsx:192-285` | `rehypeRaw` + DOMPurify 源串；`javascript:` href 未拦 | malicious link render |
 | R7-08 | `MarkdownDocumentPreview.tsx:18-22` | 无 DOMPurify / sanitize | `<img onerror>` 向量 |
 | R7-11 | `telegram.ts` types vs `commandRouter.ts` | `allowedChats` / `isChatAllowed` 从未在 router 调用 | chat 456 被拒 when allowlist [123] |
-| R7-12 | `telegramService.ts` vs `lib.rs` | 多个 `telegram_*` invoke 无 Rust handler | command parity 契约测试 |
+| R7-12 | `telegramService.ts` vs `lib.rs` | 多个 `telegram_*` invoke 无 Rust handler ✅ Fixed 2026-09-17 | command parity 契约测试 |
 
 ## Medium
 

@@ -33,7 +33,7 @@ Chinese version: [../test-gaps-backlog.md](../test-gaps-backlog.md)
 | T-12 | Store | `listenerGuard` out-of-order unmount | R4-01 |
 | T-13 | Store | `StreamingToolExecutor` requiresConfirmation path | R4-07 |
 | T-14 | Workflow | `engine.stop()` then `getIsRunning()` and restart | R4-02, R6-02 |
-| T-15 | Telegram | `telegramService` invoke vs `lib.rs` registry parity | R9-01, R10-05 |
+| T-15 | Telegram | `telegramService` invoke vs `lib.rs` registry parity ✅ Fixed 2026-09-17 | R7-12, R9-01, R10-05 |
 | T-16 | Telegram | `allowedChats` enforced in commandRouter | R7-11 |
 | T-17 | Browser | `stopTask` stops CDP loop | R3-05 |
 | T-18 | Rust | Legacy `execute_tool` vs batch policy consistency | R2-01 |
@@ -73,7 +73,7 @@ Chinese version: [../test-gaps-backlog.md](../test-gaps-backlog.md)
 
 1. **Add `@testing-library/react`** — project has `jest-environment-jsdom` but lacks RTL, making hook/component tests difficult (R10-13)
 2. **Rust:** extend `#[cfg(test)]` in `src-tauri` for `session_memory`, `ssh_bridge`, `commands/tools.rs`
-3. **Contract tests:** `tools/check-tauri-commands.mjs` scans TS `invoke('...')` vs `lib.rs` generated table
+3. **Contract tests:** `tools/check-tauri-commands.mjs` scans TS `invoke('...')` vs `lib.rs` generated table ✅ Added 2026-09-17 (telegram scope / R7-12)
 4. **CI sharding:** AutoResearch integration 380s+ should be a separate job to avoid blocking PRs
 
 ---

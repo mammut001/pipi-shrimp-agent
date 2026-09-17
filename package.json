@@ -18,7 +18,8 @@
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build",
-    "report:complexity": "node scripts/complexity-report.mjs"
+    "report:complexity": "node scripts/complexity-report.mjs",
+    "check:tauri-commands": "node tools/check-tauri-commands.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",

@@ -8,7 +8,7 @@
 
 | ID | Sev | Location | Description | Suggested test |
 | --- | --- | -------- | ----------- | -------------- |
-| R9-01 | High | `telegramService.ts:150-311` | invoke 命令未在 `lib.rs` 注册 | 每 `telegram_*` 有 handler |
+| R9-01 | High | `telegramService.ts:150-311` | invoke 命令未在 `lib.rs` 注册 ✅ Fixed 2026-09-17 (via R7-12) | 每 `telegram_*` 有 handler |
 | R9-02 | High | `telegramStore.ts:321-354` | `telegramEmit` 从未被调用；事件路径死亡 | 仅 poller 摄入 updates |
 | R9-03 | Medium | `telegramStore.ts:328-330` | `messageId` vs `updateId` 混用可腐化 offset | poller 只用 updateId |
 | R9-04 | Medium | `App.tsx:59-72` | `DeprecatedBrowserViewFallback` 不可达（uiStore 归一化 browser→chat） | 死分支删除或文档 |

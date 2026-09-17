@@ -10,7 +10,7 @@ Chinese version: [../round-09-integration.md](../round-09-integration.md)
 
 | ID | Sev | Location | Description | Suggested test |
 | --- | --- | -------- | ----------- | -------------- |
-| R9-01 | High | `telegramService.ts:150-311` | invoke commands not registered in `lib.rs` | Every `telegram_*` has handler |
+| R9-01 | High | `telegramService.ts:150-311` | invoke commands not registered in `lib.rs` ✅ Fixed 2026-09-17 (via R7-12) | Every `telegram_*` has handler |
 | R9-02 | High | `telegramStore.ts:321-354` | `telegramEmit` never called; event path dead | Only poller ingests updates |
 | R9-03 | Medium | `telegramStore.ts:328-330` | `messageId` vs `updateId` mix can corrupt offset | Poller uses updateId only |
 | R9-04 | Medium | `App.tsx:59-72` | `DeprecatedBrowserViewFallback` unreachable (uiStore normalizes browser→chat) | Delete dead branch or document |
