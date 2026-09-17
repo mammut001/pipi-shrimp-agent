@@ -8,10 +8,12 @@
 
 ## Findings
 
+> **R5-02** fixed 2026-09-17: preflight + loop share try/finally; `activeLoopAbortController` nulled on !ok/throw so loop can restart.
+
 | ID | Sev | Location | Description | Suggested test |
 | --- | --- | -------- | ----------- | -------------- |
 | R5-01 | P0 | `chatAdapter.ts:697-900` | `options.signal` 未传给 `runHeadlessAgentTurn`；Stop 无法中断 in-flight turn | abort mid-turn 立即退出 |
-| R5-02 | High | `loopEngine.ts:950-1065` | preflight return 在 try/finally 外，`activeLoopAbortController` 泄漏 | preflight 失败后 controller null |
+| R5-02 | High | `loopEngine.ts:950-1065` | preflight return 在 try/finally 外，`activeLoopAbortController` 泄漏 ✅ Fixed 2026-09-17 | preflight 失败后 controller null |
 | R5-03 | P0 | `loopEngine.ts:1744-1820` | agent 错误设 `failed` 但 `loopState` 不停，迭代可能继续 | throw 后无第二次 sendMessage |
 | R5-04 | Medium | `AutoResearch.tsx:373-380` | unmount 仅 stop `running`，`paused` 不 stop | pause + unmount 停止 loop |
 | R5-05 | P0 | `autoresearchStore.ts:632-659` | `deleteRun` 不 `stopExperimentLoop` | 删 active run 停止 SSH/LLM |

@@ -565,6 +565,10 @@ export async function startExperimentLoop(
     }
   }
 
+  // AUDIT-FIX [R5-02]: wrap preflight + loop in one try/finally so
+  // `activeLoopAbortController` is always cleared — on !ok return,
+  // unexpected preflight throw, or normal loop exit — so a later
+  // startExperimentLoop can restart cleanly after setup failure.
   // AUDIT-FIX [AG-02 PR2a]: the preflight phase (ssh config check,
   // platform support, run_started event, remote OS check, sshpass
   // check, bootstrap apply, startup context, session paths, session
@@ -573,6 +577,7 @@ export async function startExperimentLoop(
   // helper returns a discriminated union; we map each failure kind
   // back to the same user-facing error string the in-line code used
   // to produce.
+  try {
   const preflight = await runExperimentLoopPreflight();
   if (!preflight.ok) {
     let message: string;
@@ -585,7 +590,6 @@ export async function startExperimentLoop(
         break;
     }
     useAutoResearchStore.getState().setError(message);
-    clearActiveLoopHandle(abortController);
     return;
   }
 
@@ -1424,7 +1428,9 @@ export async function startExperimentLoop(
     } else {
       throw error;
     }
+  }
   } finally {
+    // R5-02: always null the stop handle (preflight fail, throw, or exit).
     if (externalAbortListener && externalSignal) {
       externalSignal.removeEventListener('abort', externalAbortListener);
     }

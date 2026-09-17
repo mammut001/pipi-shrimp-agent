@@ -440,7 +440,7 @@
     "lane": "C. AutoResearch Runtime",
     "severity": "High",
     "status": "fixed",
-    "fixNote": "2026-06-24: Verified clearActiveLoopHandle on all preflight early returns; added getActiveLoopAbortControllerForTest regression tests.",
+    "fixNote": "2026-09-17: wrap preflight + loop in shared try/finally so activeLoopAbortController is always nulled on !ok return or unexpected preflight throw; clearActiveLoopHandle in finally; regression tests cover no_ssh_config, dirty_repo, and throw paths.",
     "whyItMatters": "Orphan AbortController after preflight failure blocks clean restarts",
     "files": ["src/services/autoresearch/loopEngine.ts"],
     "smallestPrScope": "Wrap preflight in try/finally clearing controller",
