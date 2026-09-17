@@ -133,6 +133,8 @@ export type RiskLevel = 'low' | 'medium' | 'high';
 
 export interface SwarmPermissionRequest {
   requestId: string;
+  /** Owning chat session — required so UI permissionQueue filters/settles correctly. */
+  sessionId: string;
   teamId: string;
   agentId: string;
   agentName: string;

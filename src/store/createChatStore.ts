@@ -30,13 +30,12 @@ import { safeSetItem, safeRemoveItem, safeGetItem, safeMigrateKey } from '@/util
 import {
   clearNonCurrentSessionToolRuntime,
   clearSessionToolRuntime,
-  failUnresolvedSessionTools,
   markSessionToolRunning,
   resetAllSessionToolRuntime,
   resolveSessionTool,
   syncSessionToolRuntimeToCurrentSession,
 } from './chat/toolRuntimeState';
-import { scrubDanglingToolCalls, terminalizeInterruptedToolTurnsForSessions } from './chat/scrubDanglingToolCalls';
+import { terminalizeInterruptedToolTurnsForSessions } from './chat/scrubDanglingToolCalls';
 import {
   getSessionPipiOutputDir as resolveSessionPipiOutputDirHelper,
   getSessionProjectDir as resolveSessionProjectDirHelper,
@@ -445,10 +444,13 @@ function resetRightPanelStateAfterSessionRemoval(
 
   for (const sessionId of deletedSessionIds) {
     uiStore.clearQuestionnaire(sessionId);
+    uiStore.clearPermissionsForSession(sessionId);
   }
 
   if (currentSessionWasDeleted || nextSessionId === null) {
-    uiStore.clearAllPermissions();
+    if (nextSessionId === null) {
+      uiStore.clearAllPermissions();
+    }
     uiStore.clearArtifactId();
     uiStore.clearTaskProgress();
     uiStore.setActiveSkill(null);
@@ -700,27 +702,14 @@ export const useChatStore = create<ChatState>()(
       if (get().streamingTimeoutId) {
         clearTimeout(get().streamingTimeoutId!);
       }
-      if (
-        previousSessionId
-        && (get().pendingToolCalls > 0 || get().pendingToolResults.length > 0 || uiStore.permissionQueue.length > 0)
-      ) {
-        failUnresolvedSessionTools(
-          previousSessionId,
-          set,
-          get,
-          (_toolCallId, label) => `Error: ${label} cancelled due to session change`,
-        );
-      }
+      // Soak knife 3 / live soak 2026-09-16 — new chat only rebinds the
+      // selected session's UI chrome. Do NOT cancel/stop/scrub/fail the previous
+      // session's in-flight tools or generation; background turns keep running.
+      // Stop remains explicit via stopGeneration (A ≠ B).
+      // Permission queue is session-scoped: do NOT clearAllPermissions /
+      // clearPermissionsForSession here — that would deny A's pending approval
+      // promise when starting a new chat (GPT FIX FIRST #99 residual).
       resetTransientSessionStateForNewChat(previousSessionId, {
-        isStreaming: get().isStreaming,
-        pendingToolCalls: get().pendingToolCalls,
-        pendingToolResultsLength: get().pendingToolResults.length,
-        permissionQueueLength: uiStore.permissionQueue.length,
-      }, {
-        stopSubprocess: (sessionId) => {
-          safeInvokeOrNull('stop_subprocess', { sessionId });
-        },
-        clearAllPermissions: () => uiStore.clearAllPermissions(),
         clearQuestionnaire: (sessionId) => uiStore.clearQuestionnaire(sessionId),
         clearNotificationHistory: (sessionId) => uiStore.clearNotificationHistory(sessionId),
         clearArtifactId: () => uiStore.clearArtifactId(),
@@ -728,9 +717,6 @@ export const useChatStore = create<ChatState>()(
         setActiveSkill: (name) => uiStore.setActiveSkill(name),
         setAgentPanelTab: (tab) => uiStore.setAgentPanelTab(tab),
         closeArtifactsPanel: () => artifactsStore.closePanel(),
-        scrubDanglingToolCalls: (sessionId) => {
-          void scrubDanglingToolCalls(sessionId, set, get);
-        },
       });
 
       safeSetItem(CURRENT_SESSION_ID_STORAGE_KEY, newSession.id);
@@ -785,7 +771,6 @@ export const useChatStore = create<ChatState>()(
       if (!session) {
         return;
       }
-      const pendingPermissions = get().currentSessionId === sessionId ? [...useUIStore.getState().permissionQueue] : [];
       const executionMode = executionModeFromPermissionMode(permissionMode);
       const updatedSession = hydrateSessionModes({
         ...session,
@@ -796,12 +781,15 @@ export const useChatStore = create<ChatState>()(
       set((state) => ({ sessions: state.sessions.map((candidate) => (candidate.id === sessionId ? updatedSession : candidate)) }));
       await safeInvoke('db_save_session', { session: sessionToDb(updatedSession) });
 
-      if (pendingPermissions.length === 0) {
-        return;
-      }
-      useUIStore.getState().clearAllPermissions();
-      for (const request of pendingPermissions) {
-        request._resolve?.(permissionMode === 'bypass' || permissionMode === 'auto-edits');
+      // Session-scoped: settle only this session's pending approvals once.
+      // Do not snapshot the whole queue (other sessions) and do not
+      // clearPermissionsForSession + re-resolve (double-settle).
+      const approved = permissionMode === 'bypass' || permissionMode === 'auto-edits';
+      const pendingForSession = useUIStore.getState().permissionQueue.filter(
+        (request) => request.sessionId === sessionId,
+      );
+      for (const request of pendingForSession) {
+        useUIStore.getState().resolvePermissionRequest(approved, request.id);
       }
     },
 
@@ -828,17 +816,14 @@ export const useChatStore = create<ChatState>()(
       }));
       await safeInvoke('db_save_session', { session: sessionToDb(updatedSession) });
 
-      // Mirror behavior of updateSessionPermissionMode: if the new mode
-      // auto-approves safe tools, resolve any pending permission requests.
+      // Mirror updateSessionPermissionMode: auto-approve modes settle only
+      // this session's pending approvals once (sessionId-gated; no double-settle).
       if (profile.permissionMode === 'bypass' || profile.permissionMode === 'auto-edits') {
-        const pendingPermissions = get().currentSessionId === sessionId
-          ? [...useUIStore.getState().permissionQueue]
-          : [];
-        if (pendingPermissions.length > 0) {
-          useUIStore.getState().clearAllPermissions();
-          for (const request of pendingPermissions) {
-            request._resolve?.(true);
-          }
+        const pendingForSession = useUIStore.getState().permissionQueue.filter(
+          (request) => request.sessionId === sessionId,
+        );
+        for (const request of pendingForSession) {
+          useUIStore.getState().resolvePermissionRequest(true, request.id);
         }
       }
     },
@@ -880,7 +865,8 @@ export const useChatStore = create<ChatState>()(
       // selected session's busy UI. Do NOT cancel/stop/scrub the previous
       // session's in-flight tools or generation; background turns keep running.
       // Stop remains explicit via stopGeneration (A ≠ B).
-      useUIStore.getState().clearAllPermissions();
+      // Do NOT clearAllPermissions — pending approvals are session-scoped and
+      // must stay unresolved until the owning session approves/denies/Stops.
       if (previousSessionId) {
         useUIStore.getState().clearQuestionnaire(previousSessionId);
       }

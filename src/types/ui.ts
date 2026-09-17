@@ -26,6 +26,8 @@ export interface PermissionRequest {
   commandPreview?: string | null;
   riskReason?: string | null;
   approvalToken?: string | null;
+  /** Owning chat session — pending approvals must not be denied by other sessions' chrome resets. */
+  sessionId?: string;
   requestedAt?: number;
   _resolve?: (approved: boolean) => void; // Used by QueryEngine to wait for user decision
 }
@@ -214,12 +216,19 @@ export interface UIState {
   clearPermissionRequest: () => void;
 
   /**
-   * Clear ALL pending permission requests (used when switching sessions)
+   * Clear ALL pending permission requests (Stop / recover / no sessions left).
+   * Do NOT use on session switch or new chat — that denies other sessions' pending approvals.
    */
   clearAllPermissions: () => void;
 
-  /** Resolve the front permission request and record the decision. */
-  resolvePermissionRequest: (approved: boolean) => void;
+  /**
+   * Deny + dequeue pending permission requests for one session only.
+   * Other sessions' pending promises stay unresolved.
+   */
+  clearPermissionsForSession: (sessionId: string) => void;
+
+  /** Resolve a permission request (by id, or front of queue) and record the decision. */
+  resolvePermissionRequest: (approved: boolean, permissionId?: string) => void;
 
   /** Clear permission decision history for the current app session. */
   clearPermissionLedger: () => void;
@@ -237,6 +246,7 @@ export interface UIState {
     commandPreview?: string | null;
     riskReason?: string | null;
     approvalToken?: string | null;
+    sessionId?: string;
   }) => Promise<boolean>;
 
   /**

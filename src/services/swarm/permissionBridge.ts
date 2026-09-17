@@ -58,6 +58,8 @@ const pendingTimers = new Map<string, ReturnType<typeof setTimeout>>();
  * This is called by the agent execution flow when a teammate needs permission.
  */
 export function requestPermission(options: {
+  /** Owning chat session — tagged onto UI PermissionRequest for modal visibility. */
+  sessionId: string;
   teamId: string;
   agentId: string;
   agentName: string;
@@ -69,6 +71,7 @@ export function requestPermission(options: {
 
   const req = repo.createPermissionRequest({
     requestId: repo.generateId('perm'),
+    sessionId: options.sessionId,
     teamId: options.teamId,
     agentId: options.agentId,
     agentName: options.agentName,
@@ -194,6 +197,8 @@ export function toUIPermissionRequest(
   toolName: string;
   toolInput: string;
   description: string;
+  /** Owning chat session — shell filters permissionQueue by currentSessionId. */
+  sessionId: string;
   _resolve: (approved: boolean) => void;
   /** Swarm-specific: identifies which agent requested this */
   agentBadge?: { name: string; agentId: string; teamId: string; riskLevel: RiskLevel };
@@ -203,6 +208,8 @@ export function toUIPermissionRequest(
     toolName: req.toolName,
     toolInput: req.toolArgs,
     description: `[${req.agentName}] Execute ${req.toolName}?`,
+    // Runtime fallback for legacy persisted requests that predate sessionId tagging.
+    sessionId: req.sessionId || repo.getTeam(req.teamId)?.sessionId || '',
     _resolve: (approved: boolean) => {
       resolvePermission(req.requestId, approved);
       resolve(approved);
@@ -221,6 +228,8 @@ export function toUIPermissionRequest(
  * This is the main integration point between swarm permission and existing UI.
  */
 export async function enqueuePermissionInUI(options: {
+  /** Owning chat session — without this the main shell hides the modal (session filter). */
+  sessionId: string;
   teamId: string;
   agentId: string;
   agentName: string;
@@ -228,7 +237,19 @@ export async function enqueuePermissionInUI(options: {
   toolName: string;
   toolArgs: string;
 }): Promise<boolean> {
-  const { requestId, promise } = requestPermission(options);
+  // Prefer explicit sessionId; fall back to team.sessionId for older callers.
+  const sessionId =
+    options.sessionId
+    || repo.getTeam(options.teamId)?.sessionId
+    || '';
+  if (!sessionId) {
+    console.warn(
+      `[PermBridge] enqueuePermissionInUI missing sessionId for team=${options.teamId}; `
+      + 'permission may be hidden by currentSessionId filter and expire after TTL',
+    );
+  }
+
+  const { requestId, promise } = requestPermission({ ...options, sessionId });
   const req = repo.getPermissionRequest(requestId);
   if (!req) return false;
 

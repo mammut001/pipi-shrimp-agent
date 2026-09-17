@@ -10,6 +10,7 @@ const mockSetTaskProgress = jest.fn();
 const mockSetActiveSkill = jest.fn();
 const mockUpdateTaskStep = jest.fn();
 const mockClearAllPermissions = jest.fn();
+const mockClearPermissionsForSession = jest.fn();
 const mockGetActiveConfig = jest.fn();
 const mockGetActiveTemplate = jest.fn();
 const mockBuildPrompt = jest.fn();
@@ -56,8 +57,12 @@ jest.mock('../../uiStore', () => ({
       waitForPermission: jest.fn(async () => true),
       showQuestionnaire: jest.fn(async () => 'questionnaire response'),
       clearAllPermissions: (...args: unknown[]) => mockClearAllPermissions(...args),
+      clearPermissionsForSession: (...args: unknown[]) => mockClearPermissionsForSession(...args),
       permissionQueue: [],
       clearQuestionnaire: jest.fn(),
+      clearArtifactId: jest.fn(),
+      clearNotificationHistory: jest.fn(),
+      setAgentPanelTab: jest.fn(),
       showExecutionModeUpgradePrompt: (...args: unknown[]) => mockShowExecutionModeUpgradePrompt(...args),
     }),
   },
@@ -304,6 +309,7 @@ describe('chatStore sendMessage integration', () => {
     mockSetActiveSkill.mockReset();
     mockUpdateTaskStep.mockReset();
     mockClearAllPermissions.mockReset();
+    mockClearPermissionsForSession.mockReset();
     mockGetActiveConfig.mockReset();
     mockGetActiveTemplate.mockReset();
     mockBuildPrompt.mockReset();
@@ -664,7 +670,7 @@ describe('chatStore sendMessage integration', () => {
 
     expect(mockExecuteBatch).toHaveBeenCalled();
     expect(mockInvoke).toHaveBeenCalledWith('cancel_tool_execution', { executionId: 'exec-cancel-1' });
-    expect(mockClearAllPermissions).toHaveBeenCalled();
+    expect(mockClearPermissionsForSession).toHaveBeenCalled();
     const session = useChatStore.getState().sessions.find((candidate) => candidate.id === 'session-1');
     const messagePairs = session?.messages.map((message) => [message.role, message.content]) ?? [];
     expect(messagePairs[0]).toEqual(['user', 'cancel this run']);
@@ -1651,6 +1657,118 @@ describe('chatStore sendMessage integration', () => {
       expect.arrayContaining(['exec-a-barrier', 'exec-a-cmd']),
     );
     // selectSession must not arm a generation-cancel token for A
+    expect(consumeChatGenerationCancel('session-1')).toBe(false);
+
+    const sessionA = useChatStore.getState().sessions.find((s) => s.id === 'session-1')!;
+    expect(sessionA.messages.some((m) => (
+      typeof m.content === 'string'
+      && (
+        m.content.includes('[Tool execution cancelled before completion.]')
+        || m.content.includes('cancelled due to session change')
+        || m.content.includes('cancelled by user')
+      )
+    ))).toBe(false);
+
+    const newInvokes = mockInvoke.mock.calls.slice(invokeCallsBefore);
+    expect(newInvokes.some((call) => call[0] === 'stop_subprocess')).toBe(false);
+    expect(newInvokes.some((call) => call[0] === 'cancel_tool_execution')).toBe(false);
+
+    // Switching back rebinds busy UI to A's still-running tools (Stop visible)
+    useChatStore.getState().selectSession('session-1');
+    expect(useChatStore.getState().pendingToolCalls).toBe(2);
+    expect(shouldShowStopControl({
+      isStreaming: useChatStore.getState().isStreaming,
+      pendingToolCalls: useChatStore.getState().pendingToolCalls,
+      pendingToolResultsLength: useChatStore.getState().pendingToolResults.length,
+    })).toBe(true);
+    expect(listUnresolvedSessionTools('session-1')).toHaveLength(2);
+  });
+
+  it('startSession / new chat must not cancel in-flight tools on the previous session', async () => {
+    resetChatState({
+      executionMode: 'agent',
+      permissionMode: 'auto-edits',
+      workDir: '/tmp/pipi/session-1',
+      projectDir: '/tmp/pipi/session-1',
+    });
+    const current = useChatStore.getState().sessions;
+    const historyA = [
+      createMessage('user', 'run barrier'),
+      {
+        ...createMessage('assistant', 'calling tools'),
+        tool_calls: [
+          { id: 'tc-a-barrier', name: 'test_barrier_tool', arguments: '{}' },
+          { id: 'tc-a-exec', name: 'execute_command', arguments: '{}' },
+        ],
+      },
+    ];
+    useChatStore.setState({
+      sessions: [
+        { ...current[0]!, messages: historyA, updatedAt: Date.now() },
+      ],
+      currentSessionId: 'session-1',
+      isStreaming: true,
+      streamingSessionId: 'session-1',
+      pendingToolCalls: 2,
+      pendingToolResults: [],
+    });
+
+    seedSessionToolRuntime(
+      'session-1',
+      [
+        { id: 'tc-a-barrier', name: 'test_barrier_tool' },
+        { id: 'tc-a-exec', name: 'execute_command' },
+      ],
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tc-a-barrier',
+      'test_barrier_tool',
+      'exec-a-barrier',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+    setSessionToolExecutionId(
+      'session-1',
+      'tc-a-exec',
+      'execute_command',
+      'exec-a-cmd',
+      useChatStore.setState,
+      useChatStore.getState,
+    );
+
+    const invokeCallsBefore = mockInvoke.mock.calls.length;
+    // Isolate from prior Stop tests that may leave a parked cancel token.
+    clearChatGenerationCancel('session-1');
+    await useChatStore.getState().startSession(null);
+
+    // GPT FIX FIRST #99 residual: new chat must not deny/clear other sessions' pending approvals
+    expect(mockClearAllPermissions).not.toHaveBeenCalled();
+    expect(mockClearPermissionsForSession).not.toHaveBeenCalled();
+
+    const newSessionId = useChatStore.getState().currentSessionId;
+    expect(newSessionId).not.toBe('session-1');
+    expect(useChatStore.getState().isStreaming).toBe(false);
+    expect(useChatStore.getState().streamingSessionId).toBeNull();
+    // New chat idle → busy flags rebound to empty for selected session
+    expect(useChatStore.getState().pendingToolCalls).toBe(0);
+    expect(shouldShowStopControl({
+      isStreaming: useChatStore.getState().isStreaming,
+      pendingToolCalls: useChatStore.getState().pendingToolCalls,
+      pendingToolResultsLength: useChatStore.getState().pendingToolResults.length,
+    })).toBe(false);
+
+    // A's tools remain unresolved / cancellable — startSession did not fail/scrub them
+    expect(listUnresolvedSessionTools('session-1')).toEqual([
+      expect.objectContaining({ toolCallId: 'tc-a-barrier', executionId: 'exec-a-barrier' }),
+      expect.objectContaining({ toolCallId: 'tc-a-exec', executionId: 'exec-a-cmd' }),
+    ]);
+    expect(listCancellableSessionExecutionIds('session-1')).toEqual(
+      expect.arrayContaining(['exec-a-barrier', 'exec-a-cmd']),
+    );
+    // startSession must not arm a generation-cancel token for session-1
     expect(consumeChatGenerationCancel('session-1')).toBe(false);
 
     const sessionA = useChatStore.getState().sessions.find((s) => s.id === 'session-1')!;
