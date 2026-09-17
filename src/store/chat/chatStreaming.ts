@@ -98,6 +98,50 @@ export function ownsSelectedStreamChrome(
   return Boolean(owningSessionId && currentSessionId && owningSessionId === currentSessionId);
 }
 
+/**
+ * Per-session module stream text buffers.
+ * Selected-session chrome (`streamingContent`) is already owner-gated; this map
+ * keeps the high-frequency append buffer from being shared across concurrent
+ * sessions (background A must not corrupt B when both stream / on switch).
+ */
+const streamingBuffersBySession = new Map<string, string>();
+
+export function getStreamingBuffer(sessionId: string | null | undefined): string {
+  if (!sessionId) {
+    return '';
+  }
+  return streamingBuffersBySession.get(sessionId) ?? '';
+}
+
+export function setStreamingBuffer(sessionId: string | null | undefined, content: string): void {
+  if (!sessionId) {
+    return;
+  }
+  streamingBuffersBySession.set(sessionId, content);
+}
+
+export function clearStreamingBuffer(sessionId: string | null | undefined): void {
+  if (!sessionId) {
+    return;
+  }
+  streamingBuffersBySession.delete(sessionId);
+}
+
+/** Append delta onto the session buffer; seeds from fallbackChrome when empty. */
+export function appendStreamingBuffer(
+  sessionId: string,
+  delta: string,
+  fallbackChrome = '',
+): string {
+  const next = (streamingBuffersBySession.get(sessionId) ?? fallbackChrome) + delta;
+  streamingBuffersBySession.set(sessionId, next);
+  return next;
+}
+
+export function resetStreamingBuffersForTests(): void {
+  streamingBuffersBySession.clear();
+}
+
 const cancellationRequestedSessions = new Set<string>();
 const chatTurnAbortControllers = new Map<string, AbortController>();
 
