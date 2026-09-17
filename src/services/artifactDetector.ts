@@ -10,6 +10,7 @@ import { useArtifactsStore, type ArtifactFileType } from '@/store/artifactsStore
 import {
   type ArtifactPathValidationOptions,
   type ArtifactRootOptions,
+  getAllowedArtifactRoots,
   validateArtifactPathWithinAllowedRoots,
   validateArtifactPathWithinAllowedRootsAsync,
 } from '@/services/artifactPathPolicy';
@@ -215,6 +216,16 @@ export async function detectAndRegisterArtifacts(ctx: ArtifactDetectionContext):
 
   const allowedExtensions = ['pdf', 'svg', 'png', 'jpg', 'jpeg', 'webp', 'html'];
   const rootOptions: ArtifactRootOptions = { workDir, outputDir };
+
+  // AUDIT-FIX R7-04 — fail-closed when no sandbox roots are configured.
+  // Without workDir/outputDir, absolute paths (e.g. /etc/passwd) must never register.
+  const allowedRoots = getAllowedArtifactRoots({
+    workDir: workDir ?? undefined,
+    outputDir: outputDir ?? undefined,
+  });
+  if (allowedRoots.length === 0) {
+    return;
+  }
 
   const filteredPaths: string[] = [];
   for (const p of paths) {

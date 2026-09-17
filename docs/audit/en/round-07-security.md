@@ -11,7 +11,7 @@ Chinese version: [../round-07-security.md](../round-07-security.md)
 | ID | Location | Description | Suggested test | Status |
 | --- | -------- | ----------- | -------------- | ------ |
 | R7-01 | `pathValidation.ts:84,109` | TypeScript still used `startsWith` not `isWithinDir` — sibling-prefix escape (Rust fixed, TS not) | `/project2` inside `/project` | ✅ Fixed |
-| R7-04 | `artifactDetector.ts:168-170` | When `workDir` undefined, paths not filtered — any absolute path registrable | `/etc/passwd` not added as artifact | Open |
+| R7-04 | `artifactDetector.ts` | When `workDir` undefined, paths not filtered — any absolute path registrable | `/etc/passwd` not added as artifact | ✅ Fixed 2026-09-17 |
 | R7-06 | `artifactDetector.ts:147-187` | Declared `outputDir` unused | pipiOutputDir artifacts should register | Open |
 | R7-07 | `ChatMessage.tsx:192-285` | `rehypeRaw` + DOMPurify on source string; `javascript:` href not blocked | Malicious link render | ✅ Fixed |
 | R7-08 | `MarkdownDocumentPreview.tsx:18-22` | No DOMPurify / sanitize | `<img onerror>` vector | ✅ Fixed |
