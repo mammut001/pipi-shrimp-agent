@@ -42,3 +42,59 @@ export function shouldShowStopControl(state: StopControlBusyState): boolean {
     || state.pendingToolCalls > 0
     || state.pendingToolResultsLength > 0;
 }
+
+export const COMPOSER_STOP_CONTROL_TEST_ID = 'composer-stop-control' as const;
+export const COMPOSER_SEND_CONTROL_TEST_ID = 'composer-send-control' as const;
+export const COMPOSER_STOP_BUSY_HINT_TEST_ID = 'composer-stop-busy-hint' as const;
+
+export type ComposerSendStopReason = 'streaming' | 'pending_tools' | null;
+
+export interface ComposerSendStopAffordance {
+  showStop: boolean;
+  primaryAction: 'stop' | 'send';
+  sendPrimary: boolean;
+  stopReason: ComposerSendStopReason;
+  stopTitleKey: 'chat.stopStreaming' | 'chat.stopTools' | 'chat.stop';
+  sendTitleKey: 'chat.send';
+  stopTestId: typeof COMPOSER_STOP_CONTROL_TEST_ID;
+  sendTestId: typeof COMPOSER_SEND_CONTROL_TEST_ID;
+  busyHintKey: 'chat.stopBusyHint' | null;
+}
+
+/**
+ * Resolves composer Send vs Stop visual/semantic affordance based on busy state.
+ * MUST delegate `showStop` to `shouldShowStopControl`.
+ */
+export function resolveComposerSendStopAffordance(
+  state: StopControlBusyState,
+): ComposerSendStopAffordance {
+  const showStop = shouldShowStopControl(state);
+  const isStreaming = state.isStreaming;
+  const hasPendingTools = state.pendingToolCalls > 0
+    || state.pendingToolResultsLength > 0;
+
+  const stopReason: ComposerSendStopReason = isStreaming
+    ? 'streaming'
+    : hasPendingTools
+      ? 'pending_tools'
+      : null;
+
+  const stopTitleKey = stopReason === 'streaming'
+    ? 'chat.stopStreaming'
+    : stopReason === 'pending_tools'
+      ? 'chat.stopTools'
+      : 'chat.stop';
+
+  return {
+    showStop,
+    primaryAction: showStop ? 'stop' : 'send',
+    sendPrimary: !showStop,
+    stopReason,
+    stopTitleKey,
+    sendTitleKey: 'chat.send',
+    stopTestId: COMPOSER_STOP_CONTROL_TEST_ID,
+    sendTestId: COMPOSER_SEND_CONTROL_TEST_ID,
+    busyHintKey: showStop ? 'chat.stopBusyHint' : null,
+  };
+}
+
