@@ -50,7 +50,7 @@ Stabilize failing suites before expanding coverage — **completed**. Coverage n
 ## Top 10 tests to add (cross-round summary)
 
 1. `App.tsx` bootstrap + routing
-2. `ChatBrowserWorkspaceShell` split + permissions
+2. `ChatBrowserWorkspaceShell` split + permissions — ✅ Fixed 2026-09-17 (TOP-15-02 / T-02 / R1-03)
 3. `MainLayout` responsive panels
 4. `chatActions` session switch during stream (R1-01/02) — ✅ Fixed 2026-09-17 (TOP-15-01 / T-01)
 5. `listenerGuard` ref-count (R4-01) — code fixed, regression test needed
