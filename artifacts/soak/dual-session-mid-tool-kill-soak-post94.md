@@ -29,16 +29,23 @@ pnpm run tauri:dev
 DeepSeek (OpenAI Compatible / deepseek-flash) **often refuses `test_barrier_tool`**. Prefer:
 
 ```text
-只用 execute_command 运行: sleep 120; echo soak-a-done
+只用 execute_command 运行: sleep 600; echo soak-a-done
 ```
 
 For session B:
 
 ```text
-只用 execute_command 运行: sleep 120; echo soak-b-done
+只用 execute_command 运行: sleep 600; echo soak-b-done
 ```
 
 If using barriers instead (Danger + model willing): `test_barrier_tool` with distinct `barrier_id`s; see `docs/soak-crash-reload.md` manual section.
+
+
+### Composer focus (Tauri / computer-use)
+
+If B's textarea will not accept clicks/typing while A is mid-tool, try toggling the chat header **对话 → 预览 → 对话**, then click the textarea and type with the keyboard. Product chrome may already show an idle Send (no Stop) — the issue is often WebKit focus, not a global composer lock.
+
+Prefer **prepare both chats** (Project Folder + 危险) *before* starting A's sleep, and use `sleep 600` so setup cannot outrun the probe.
 
 ---
 
