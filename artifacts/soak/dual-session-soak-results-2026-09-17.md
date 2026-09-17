@@ -1,8 +1,10 @@
 # PiPi Shrimp Agent live dual-session mid-tool soak — 2026-09-17
 
-Scope: §1 isolation only. No process kill performed.
-Main tip note: `49f0701`
-Desktop: `DISPLAY=:3`
+Scope: **§1 isolation** and **§2 kill/reopen** (both PASS).  
+Desktop: `DISPLAY=:3`  
+Main tip at checklist merge: `49f0701` (#106).  
+Results doc commits: `11120b6` (§1 + tips) → `ea213fa` (§2 kill/reopen PASS).  
+Process kill: **yes** in §2 (`kill -9` on `target/debug/pipi-shrimp-agent`); §1 used app Stop only.
 
 ## Preconditions
 
