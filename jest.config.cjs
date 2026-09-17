@@ -29,4 +29,5 @@ module.exports = {
     '!src/**/*.d.ts',
   ],
   setupFiles: ['<rootDir>/jest.setup.js'],
+  setupFilesAfterEnv: ['<rootDir>/jest.setup.afterenv.cjs'],
 };

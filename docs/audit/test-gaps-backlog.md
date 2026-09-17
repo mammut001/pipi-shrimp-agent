@@ -67,7 +67,7 @@
 
 ## 测试基础设施建议
 
-1. **添加 `@testing-library/react`** — 项目已有 `jest-environment-jsdom`，缺 RTL 导致 hook/组件测难写（R10-13 已踩坑）
+1. **添加 `@testing-library/react`** — ✅ Fixed 2026-09-17（INFRA-01：RTL + jest-dom/user-event + `useChatMessageScroll` sample）
 2. **Rust:** 扩展 `src-tauri` 内 `#[cfg(test)]` 覆盖 `session_memory`, `ssh_bridge`, `commands/tools.rs`
 3. **契约测试:** `tools/check-tauri-commands.mjs` 扫描 TS `invoke('...')` vs `lib.rs` 生成表 ✅ Added 2026-09-17 (telegram scope / R7-12)
 4. **CI 分片:** AutoResearch integration 380s+ 应单独 job，避免阻塞 PR

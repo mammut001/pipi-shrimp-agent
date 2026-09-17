@@ -40,7 +40,7 @@ Stabilize failing suites before expanding coverage — **completed**. Coverage n
 | R10-10 | Medium | `taskDiagnosticsWiring.ts` | untested | swarm → diagnostics sync |
 | R10-11 | Medium | `uiStoreMigration.test.ts` | invalid permission shape | correct `_resolve` + ledger |
 | R10-12 | Medium | `useResponsiveLayout.ts` | untested | resize simulation |
-| R10-13 | Medium | `useChatMessageScroll.ts` | untested (no @testing-library/react) | Pure DOM mock or add devDep |
+| R10-13 | Medium | `useChatMessageScroll.ts` | ✅ sample 2026-09-17 (INFRA-01 `useChatMessageScroll.test.tsx`) | RTL renderHook |
 | R10-14 | Medium | `TelegramSettings.tsx` | untested | validate/connect flow |
 | R10-15 | Low | `pages/Skill.tsx` | untested | smoke |
 | R10-16 | Low | `website/src` | 0 tests | changelog.ts unit test |

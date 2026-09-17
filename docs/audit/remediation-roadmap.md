@@ -618,7 +618,7 @@ Also see **R4-04–R4-24** (store/workflow cross-cuts) in [round-04](./round-04-
 | R10-09 | ExecutionModeDropdownErrorBoundary | Med | test gap only | boundary component | throw → fallback | R10-09 |
 | R10-10–R10-16 | Medium/Low coverage gaps | Med–Low | test gap only | various | Incremental | per round-10 |
 | T-33 | CI: stabilize 24 failing suites | P0 | **fixed** (CI green) | autoresearch tests | Keep green in CI | full suite on PR |
-| INFRA-01 | Add `@testing-library/react` | High | open | `package.json` | devDep + sample hook test | R10-13 |
+| INFRA-01 | Add `@testing-library/react` | High | fixed (2026-09-17) | `package.json`, jest setup, sample tests | RTL + jest-dom/user-event + useChatMessageScroll | R10-13 |
 | INFRA-02 | Rust `#[cfg(test)]` expansion | High | open | `src-tauri` | session_memory, ssh tests | round-02 matrix |
 | INFRA-03 | Tauri command parity checker | Med | fixed (2026-09-17, telegram scope) | `tools/check-tauri-commands.mjs` | `pnpm run check:tauri-commands` | R7-12 / R9-01 |
 | INFRA-04 | CI shard AutoResearch integration | Med | open | `.github/workflows` | Separate job | 380s+ isolation |
@@ -629,7 +629,7 @@ Also see **R4-04–R4-24** (store/workflow cross-cuts) in [round-04](./round-04-
 | --- | ---- | --------- | ------ |
 | 1 | Session switch streaming isolation | R1-01, R1-02 | test gap only |
 | 2 | Shell split layout + ChatInput | R1-03 | test gap only |
-| 3 | `useChatMessageScroll` debounce/unmount | R1-11, R10-13 | test gap only |
+| 3 | `useChatMessageScroll` debounce/unmount | R1-11, R10-13 | sample fixed 2026-09-17 (`useChatMessageScroll.test.tsx`) |
 | 4 | `listenerGuard` ref-count order | R4-01 | test gap only |
 | 5 | `QueryEngine` tool_batch timeout | R4-03 | test gap only |
 | 6 | `StreamingToolExecutor` requiresConfirmation | R4-07 | test gap only |

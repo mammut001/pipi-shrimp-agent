@@ -71,7 +71,7 @@ Chinese version: [../test-gaps-backlog.md](../test-gaps-backlog.md)
 
 ## Test infrastructure recommendations
 
-1. **Add `@testing-library/react`** — project has `jest-environment-jsdom` but lacks RTL, making hook/component tests difficult (R10-13)
+1. **Add `@testing-library/react`** — ✅ Fixed 2026-09-17 (INFRA-01: RTL + jest-dom/user-event + `useChatMessageScroll` sample)
 2. **Rust:** extend `#[cfg(test)]` in `src-tauri` for `session_memory`, `ssh_bridge`, `commands/tools.rs`
 3. **Contract tests:** `tools/check-tauri-commands.mjs` scans TS `invoke('...')` vs `lib.rs` generated table ✅ Added 2026-09-17 (telegram scope / R7-12)
 4. **CI sharding:** AutoResearch integration 380s+ should be a separate job to avoid blocking PRs
