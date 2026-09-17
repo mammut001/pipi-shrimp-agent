@@ -29,7 +29,7 @@ Earlier post-audit fixes (still need regression tests): R1-01–03, R4-01–03, 
 | Category | Examples |
 | -------- | -------- |
 | **High — browser** | R3-07 overlay cleanup ✅, R3-08 closeWindow+stopTask ✅, R3-09 selector ✅, R3-10 press_enter ✅ |
-| **High — security** | R7-04 artifact sandbox, R7-06 outputDir, R7-12 Telegram Rust parity ✅ |
+| **High — security** | R7-04 artifact sandbox ✅, R7-06 outputDir, R7-12 Telegram Rust parity ✅ |
 | **High — AutoResearch** | R5-02 preflight abort controller leak ✅ |
 | **Test infra** | INFRA-01 `@testing-library/react`, TOP-15 regression suites |
 | **Architecture** | AG-02 `loopEngine.ts`, AG-05 `browserAgentStore.ts`, AG-10 `web.rs` splits |
@@ -591,7 +591,7 @@ Also see **R4-04–R4-24** (store/workflow cross-cuts) in [round-04](./round-04-
 
 | ID | Title | Sev | Status | Key files | Smallest PR | Tests |
 | --- | ----- | --- | ------ | --------- | ----------- | ----- |
-| R7-04 | artifactDetector no filter when workDir undefined | High | open | `artifactDetector.ts` | Reject absolute paths | `/etc/passwd` rejected |
+| R7-04 | artifactDetector no filter when workDir undefined | High | fixed (2026-09-17) | `artifactDetector.ts`, `artifactPathPolicy.ts` | Fail-closed when no roots; reject outside-root paths | `/etc/passwd` + `/etc/*.png|pdf` rejected |
 | R7-06 | `outputDir` unused in artifactDetector | High | fixed | `artifactDetector.ts`, `chatArtifacts.ts`, `chatToolExecution.ts` | Honor workDir + outputDir roots | artifactDetector + chatArtifacts tests |
 | R7-12 | telegram invoke / Rust handler parity | High | fixed (2026-09-17) | `telegramService.ts`, `lib.rs`, `telegram.rs` | Handlers + dynamic T-15 + check-tauri-commands | T-15, `check-tauri-commands.mjs` |
 | R7-02 | Artifact path containment lexical only (symlink escape) | Med | fixed | `artifactPathPolicy.ts`, `path_security.rs` | Canonical/realpath containment | artifactPathPolicy.test.ts |

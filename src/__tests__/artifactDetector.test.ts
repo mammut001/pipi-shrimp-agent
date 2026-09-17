@@ -105,6 +105,36 @@ describe('artifactDetector', () => {
     expect(store.addArtifacts).not.toHaveBeenCalled();
   });
 
+  it('rejects_/etc/passwd_style_paths_when_workDir_undefined (R7-04)', async () => {
+    // Previewable extensions would register if sandbox were skipped — must still reject.
+    await detectAndRegisterArtifacts({
+      messageId: mockMessageId,
+      toolName: 'write_file',
+      toolArgs: '{}',
+      toolResultText: 'Saved to /etc/passwd.png',
+    });
+    expect(store.addArtifacts).not.toHaveBeenCalled();
+
+    await detectAndRegisterArtifacts({
+      messageId: mockMessageId,
+      toolName: 'execute_command',
+      toolArgs: '{}',
+      toolResultText: 'generated /etc/shadow.pdf',
+    });
+    expect(store.addArtifacts).not.toHaveBeenCalled();
+  });
+
+  it('rejects_absolute_paths_when_workDir_blank_and_no_outputDir (R7-04)', async () => {
+    await detectAndRegisterArtifacts({
+      messageId: mockMessageId,
+      toolName: 'write_file',
+      toolArgs: '{}',
+      toolResultText: 'Saved to /etc/passwd.png',
+      workDir: '   ',
+    });
+    expect(store.addArtifacts).not.toHaveBeenCalled();
+  });
+
   it('rejects_path_outside_both_roots', async () => {
     await detectAndRegisterArtifacts({
       messageId: mockMessageId,

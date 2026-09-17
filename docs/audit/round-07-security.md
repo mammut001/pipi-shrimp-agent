@@ -7,11 +7,13 @@
 ## High
 
 > **R7-12** fixed 2026-09-17: every `telegramService.ts` `telegram_*` invoke is registered in `lib.rs` / `telegram.rs`; T-15 dynamic parity test + `tools/check-tauri-commands.mjs`.
+>
+> **R7-04** fixed 2026-09-17: `detectAndRegisterArtifacts` fail-closed when no workDir/outputDir roots; `/etc/passwd` (and previewable `/etc/*.png|pdf`) never `addArtifacts`.
 
 | ID | Location | Description | Suggested test |
 | --- | -------- | ----------- | -------------- |
 | R7-01 | `pathValidation.ts:84,109` | TS 仍用 `startsWith` 非 `isWithinDir`；sibling-prefix 逃逸（Rust 已修 TS 未修） | `/project2` inside `/project` |
-| R7-04 | `artifactDetector.ts:168-170` | `workDir` undefined 时不过滤路径，任意绝对路径可注册 | `/etc/passwd` 不 addArtifacts |
+| R7-04 | `artifactDetector.ts` | `workDir` undefined 时不过滤路径，任意绝对路径可注册 ✅ Fixed 2026-09-17 | `/etc/passwd` 不 addArtifacts |
 | R7-06 | `artifactDetector.ts:147-187` | `outputDir` 声明未使用 | pipiOutputDir 产物应注册 |
 | R7-07 | `ChatMessage.tsx:192-285` | `rehypeRaw` + DOMPurify 源串；`javascript:` href 未拦 | malicious link render |
 | R7-08 | `MarkdownDocumentPreview.tsx:18-22` | 无 DOMPurify / sanitize | `<img onerror>` 向量 |
