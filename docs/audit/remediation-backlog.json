@@ -17,19 +17,20 @@
   },
   {
     "id": "R1-02",
-    "title": "selectSession cancels in-flight generation",
+    "title": "Session switch must not cancel in-flight generation (Stop only)",
     "lane": "A. P0 / Safety / Data Loss",
     "severity": "P0",
     "status": "fixed",
-    "whyItMatters": "Background generator continued after session switch causing wrong-session side effects",
+    "whyItMatters": "Early audit framed cancel-on-switch as the fix; current soak knife-3 contract: selectSession must not cancel in-flight generation/tools — background continues, writes target owning session (R1-01), only explicit Stop cancels.",
     "files": ["src/store/createChatStore.ts", "src/store/chat/chatActions.ts"],
-    "smallestPrScope": "Regression tests for requestChatGenerationCancel on selectSession",
-    "tests": ["T-01"],
-    "dependencies": [],
+    "smallestPrScope": "Regression: selectSession clears selected chrome only; no requestChatGenerationCancel/stop/scrub on switch; background owning-session writes continue; Stop is sole cancel path",
+    "tests": ["T-01", "src/store/chat/__tests__/sessionIsolation.test.ts", "src/store/chat/__tests__/sessionSwitchCancellation.test.ts"],
+    "dependencies": ["R1-01"],
     "runtimeBehavior": true,
     "uiBehavior": false,
     "splitPrs": false,
-    "recommendedPr": 9
+    "recommendedPr": 9,
+    "fixNote": "2026-09-17: Product contract is no cancel-on-switch (soak knife-3). selectSession clears selected-session stream chrome only; background turn continues; owning-session stream/tool writes; explicit Stop is the only cancel path. Regression: sessionIsolation.test.ts + companions."
   },
   {
     "id": "R1-03",
