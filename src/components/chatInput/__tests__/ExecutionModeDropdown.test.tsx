@@ -60,9 +60,29 @@ describe('ExecutionModeDropdown three-mode surface', () => {
     expect(html).not.toContain('Bypass');
   });
 
-  it('honors disabled state', () => {
+  it('Ask render contains switch-to-danger test id and i18n key', () => {
+    const html = render('ask');
+    expect(html).toContain('data-testid="mode-test-switch-to-danger"');
+    expect(html).toContain('executionMode.affordance.switchToDanger');
+  });
+
+  it('Danger render does NOT contain switch-to-danger button', () => {
+    const html = render('danger');
+    expect(html).not.toContain('mode-test-switch-to-danger');
+    expect(html).not.toContain('executionMode.affordance.switchToDanger');
+  });
+
+  it('Plan render also shows switch-to-danger button', () => {
+    const html = render('plan');
+    expect(html).toContain('data-testid="mode-test-switch-to-danger"');
+    expect(html).toContain('executionMode.affordance.switchToDanger');
+  });
+
+  it('honors disabled state and disables switch-to-danger', () => {
     const html = render('ask', { disabled: true });
-    expect(html).toContain('disabled=""');
+    expect(html).toContain('data-testid="mode-test-switch-to-danger"');
+    const disabledMatches = html.match(/disabled=""/g);
+    expect(disabledMatches?.length).toBe(2);
   });
 });
 

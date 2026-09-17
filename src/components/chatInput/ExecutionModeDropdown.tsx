@@ -287,15 +287,28 @@ export function ExecutionModeDropdown({
         />
       )}
     </div>
-      <span
-        className={`px-0.5 text-[10px] leading-snug ${
-          affordance.toolsActive ? 'text-rose-700/90' : 'text-gray-500'
-        }`}
-        data-testid={affordance.testId}
-        title={coerceRenderableText(t(affordance.hintKey))}
-      >
-        {t(affordance.hintKey)}
-      </span>
+      <div className="inline-flex flex-wrap items-center gap-1.5 px-0.5">
+        <span
+          className={`text-[10px] leading-snug ${
+            affordance.toolsActive ? 'text-rose-700/90' : 'text-gray-500'
+          }`}
+          data-testid={affordance.testId}
+          title={coerceRenderableText(t(affordance.hintKey))}
+        >
+          {t(affordance.hintKey)}
+        </span>
+        {!affordance.toolsActive && (
+          <button
+            type="button"
+            disabled={disabled}
+            data-testid={`${testId}-switch-to-danger`}
+            onClick={() => requestSelect(getExecutionMode('danger'))}
+            className="shrink-0 text-[10px] font-semibold text-rose-600 hover:text-rose-700 hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {t('executionMode.affordance.switchToDanger')}
+          </button>
+        )}
+      </div>
     </div>
   );
 }
