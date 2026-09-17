@@ -29,7 +29,7 @@
 | T-12 | Store | `listenerGuard` 乱序 unmount | R4-01 |
 | T-13 | Store | `StreamingToolExecutor` requiresConfirmation 路径 | R4-07 |
 | T-14 | Workflow | `engine.stop()` 后 `getIsRunning()` 与 restart | R4-02, R6-02 |
-| T-15 | Telegram | `telegramService` invoke 与 `lib.rs` 注册表 parity | R9-01, R10-05 |
+| T-15 | Telegram | `telegramService` invoke 与 `lib.rs` 注册表 parity ✅ Fixed 2026-09-17 | R7-12, R9-01, R10-05 |
 | T-16 | Telegram | `allowedChats` 在 commandRouter 执行 | R7-11 |
 | T-17 | Browser | `stopTask` 停止 CDP loop | R3-05 |
 | T-18 | Rust | legacy `execute_tool` 与 batch 策略一致 | R2-01 |
@@ -69,7 +69,7 @@
 
 1. **添加 `@testing-library/react`** — 项目已有 `jest-environment-jsdom`，缺 RTL 导致 hook/组件测难写（R10-13 已踩坑）
 2. **Rust:** 扩展 `src-tauri` 内 `#[cfg(test)]` 覆盖 `session_memory`, `ssh_bridge`, `commands/tools.rs`
-3. **契约测试:** `tools/check-tauri-commands.mjs` 扫描 TS `invoke('...')` vs `lib.rs` 生成表
+3. **契约测试:** `tools/check-tauri-commands.mjs` 扫描 TS `invoke('...')` vs `lib.rs` 生成表 ✅ Added 2026-09-17 (telegram scope / R7-12)
 4. **CI 分片:** AutoResearch integration 380s+ 应单独 job，避免阻塞 PR
 
 ---

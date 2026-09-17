@@ -13,7 +13,7 @@ Checkpoint report after the focused PR sequence that closed all **P0 / Critical*
 | **P0/Critical fixed (this wave)** | **13** |
 | **P0/Critical fixed (all waves, incl. pre-2026-06-24)** | **24** |
 | **Open P0/Critical in backlog** | **0** |
-| **Open High in backlog JSON** | **4** (R7-04, R7-06, R7-12, INFRA-01) |
+| **Open High in backlog JSON** | **3** (R7-04, R7-06, INFRA-01) |
 | **Open High in round docs (not yet in JSON)** | **~12** (browser R3-07–R3-10, Rust R2-05–R2-12, etc.) |
 | **Regression test gaps** | Most fixed items need guardrail tests (Top-15, T-* entries) |
 
@@ -166,8 +166,8 @@ All thirteen anchors from the remediation wave are **`fixed`** in `remediation-b
 | **Problem** | `allowedChats` type and settings existed but inbound router never checked — any chat could command the bot. |
 | **Fix summary** | Central `isTelegramInboundChatAuthorized` guard in `commandRouter` before dispatch; `connectorConfig` localStorage persistence wired to `telegramSetAllowedChats`; owner chat always allowed when allowlist is restrictive; empty allowlist denies all except owner. |
 | **Tests added** | `src/services/telegram/__tests__/chatAuthorization.test.ts`, `commandRouter.test.ts`. |
-| **Remaining risk** | Rust-side handlers may still lack parity with TS invokes (R7-12); token storage still XOR localStorage (R7-15). |
-| **Follow-up** | R7-12 Telegram Rust handler parity; R7-10 token redaction in logs. |
+| **Remaining risk** | Token storage still XOR localStorage (R7-15). |
+| **Follow-up** | R7-10 token redaction in logs. |
 
 ---
 
@@ -198,7 +198,7 @@ Checked `remediation-backlog.json` on **2026-06-24**:
 | R5-02 | AutoResearch | Preflight abort controller leak ✅ Fixed 2026-09-17 |
 | R7-04 | Security | `artifactDetector` no filter when `workDir` undefined |
 | R7-06 | Security | `outputDir` unused in artifactDetector |
-| R7-12 | Security | Telegram invoke / Rust handler parity |
+| R7-12 | Security | Telegram invoke / Rust handler parity ✅ Fixed 2026-09-17 |
 | INFRA-01 | Test | `@testing-library/react` devDependency missing |
 | R2-05–R2-12 | Rust | High backend hardening (per round-02) |
 
@@ -224,7 +224,7 @@ Checked `remediation-backlog.json` on **2026-06-24**:
 | 3 | R3-09 | **fix(browser): honor selector in native executor** | `nativeBrowserAgent.ts`, `browserPageStateModel.ts`, `browserActionPolicy.ts` | selector-used assertion | Medium | ✅ Shipped 2026-09-17 — normalize hints, navigate wait_selector, policy resolve |
 | 4 | R3-10 | **fix(browser): wire press_enter to pressBrowserKey** | `nativeBrowserAgent.ts` | enter key sent test | Medium | ✅ Shipped 2026-09-17 — press_enter → pressBrowserKey(Enter); press_enter_failed |
 | 5 | R5-02 | **fix(autoresearch): clear abort controller on preflight fail** | `loopEngine.ts` | controller null after preflight fail | Medium | ✅ Shipped 2026-09-17 — try/finally clears controller on preflight !ok/throw |
-| 6 | R7-12 | **fix(security): Telegram invoke / Rust handler parity** | `telegramService.ts`, `src-tauri/src/lib.rs`, `telegram.rs` | T-15 contract test, `check-tauri-commands.mjs` | High | Dead invokes cause runtime failures |
+| 6 | R7-12 | **fix(security): Telegram invoke / Rust handler parity** | `telegramService.ts`, `src-tauri/src/lib.rs`, `telegram.rs` | T-15 contract test, `check-tauri-commands.mjs` | High | ✅ Shipped 2026-09-17 — dynamic parity test + `check-tauri-commands.mjs` |
 | 7 | R7-04 | **fix(security): reject artifacts when workDir undefined** | `artifactDetector.ts` | `/etc/passwd` rejected | High | Sandbox bypass for artifact registration |
 | 8 | INFRA-01 | **chore(test): add @testing-library/react** | `package.json`, hook sample test | `useChatMessageScroll` sample | Low | Unblocks Top-15 component/hook regression PRs |
 | 9 | TOP-15-01 | **test: chat P0 session isolation regression** | `src/store/chat/__tests__/` | T-01, T-02 | Low | Guard fixed R1-01/02/03 before chat refactors |

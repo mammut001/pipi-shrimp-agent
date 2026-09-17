@@ -16,7 +16,7 @@ Chinese version: [../round-07-security.md](../round-07-security.md)
 | R7-07 | `ChatMessage.tsx:192-285` | `rehypeRaw` + DOMPurify on source string; `javascript:` href not blocked | Malicious link render | ✅ Fixed |
 | R7-08 | `MarkdownDocumentPreview.tsx:18-22` | No DOMPurify / sanitize | `<img onerror>` vector | ✅ Fixed |
 | R7-11 | `telegram.ts` types vs `commandRouter.ts` | `allowedChats` / `isChatAllowed` never called in router | Chat 456 rejected when allowlist is [123] | ❌ Open |
-| R7-12 | `telegramService.ts` vs `lib.rs` | Multiple `telegram_*` invoke calls have no Rust handler | Command parity contract test | Open |
+| R7-12 | `telegramService.ts` vs `lib.rs` | Multiple `telegram_*` invoke calls have no Rust handler | Command parity contract test | ✅ Fixed 2026-09-17 |
 
 ## Medium
 

@@ -29,7 +29,7 @@ Earlier post-audit fixes (still need regression tests): R1-01–03, R4-01–03, 
 | Category | Examples |
 | -------- | -------- |
 | **High — browser** | R3-07 overlay cleanup ✅, R3-08 closeWindow+stopTask ✅, R3-09 selector ✅, R3-10 press_enter ✅ |
-| **High — security** | R7-04 artifact sandbox, R7-06 outputDir, R7-12 Telegram Rust parity |
+| **High — security** | R7-04 artifact sandbox, R7-06 outputDir, R7-12 Telegram Rust parity ✅ |
 | **High — AutoResearch** | R5-02 preflight abort controller leak ✅ |
 | **Test infra** | INFRA-01 `@testing-library/react`, TOP-15 regression suites |
 | **Architecture** | AG-02 `loopEngine.ts`, AG-05 `browserAgentStore.ts`, AG-10 `web.rs` splits |
@@ -593,7 +593,7 @@ Also see **R4-04–R4-24** (store/workflow cross-cuts) in [round-04](./round-04-
 | --- | ----- | --- | ------ | --------- | ----------- | ----- |
 | R7-04 | artifactDetector no filter when workDir undefined | High | open | `artifactDetector.ts` | Reject absolute paths | `/etc/passwd` rejected |
 | R7-06 | `outputDir` unused in artifactDetector | High | fixed | `artifactDetector.ts`, `chatArtifacts.ts`, `chatToolExecution.ts` | Honor workDir + outputDir roots | artifactDetector + chatArtifacts tests |
-| R7-12 | telegram invoke / Rust handler parity | High | open | `telegramService.ts`, `lib.rs` | Register missing handlers | T-15 contract test |
+| R7-12 | telegram invoke / Rust handler parity | High | fixed (2026-09-17) | `telegramService.ts`, `lib.rs`, `telegram.rs` | Handlers + dynamic T-15 + check-tauri-commands | T-15, `check-tauri-commands.mjs` |
 | R7-02 | Artifact path containment lexical only (symlink escape) | Med | fixed | `artifactPathPolicy.ts`, `path_security.rs` | Canonical/realpath containment | artifactPathPolicy.test.ts |
 | R7-03 | artifactDetector Unix-only paths | Med | open | `artifactDetector.ts` | Windows path support | `C:\` paths |
 | R7-05 | `addFileArtifact` no workDir check | Med | fixed | `artifactPathPolicy.ts`, `artifactDetector.ts` | Shared workDir/outputDir sandbox | addFileArtifact tests |
@@ -620,7 +620,7 @@ Also see **R4-04–R4-24** (store/workflow cross-cuts) in [round-04](./round-04-
 | T-33 | CI: stabilize 24 failing suites | P0 | **fixed** (CI green) | autoresearch tests | Keep green in CI | full suite on PR |
 | INFRA-01 | Add `@testing-library/react` | High | open | `package.json` | devDep + sample hook test | R10-13 |
 | INFRA-02 | Rust `#[cfg(test)]` expansion | High | open | `src-tauri` | session_memory, ssh tests | round-02 matrix |
-| INFRA-03 | Tauri command parity checker | Med | open | `tools/check-tauri-commands.mjs` | CI job | R9-01 |
+| INFRA-03 | Tauri command parity checker | Med | fixed (2026-09-17, telegram scope) | `tools/check-tauri-commands.mjs` | `pnpm run check:tauri-commands` | R7-12 / R9-01 |
 | INFRA-04 | CI shard AutoResearch integration | Med | open | `.github/workflows` | Separate job | 380s+ isolation |
 
 ### Top 15 suggested tests (tracking)
@@ -638,7 +638,7 @@ Also see **R4-04–R4-24** (store/workflow cross-cuts) in [round-04](./round-04-
 | 9 | `loopEngine` stop/delete/fail-continue | R5-03, R5-05 | partially addressed |
 | 10 | `App.tsx` bootstrap + routing | R10-01, R9-06 | test gap only |
 | 11 | Shell permission queue + questionnaire | R10-02, R1-15 | test gap only |
-| 12 | telegramService ↔ lib.rs parity | R9-01, R10-05 | test gap only |
+| 12 | telegramService ↔ lib.rs parity | R9-01, R10-05, R7-12 | fixed 2026-09-17 (`tauriCommandParity.test.ts`, `check-tauri-commands.mjs`) |
 | 13 | Telegram allowedChats enforcement | R7-11 | fixed 2026-06-24 (`chatAuthorization.test.ts`, `commandRouter.test.ts`) |
 | 14 | Markdown XSS vectors | R7-07, R7-08 | test gap only |
 | 15 | `pathValidation` sibling-prefix | R7-01 | test gap only |
