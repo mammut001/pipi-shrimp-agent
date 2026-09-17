@@ -13,7 +13,7 @@ Chinese version: [../round-05-autoresearch.md](../round-05-autoresearch.md)
 | ID | Sev | Location | Description | Suggested test | Status |
 | --- | --- | -------- | ----------- | -------------- | ------ |
 | R5-01 | P0 | `chatAdapter.ts:697-900` | `options.signal` not passed to `runHeadlessAgentTurn`; Stop could not interrupt in-flight turn | Abort mid-turn exits immediately | ✅ Fixed |
-| R5-02 | High | `loopEngine.ts:950-1065` | Preflight return outside try/finally — `activeLoopAbortController` leaked | Controller null after preflight failure | Open |
+| R5-02 | High | `loopEngine.ts:950-1065` | Preflight return outside try/finally — `activeLoopAbortController` leaked | Controller null after preflight failure | ✅ Fixed 2026-09-17 |
 | R5-03 | P0 | `loopEngine.ts:1744-1820` | Agent error set `failed` but `loopState` did not stop — iterations could continue | No second sendMessage after throw | ✅ Fixed |
 | R5-04 | Medium | `AutoResearch.tsx:373-380` | Unmount only stopped `running`, not `paused` | Pause + unmount stops loop | Open |
 | R5-05 | P0 | `autoresearchStore.ts:632-659` | `deleteRun` did not call `stopExperimentLoop` | Deleting active run stops SSH/LLM | ✅ Fixed |

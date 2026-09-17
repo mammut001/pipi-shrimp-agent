@@ -30,7 +30,7 @@ Earlier post-audit fixes (still need regression tests): R1-01–03, R4-01–03, 
 | -------- | -------- |
 | **High — browser** | R3-07 overlay cleanup ✅, R3-08 closeWindow+stopTask ✅, R3-09 selector ✅, R3-10 press_enter ✅ |
 | **High — security** | R7-04 artifact sandbox, R7-06 outputDir, R7-12 Telegram Rust parity |
-| **High — AutoResearch** | R5-02 preflight abort controller leak |
+| **High — AutoResearch** | R5-02 preflight abort controller leak ✅ |
 | **Test infra** | INFRA-01 `@testing-library/react`, TOP-15 regression suites |
 | **Architecture** | AG-02 `loopEngine.ts`, AG-05 `browserAgentStore.ts`, AG-10 `web.rs` splits |
 | **Rust High (round-02)** | R2-05–R2-12 — not yet in backlog JSON |
@@ -520,7 +520,7 @@ Items remediated per [README remediation section](./README.md#修复进展remedi
 
 | ID | Title | Sev | Status | Why | Key files | Smallest PR | Tests | Runtime | UI | Split? |
 | --- | ----- | --- | ------ | --- | --------- | ----------- | ----- | ------- | -- | ------ |
-| R5-02 | Preflight abort controller leak | High | open | Orphan AbortController after preflight fail | `loopEngine.ts` | try/finally around preflight | controller null after fail | Yes | No | No |
+| R5-02 | Preflight abort controller leak | High | fixed (2026-09-17) | Orphan AbortController after preflight fail | `loopEngine.ts` | try/finally around preflight | controller null after fail | Yes | No | No |
 | R5-04 | Unmount doesn't stop `paused` loop | Med | open | Loop continues after navigate away | `AutoResearch.tsx` | Stop on any non-idle state | pause+unmount | Yes | Yes | No |
 | R5-06 | SSH upload no transaction | Med | open | Partial upload corrupts remote state | `BootstrapChatView.tsx` | Rollback on Nth failure | partial upload | Yes | Yes | No |
 | R5-07 | Handoff no lifecycle lock | Med | open | Two active runs possible | `BootstrapChatView.tsx` | Block handoff if running | active run blocks | Yes | Yes | No |
