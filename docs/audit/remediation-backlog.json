@@ -359,7 +359,7 @@
     "lane": "D. Browser Automation",
     "severity": "High",
     "status": "fixed",
-    "fixNote": "2026-06-24: input_text with press_enter calls pressBrowserKey('Enter') after typeIntoBrowserElement.",
+    "fixNote": "2026-09-17: input_text.press_enter wires to pressBrowserKey('Enter') after typeIntoBrowserElement; Enter failures use press_enter_failed (not type_failed); regression covers enter sent, omitted/false no-op, selector+enter, and Enter failure path.",
     "whyItMatters": "Form submit after typing fails in common flows",
     "files": ["src/utils/nativeBrowserAgent.ts"],
     "smallestPrScope": "Wire press_enter in executeEnvelope input_text case",

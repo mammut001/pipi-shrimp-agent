@@ -352,7 +352,146 @@ describe('nativeBrowserAgent', () => {
 
       await expect(resultPromise).resolves.toBe('Submitted');
       expect(typeIntoBrowserElementMock).toHaveBeenCalled();
+      // enter key sent: press_enter must call pressBrowserKey('Enter') after type
+      expect(pressBrowserKeyMock).toHaveBeenCalledTimes(1);
       expect(pressBrowserKeyMock).toHaveBeenCalledWith('Enter');
+      expect(pressBrowserKeyMock.mock.invocationCallOrder[0]).toBeGreaterThan(
+        typeIntoBrowserElementMock.mock.invocationCallOrder[0],
+      );
+    });
+
+    it('input_text_without_press_enter_does_not_press_key', async () => {
+      getBrowserPageStateMock.mockResolvedValue(livePageState);
+      invokeMock
+        .mockResolvedValueOnce({
+          content: JSON.stringify({
+            thought: 'Type only.',
+            action: { input_text: { id: 7, text: 'query' } },
+          }),
+        })
+        .mockResolvedValueOnce({
+          content: JSON.stringify({
+            thought: 'Typed.',
+            action: { done: { text: 'Typed only', success: true } },
+          }),
+        });
+
+      const resultPromise = executeNativeBrowserTask('Type', 'api-key', 'model', {
+        approveAction: () => Promise.resolve(true),
+      });
+      await jest.runAllTimersAsync();
+
+      await expect(resultPromise).resolves.toBe('Typed only');
+      expect(typeIntoBrowserElementMock).toHaveBeenCalled();
+      expect(pressBrowserKeyMock).not.toHaveBeenCalled();
+    });
+
+    it('input_text_press_enter_false_does_not_press_key', async () => {
+      getBrowserPageStateMock.mockResolvedValue(livePageState);
+      invokeMock
+        .mockResolvedValueOnce({
+          content: JSON.stringify({
+            thought: 'Type without submit.',
+            action: { input_text: { id: 7, text: 'query', press_enter: false } },
+          }),
+        })
+        .mockResolvedValueOnce({
+          content: JSON.stringify({
+            thought: 'Typed.',
+            action: { done: { text: 'No enter', success: true } },
+          }),
+        });
+
+      const resultPromise = executeNativeBrowserTask('Type', 'api-key', 'model', {
+        approveAction: () => Promise.resolve(true),
+      });
+      await jest.runAllTimersAsync();
+
+      await expect(resultPromise).resolves.toBe('No enter');
+      expect(typeIntoBrowserElementMock).toHaveBeenCalled();
+      expect(pressBrowserKeyMock).not.toHaveBeenCalled();
+    });
+
+    it('input_text_selector_press_enter_sends_enter_key', async () => {
+      const editableState = {
+        ...livePageState,
+        elements: [
+          {
+            ...livePageState.elements[0],
+            index: 3,
+            backend_node_id: 55,
+            role: 'textbox',
+            name: 'Search',
+            tag_name: 'input',
+            is_editable: true,
+            is_clickable: false,
+            selector_hint: 'input[name=\"q\"]',
+          },
+        ],
+      };
+      getBrowserPageStateMock.mockResolvedValue(editableState);
+      invokeMock
+        .mockResolvedValueOnce({
+          content: JSON.stringify({
+            thought: 'Type via selector and submit.',
+            action: {
+              input_text: { selector: 'input[name="q"]', text: 'shrimp', press_enter: true },
+            },
+          }),
+        })
+        .mockResolvedValueOnce({
+          content: JSON.stringify({
+            thought: 'Submitted.',
+            action: { done: { text: 'Selector submit', success: true } },
+          }),
+        });
+
+      const resultPromise = executeNativeBrowserTask('Search', 'api-key', 'model', {
+        approveAction: () => Promise.resolve(true),
+      });
+      await jest.runAllTimersAsync();
+
+      await expect(resultPromise).resolves.toBe('Selector submit');
+      expect(typeIntoBrowserElementMock).toHaveBeenCalled();
+      expect(pressBrowserKeyMock).toHaveBeenCalledWith('Enter');
+    });
+
+    it('input_text_press_enter_failure_reports_press_enter_failed', async () => {
+      getBrowserPageStateMock.mockResolvedValue(livePageState);
+      pressBrowserKeyMock.mockRejectedValueOnce(new Error('Enter key CDP failed'));
+      invokeMock
+        .mockResolvedValueOnce({
+          content: JSON.stringify({
+            thought: 'Type and submit.',
+            action: { input_text: { id: 7, text: 'query', press_enter: true } },
+          }),
+        })
+        .mockResolvedValueOnce({
+          content: JSON.stringify({
+            thought: 'Recover.',
+            action: { done: { text: 'Recovered after enter fail', success: true } },
+          }),
+        });
+
+      const steps: Array<{ errorCode?: string; success: boolean; actionName: string }> = [];
+      const resultPromise = executeNativeBrowserTask('Search', 'api-key', 'model', {
+        approveAction: () => Promise.resolve(true),
+        onStep: (step) => {
+          steps.push({
+            errorCode: step.errorCode,
+            success: step.success,
+            actionName: step.actionName,
+          });
+        },
+      });
+      await jest.runAllTimersAsync();
+
+      await expect(resultPromise).resolves.toBe('Recovered after enter fail');
+      expect(typeIntoBrowserElementMock).toHaveBeenCalled();
+      expect(pressBrowserKeyMock).toHaveBeenCalledWith('Enter');
+      expect(steps.some((s) => s.actionName === 'input_text' && s.errorCode === 'press_enter_failed')).toBe(
+        true,
+      );
     });
   });
 
