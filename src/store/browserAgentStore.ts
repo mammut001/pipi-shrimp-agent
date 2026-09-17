@@ -56,6 +56,7 @@ import type {
 // CDP mode: tiered dispatch for complex/authenticated tasks
 import {
   executeNativeBrowserTask as executeCdpTask,
+  removeBrowserAgentOverlay,
   type NativeAgentOptions,
   type NativeAgentRunSummary,
 } from '../utils/nativeBrowserAgent';
@@ -1136,6 +1137,13 @@ Complete the task efficiently and call "done" when finished.`;
     } catch (error) {
       const pendingTaskForFailure = get().pendingTask ?? currentTask;
       const useCdpFailure = pendingTaskForFailure?.executionMode === 'cdp';
+
+      // R3-07: belt-and-suspenders — native agent finally removes the page overlay,
+      // but store error/abort paths always request cleanup so a stuck fullscreen mask
+      // cannot survive after agent failure even if the CDP loop exited oddly.
+      if (useCdpFailure) {
+        void removeBrowserAgentOverlay();
+      }
 
       if ((error as Error).name === 'AbortError') {
         addLog('info', t('browserAgent.log.taskStopped'));

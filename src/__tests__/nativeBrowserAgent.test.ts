@@ -308,6 +308,28 @@ describe('nativeBrowserAgent', () => {
       expect(overlayCalls.remove).toBeGreaterThanOrEqual(1);
     });
 
+    it('removes_overlay_even_if_onRunSummary_throws', async () => {
+      getBrowserPageStateMock.mockResolvedValue(livePageState);
+      invokeMock.mockResolvedValueOnce({
+        content: JSON.stringify({
+          thought: 'Done.',
+          action: { done: { text: 'Finished', success: true } },
+        }),
+      });
+
+      const resultPromise = executeNativeBrowserTask('Finish task', 'api-key', 'model', {
+        onRunSummary: () => {
+          throw new Error('summary sink failed');
+        },
+      });
+      const assertion = expect(resultPromise).rejects.toThrow('summary sink failed');
+      await jest.runAllTimersAsync();
+      await assertion;
+      const overlayCalls = countOverlayScriptCalls();
+      expect(overlayCalls.inject).toBeGreaterThanOrEqual(1);
+      expect(overlayCalls.remove).toBeGreaterThanOrEqual(1);
+    });
+
     it('removes_overlay_on_stop_without_duplicate_errors', async () => {
       getBrowserPageStateMock.mockResolvedValue(livePageState);
       let resolveLlm!: (value: { content: string }) => void;

@@ -28,7 +28,7 @@ Earlier post-audit fixes (still need regression tests): R1-01–03, R4-01–03, 
 
 | Category | Examples |
 | -------- | -------- |
-| **High — browser** | R3-07 overlay cleanup, R3-08 closeWindow+stopTask, R3-09 selector, R3-10 press_enter |
+| **High — browser** | R3-07 overlay cleanup ✅, R3-08 closeWindow+stopTask, R3-09 selector, R3-10 press_enter |
 | **High — security** | R7-04 artifact sandbox, R7-06 outputDir, R7-12 Telegram Rust parity |
 | **High — AutoResearch** | R5-02 preflight abort controller leak |
 | **Test infra** | INFRA-01 `@testing-library/react`, TOP-15 regression suites |
@@ -543,7 +543,7 @@ Items remediated per [README remediation section](./README.md#修复进展remedi
 | R3-01 | `executeCdpTask` missing `approveAction` | Critical | fixed (2026-06-24) | Sensitive clicks denied with no UI | `browserAgentStore.ts`, `browserActionApproval.ts` | Pass approval callback + prompt | `browserActionApproval.test.ts` | Yes | Yes | No |
 | R3-02 | `observe_only` flag not wired | Critical | fixed (2026-06-24) | Read-only mode ineffective | `browserAgentStore.ts`, `browserFeatureFlags.ts`, `browserActionPolicy.ts` | Pass `permissionMode` to executor | `browserObserveOnly.test.ts`, `nativeBrowserAgent.test.ts` | Yes | No | No |
 | R3-03 | CDP mode skips auth check | Critical | fixed (2026-06-24) | Agent runs on login pages | `browserAgentStore.ts`, `browserAgentStartGate.ts` | Unified auth start gate | `browserAuthRequired.test.ts` | Yes | Yes | No |
-| R3-07 | Overlay not removed on error | High | open | Full-screen stuck overlay | store | finally remove overlay | error path cleanup | No | Yes | No |
+| R3-07 | Overlay not removed on error | High | fixed (2026-09-17) | Full-screen stuck overlay | store + nativeAgent | finally + store removeBrowserAgentOverlay | overlay cleanup tests | Yes | Yes | No |
 | R3-08 | `closeWindow` doesn't stop CDP | High | open | Orphan agent after close | store | stopTask in closeWindow | close stops loop | Yes | Yes | No |
 | R3-09 | Selector ignored in executor | High | open | Tool calls no-op silently | `nativeBrowserAgent.ts` | Honor selector param | selector used | Yes | No | No |
 | R3-10 | `press_enter` not wired | High | open | Form submit fails | agent | Call `pressBrowserKey` | enter key sent | Yes | No | No |
