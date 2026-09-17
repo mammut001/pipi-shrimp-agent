@@ -444,10 +444,13 @@ function resetRightPanelStateAfterSessionRemoval(
 
   for (const sessionId of deletedSessionIds) {
     uiStore.clearQuestionnaire(sessionId);
+    uiStore.clearPermissionsForSession(sessionId);
   }
 
   if (currentSessionWasDeleted || nextSessionId === null) {
-    uiStore.clearAllPermissions();
+    if (nextSessionId === null) {
+      uiStore.clearAllPermissions();
+    }
     uiStore.clearArtifactId();
     uiStore.clearTaskProgress();
     uiStore.setActiveSkill(null);
@@ -703,8 +706,10 @@ export const useChatStore = create<ChatState>()(
       // selected session's UI chrome. Do NOT cancel/stop/scrub/fail the previous
       // session's in-flight tools or generation; background turns keep running.
       // Stop remains explicit via stopGeneration (A ≠ B).
+      // Permission queue is session-scoped: do NOT clearAllPermissions /
+      // clearPermissionsForSession here — that would deny A's pending approval
+      // promise when starting a new chat (GPT FIX FIRST #99 residual).
       resetTransientSessionStateForNewChat(previousSessionId, {
-        clearAllPermissions: () => uiStore.clearAllPermissions(),
         clearQuestionnaire: (sessionId) => uiStore.clearQuestionnaire(sessionId),
         clearNotificationHistory: (sessionId) => uiStore.clearNotificationHistory(sessionId),
         clearArtifactId: () => uiStore.clearArtifactId(),
@@ -780,7 +785,7 @@ export const useChatStore = create<ChatState>()(
       if (pendingPermissions.length === 0) {
         return;
       }
-      useUIStore.getState().clearAllPermissions();
+      useUIStore.getState().clearPermissionsForSession(sessionId);
       for (const request of pendingPermissions) {
         request._resolve?.(permissionMode === 'bypass' || permissionMode === 'auto-edits');
       }
@@ -816,7 +821,7 @@ export const useChatStore = create<ChatState>()(
           ? [...useUIStore.getState().permissionQueue]
           : [];
         if (pendingPermissions.length > 0) {
-          useUIStore.getState().clearAllPermissions();
+          useUIStore.getState().clearPermissionsForSession(sessionId);
           for (const request of pendingPermissions) {
             request._resolve?.(true);
           }
@@ -861,7 +866,8 @@ export const useChatStore = create<ChatState>()(
       // selected session's busy UI. Do NOT cancel/stop/scrub the previous
       // session's in-flight tools or generation; background turns keep running.
       // Stop remains explicit via stopGeneration (A ≠ B).
-      useUIStore.getState().clearAllPermissions();
+      // Do NOT clearAllPermissions — pending approvals are session-scoped and
+      // must stay unresolved until the owning session approves/denies/Stops.
       if (previousSessionId) {
         useUIStore.getState().clearQuestionnaire(previousSessionId);
       }

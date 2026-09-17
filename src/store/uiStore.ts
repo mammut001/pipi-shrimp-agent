@@ -197,7 +197,8 @@ export const useUIStore = create<UIState>((set) => ({
     set((state) => ({ permissionQueue: state.permissionQueue.slice(1) })),
 
   /**
-   * Clear ALL pending permission requests (used when switching sessions)
+   * Clear ALL pending permission requests (Stop / recover / empty session list).
+   * Do NOT use on session switch or new chat — denies other sessions' pending approvals.
    */
   clearAllPermissions: () => {
     const pendingPermissions = useUIStore.getState().permissionQueue;
@@ -217,13 +218,45 @@ export const useUIStore = create<UIState>((set) => ({
     }));
   },
 
-  resolvePermissionRequest: (approved: boolean) => {
-    const permission = useUIStore.getState().permissionQueue[0];
+  /**
+   * Deny + dequeue only one session's pending permissions; leave other sessions intact.
+   */
+  clearPermissionsForSession: (sessionId: string) => {
+    const pendingPermissions = useUIStore.getState().permissionQueue;
+    const toClear = pendingPermissions.filter((permission) => permission.sessionId === sessionId);
+    if (toClear.length === 0) {
+      return;
+    }
+    for (const permission of toClear) {
+      permission._resolve?.(false);
+    }
+    set((state) => ({
+      permissionQueue: state.permissionQueue.filter((permission) => permission.sessionId !== sessionId),
+      permissionLedger: toClear.reduce(
+        (ledger, permission) => prependPermissionLedgerEntry(
+          ledger,
+          createPermissionLedgerEntry(permission, 'cancelled'),
+        ),
+        state.permissionLedger,
+      ),
+    }));
+  },
+
+  resolvePermissionRequest: (approved: boolean, permissionId?: string) => {
+    const queue = useUIStore.getState().permissionQueue;
+    const index = permissionId
+      ? queue.findIndex((permission) => permission.id === permissionId)
+      : 0;
+    if (index < 0) return;
+    const permission = queue[index];
     if (!permission) return;
 
     permission._resolve?.(approved);
     set((state) => ({
-      permissionQueue: state.permissionQueue.slice(1),
+      permissionQueue: [
+        ...state.permissionQueue.slice(0, index),
+        ...state.permissionQueue.slice(index + 1),
+      ],
       permissionLedger: prependPermissionLedgerEntry(
         state.permissionLedger,
         createPermissionLedgerEntry(permission, approved ? 'approved' : 'denied'),
@@ -246,6 +279,7 @@ export const useUIStore = create<UIState>((set) => ({
     commandPreview?: string | null;
     riskReason?: string | null;
     approvalToken?: string | null;
+    sessionId?: string;
   }) => {
     return new Promise<boolean>((resolve) => {
       set((state) => ({
@@ -261,6 +295,7 @@ export const useUIStore = create<UIState>((set) => ({
             commandPreview: tool.commandPreview,
             riskReason: tool.riskReason,
             approvalToken: tool.approvalToken,
+            sessionId: tool.sessionId,
             _resolve: resolve, // Stores the promise resolver
           }),
         ],

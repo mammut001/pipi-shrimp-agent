@@ -1,5 +1,4 @@
 export interface SessionIsolationActions {
-  clearAllPermissions: () => void;
   clearQuestionnaire: (sessionId: string) => void;
   clearNotificationHistory: (sessionId: string) => void;
   clearArtifactId: () => void;
@@ -9,11 +8,18 @@ export interface SessionIsolationActions {
   closeArtifactsPanel: () => void;
 }
 
+/**
+ * Reset selected-session UI chrome when starting a new chat.
+ *
+ * Must NOT deny/clear other sessions' pending permission approvals
+ * (`clearAllPermissions` / `clearPermissionsForSession`). Background
+ * SessionRuntime tools may still be awaiting user approval on the
+ * previous session; new chat only rebinds chrome for the empty session.
+ */
 export function resetTransientSessionStateForNewChat(
   previousSessionId: string | null,
   actions: SessionIsolationActions,
 ): void {
-  actions.clearAllPermissions();
   actions.clearArtifactId();
   actions.clearTaskProgress();
   actions.setActiveSkill(null);

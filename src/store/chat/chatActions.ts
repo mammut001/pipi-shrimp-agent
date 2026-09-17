@@ -1560,7 +1560,7 @@ export function createChatActionMethods({
         // scrub, skip session-mutating cancel completion (handle.cancel,
         // failUnresolved, notice, stop_subprocess, pending wipe).
         if (stillOwnsStoppedTurn()) {
-          useUIStore.getState().clearAllPermissions();
+          useUIStore.getState().clearPermissionsForSession(owningSessionId);
           getSessionHandle(owningSessionId).cancel('Cancelled by user');
           failUnresolvedSessionTools(
             owningSessionId,

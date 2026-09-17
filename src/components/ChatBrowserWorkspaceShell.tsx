@@ -159,9 +159,13 @@ export function ChatBrowserWorkspaceShell() {
   const { browserDockMode, browserSplitFocus } = useUIStore();
   const [workspaceMode, setWorkspaceMode] = useState<'chat' | 'preview'>('chat');
 
-  // Permission modal state (Ask mode)
+  // Permission modal state (Ask mode) — session-scoped: only show the selected
+  // session's pending approval. Other sessions' promises stay unresolved in queue.
   const permissionQueue = useUIStore((s) => s.permissionQueue);
-  const pendingPermission = permissionQueue[0];
+  const permissionSessionId = useChatStore((s) => s.currentSessionId);
+  const pendingPermission = permissionQueue.find(
+    (permission) => permission.sessionId === permissionSessionId,
+  );
   const resolvePermissionRequest = useUIStore((s) => s.resolvePermissionRequest);
   const addNotification = useUIStore((s) => s.addNotification);
 
@@ -182,13 +186,13 @@ export function ChatBrowserWorkspaceShell() {
 
   const handleApprovePermission = async () => {
     if (!pendingPermission) return;
-    resolvePermissionRequest(true);
+    resolvePermissionRequest(true, pendingPermission.id);
   };
 
   const handleDenyPermission = () => {
     if (!pendingPermission) return;
     addNotification('info', t('permission.deniedMessage'));
-    resolvePermissionRequest(false);
+    resolvePermissionRequest(false, pendingPermission.id);
   };
 
   // Terminal drag-resize handler

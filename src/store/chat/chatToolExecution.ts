@@ -511,6 +511,7 @@ async function executeConcurrentTools(
           arguments: request.arguments,
           ...buildPermissionContext(request.name, request.arguments, request.reason, request.workDir),
           approvalToken: request.approvalToken ?? null,
+          sessionId: activeSessionId,
         });
         if (approved) {
           uiStore.updateTaskStep(request.id, 'approved');
@@ -630,6 +631,7 @@ async function resolveSerialToolPermission(
       commandPreview: permissionContext?.commandPreview,
       riskReason: permissionContext?.riskReason,
       approvalToken: permissionContext?.approvalToken,
+      sessionId: activeSessionId,
     });
   }
 
@@ -652,6 +654,7 @@ async function resolveSerialToolPermission(
       commandPreview: permissionContext?.commandPreview,
       riskReason: permissionContext?.riskReason,
       approvalToken: permissionContext?.approvalToken,
+      sessionId: activeSessionId,
     });
   }
 

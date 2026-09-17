@@ -10,6 +10,7 @@ const mockSetTaskProgress = jest.fn();
 const mockSetActiveSkill = jest.fn();
 const mockUpdateTaskStep = jest.fn();
 const mockClearAllPermissions = jest.fn();
+const mockClearPermissionsForSession = jest.fn();
 const mockGetActiveConfig = jest.fn();
 const mockGetActiveTemplate = jest.fn();
 const mockBuildPrompt = jest.fn();
@@ -56,6 +57,7 @@ jest.mock('../../uiStore', () => ({
       waitForPermission: jest.fn(async () => true),
       showQuestionnaire: jest.fn(async () => 'questionnaire response'),
       clearAllPermissions: (...args: unknown[]) => mockClearAllPermissions(...args),
+      clearPermissionsForSession: (...args: unknown[]) => mockClearPermissionsForSession(...args),
       permissionQueue: [],
       clearQuestionnaire: jest.fn(),
       clearArtifactId: jest.fn(),
@@ -307,6 +309,7 @@ describe('chatStore sendMessage integration', () => {
     mockSetActiveSkill.mockReset();
     mockUpdateTaskStep.mockReset();
     mockClearAllPermissions.mockReset();
+    mockClearPermissionsForSession.mockReset();
     mockGetActiveConfig.mockReset();
     mockGetActiveTemplate.mockReset();
     mockBuildPrompt.mockReset();
@@ -667,7 +670,7 @@ describe('chatStore sendMessage integration', () => {
 
     expect(mockExecuteBatch).toHaveBeenCalled();
     expect(mockInvoke).toHaveBeenCalledWith('cancel_tool_execution', { executionId: 'exec-cancel-1' });
-    expect(mockClearAllPermissions).toHaveBeenCalled();
+    expect(mockClearPermissionsForSession).toHaveBeenCalled();
     const session = useChatStore.getState().sessions.find((candidate) => candidate.id === 'session-1');
     const messagePairs = session?.messages.map((message) => [message.role, message.content]) ?? [];
     expect(messagePairs[0]).toEqual(['user', 'cancel this run']);
@@ -1740,6 +1743,10 @@ describe('chatStore sendMessage integration', () => {
     // Isolate from prior Stop tests that may leave a parked cancel token.
     clearChatGenerationCancel('session-1');
     await useChatStore.getState().startSession(null);
+
+    // GPT FIX FIRST #99 residual: new chat must not deny/clear other sessions' pending approvals
+    expect(mockClearAllPermissions).not.toHaveBeenCalled();
+    expect(mockClearPermissionsForSession).not.toHaveBeenCalled();
 
     const newSessionId = useChatStore.getState().currentSessionId;
     expect(newSessionId).not.toBe('session-1');
