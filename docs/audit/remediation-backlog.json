@@ -1242,11 +1242,18 @@
     "lane": "I. Architecture Governance",
     "severity": "Governance",
     "status": "partially fixed",
-    "fixNote": "2026-06-24: Extracted prepareLoopStartupContext to preflight.ts; loopEngine.ts reduced; full split still open.",
+    "fixNote": "2026-09-17: AG-02 PR2a shipped — extracted loop preflight phase to loopEngine.preflightPhase.ts (runExperimentLoopPreflight, types, and helpers); removed dead buildDirtyRepoMessage duplicate; preserved R5-02 outer try/finally and clearActiveLoopHandle lifecycle. AG-02 PR2b still open — extract iteration + metrics phases from loopEngine.ts (file still ~1538 LOC over governance cap).",
     "whyItMatters": "AutoResearch core exceeds hard limit; aligns with R5-02",
-    "files": ["src/services/autoresearch/loopEngine.ts"],
-    "smallestPrScope": "Extract preflight phase module",
-    "tests": ["loopEngine.integration.test.ts"],
+    "files": [
+      "src/services/autoresearch/loopEngine.ts",
+      "src/services/autoresearch/loopEngine.preflightPhase.ts"
+    ],
+    "smallestPrScope": "PR2a done (preflight); PR2b: extract iteration + metrics phases",
+    "tests": [
+      "loopEngine.preflightPhase.test.ts",
+      "loopEnginePreflightAbort.test.ts",
+      "loopEngine.integration.test.ts"
+    ],
     "dependencies": ["R5-02"],
     "runtimeBehavior": false,
     "uiBehavior": false,

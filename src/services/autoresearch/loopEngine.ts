@@ -423,11 +423,6 @@ async function rollbackIterationWorkspace(
   return result;
 }
 
-function buildDirtyRepoMessage(summary: AutoResearchEnvironmentSummary): string {
-  return `Experiment repository has ${summary.dirtyFileCount} uncommitted change(s). AutoResearch will not reset a dirty repository automatically. Commit or stash those changes before starting a run.`;
-}
-
-
 function mergeArtifactPaths(...groups: Array<string[] | undefined>): string[] {
   return Array.from(new Set(groups.flatMap((group) => group ?? []).filter((value) => value.trim().length > 0)));
 }
