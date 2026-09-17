@@ -38,6 +38,7 @@ src/store/createChatStore.ts               # mode updates settle only owning ses
 src/services/swarm/permissionBridge.ts     # Swarm UI perms tagged with owning sessionId
 src/services/swarm/__tests__/permissionBridge.sessionId.test.ts
 src/store/chat/chatToolExecution.ts        # enqueuePermissionInUI({ sessionId: activeSessionId })
+src/__tests__/Chat.permissionSessionTarget.test.tsx # legacy Chat permission session target regression
 ```
 
 ## Intentionally not this knife
@@ -46,4 +47,4 @@ src/store/chat/chatToolExecution.ts        # enqueuePermissionInUI({ sessionId: 
 - Truncated replies / Project Folder UX / Danger defaults (scout leftovers)
 - Playwright mega-framework; OTel; durable half-tool resume
 - Selected-session stream chrome (`streamingContent` / `streamingReasoning` / `isStreaming` / `streamingTimeoutId`) remains a single selected-session UI surface (by design); background turns update their own message + per-session module buffer only
-- Legacy FIFO permission modal in `Chat.tsx` (`permissionQueue[0]`) — not the main shell path (`ChatBrowserWorkspaceShell` is session-filtered)
+- Legacy FIFO permission modal in `Chat.tsx` — **fixed**: now session-scoped for display (`permission.sessionId === permissionSessionId`) and approve/deny actions pass `pendingPermission.id` (matching `ChatBrowserWorkspaceShell`), covered by legacy UI regression test (`src/__tests__/Chat.permissionSessionTarget.test.tsx`)
