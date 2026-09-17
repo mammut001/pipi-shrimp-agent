@@ -139,8 +139,9 @@ describe('AutoResearch recovery actions include increase_tool_budget for budget 
     // `increase_tool_budget` action on the failReason.
     const fs = await import('node:fs');
     const path = await import('node:path');
+    // AG-02 PR2b: buildIterationRecoveryActions moved to metricsPhase.
     const source = fs.readFileSync(
-      path.resolve(process.cwd(), 'src/services/autoresearch/loopEngine.ts'),
+      path.resolve(process.cwd(), 'src/services/autoresearch/loopEngine.metricsPhase.ts'),
       'utf8',
     );
     // Must be gated on a tool-budget-exhaustion detector.
