@@ -1241,16 +1241,24 @@
     "title": "Split loopEngine.ts (>1920 LOC)",
     "lane": "I. Architecture Governance",
     "severity": "Governance",
-    "status": "partially fixed",
-    "fixNote": "2026-09-17: AG-02 PR2a shipped — extracted loop preflight phase to loopEngine.preflightPhase.ts (runExperimentLoopPreflight, types, and helpers); removed dead buildDirtyRepoMessage duplicate; preserved R5-02 outer try/finally and clearActiveLoopHandle lifecycle. AG-02 PR2b still open — extract iteration + metrics phases from loopEngine.ts (file still ~1538 LOC over governance cap).",
+    "status": "fixed",
+    "fixNote": "2026-09-17: AG-02 PR2a shipped — extracted loop preflight phase to loopEngine.preflightPhase.ts. 2026-09-17: AG-02 PR2b shipped — extracted iteration phase to loopEngine.iterationPhase.ts and metrics phase helpers to loopEngine.metricsPhase.ts; follow-up split modularized loopEngine.iterationPhase.ts into iterationAbort, iterationPrompt, iterationWorkspace, and iterationFailure so every extracted .ts is ≤800 LOC (hard governance limit); preserved R5-02 outer try/finally and clearActiveLoopHandle lifecycle in startExperimentLoop; loopEngine.ts and all extracted modules now under the 800 LOC governance cap.",
     "whyItMatters": "AutoResearch core exceeds hard limit; aligns with R5-02",
     "files": [
       "src/services/autoresearch/loopEngine.ts",
-      "src/services/autoresearch/loopEngine.preflightPhase.ts"
+      "src/services/autoresearch/loopEngine.preflightPhase.ts",
+      "src/services/autoresearch/loopEngine.iterationPhase.ts",
+      "src/services/autoresearch/loopEngine.iterationAbort.ts",
+      "src/services/autoresearch/loopEngine.iterationPrompt.ts",
+      "src/services/autoresearch/loopEngine.iterationWorkspace.ts",
+      "src/services/autoresearch/loopEngine.iterationFailure.ts",
+      "src/services/autoresearch/loopEngine.metricsPhase.ts"
     ],
-    "smallestPrScope": "PR2a done (preflight); PR2b: extract iteration + metrics phases",
+    "smallestPrScope": "PR2a+PR2b done (preflight, iteration, metrics)",
     "tests": [
       "loopEngine.preflightPhase.test.ts",
+      "loopEngine.iterationPhase.test.ts",
+      "loopEngine.metricsPhase.test.ts",
       "loopEnginePreflightAbort.test.ts",
       "loopEngine.integration.test.ts"
     ],
