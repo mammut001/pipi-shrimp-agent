@@ -46,4 +46,4 @@ src/store/chat/chatToolExecution.ts        # enqueuePermissionInUI({ sessionId: 
 - Truncated replies / Project Folder UX / Danger defaults (scout leftovers)
 - Playwright mega-framework; OTel; durable half-tool resume
 - Selected-session stream chrome (`streamingContent` / `streamingReasoning` / `isStreaming` / `streamingTimeoutId`) remains a single selected-session UI surface (by design); background turns update their own message + per-session module buffer only
-- Legacy FIFO permission modal in `Chat.tsx` (`permissionQueue[0]`) — not the main shell path (`ChatBrowserWorkspaceShell` is session-filtered)
+- Legacy FIFO permission modal in `Chat.tsx` — **fixed**: now session-filtered (`permission.sessionId === permissionSessionId`) matching `ChatBrowserWorkspaceShell`

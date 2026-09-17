@@ -64,11 +64,13 @@ export function Chat() {
     );
   }, [currentSessionData?.messages, activeConfigId, apiConfigs, getModelPricing, sessionTokenUsage]);
 
-  // Use precise selectors so each field has its own subscription, guaranteeing
-  // the modal renders as soon as the queue changes (avoids stale-ref issues).
-  // permissionQueue is FIFO — we always show the front item.
+  // Permission modal state (Ask mode) — session-scoped: only show the selected
+  // session's pending approval. Other sessions' promises stay unresolved in queue.
   const permissionQueue = useUIStore((s) => s.permissionQueue);
-  const pendingPermission = permissionQueue[0];   // undefined when queue is empty
+  const permissionSessionId = useChatStore((s) => s.currentSessionId);
+  const pendingPermission = permissionQueue.find(
+    (permission) => permission.sessionId === permissionSessionId,
+  );
   const resolvePermissionRequest = useUIStore((s) => s.resolvePermissionRequest);
   const addNotification = useUIStore((s) => s.addNotification);
 
