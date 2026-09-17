@@ -30,7 +30,7 @@
 | R10-10 | Medium | `taskDiagnosticsWiring.ts` | 无测 | swarm → diagnostics sync |
 | R10-11 | Medium | `uiStoreMigration.test.ts` | permission shape 无效 | 正确 `_resolve` + ledger |
 | R10-12 | Medium | `useResponsiveLayout.ts` | 无测 | resize 模拟 |
-| R10-13 | Medium | `useChatMessageScroll.ts` | 无测（无 @testing-library/react） | 纯 DOM mock 或加 devDep |
+| R10-13 | Medium | `useChatMessageScroll.ts` | ✅ sample 2026-09-17（INFRA-01 `useChatMessageScroll.test.tsx`） | RTL renderHook |
 | R10-14 | Medium | `TelegramSettings.tsx` | 无测 | validate/connect flow |
 | R10-15 | Low | `pages/Skill.tsx` | 无测 | smoke |
 | R10-16 | Low | `website/src` | 0 tests | changelog.ts 单元测 |

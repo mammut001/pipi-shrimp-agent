@@ -129,7 +129,7 @@ This audit included the newly added **scroll-to-bottom** feature (`useChatMessag
 
 - **R1-11**: debounce timer not cleared on unmount — **fixed**
 - **R1-16**: `displayMessages` vs `visibleMessages` — expanding history does not trigger scroll-to-bottom
-- **R10-13**: hook has no unit tests (project lacks `@testing-library/react`)
+- **R10-13**: ✅ sample hook tests via INFRA-01 (2026-09-17; `@testing-library/react` + companions)
 
 ## Documentation conventions
 
