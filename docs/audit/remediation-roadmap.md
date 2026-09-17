@@ -121,7 +121,7 @@ Items remediated per [README remediation section](./README.md#修复进展remedi
 | ----- | ----- |
 | **Lane** | B. Chat Reliability |
 | **Severity** | P1 (treated as P0 UX) |
-| **Status** | `fixed` — needs regression tests |
+| **Status** | `fixed` — regression covered 2026-09-17 (TOP-15-02 / T-02) |
 | **Why it matters** | Users in split mode could not send messages at all |
 | **Affected files** | `src/components/ChatBrowserWorkspaceShell.tsx` |
 | **Smallest PR scope** | RTL or shell render test asserting `ChatInput` in split mode |
@@ -628,7 +628,7 @@ Also see **R4-04–R4-24** (store/workflow cross-cuts) in [round-04](./round-04-
 | # | Test | Audit IDs | Status |
 | --- | ---- | --------- | ------ |
 | 1 | Session switch streaming isolation | R1-01, R1-02 | **fixed** 2026-09-17 (TOP-15-01 / T-01; soak knife-3: no cancel-on-switch, owning-session writes, Stop explicit) |
-| 2 | Shell split layout + ChatInput | R1-03 | test gap only |
+| 2 | Shell split layout + ChatInput | R1-03 | ✅ Fixed 2026-09-17 (TOP-15-02 / T-02) |
 | 3 | `useChatMessageScroll` debounce/unmount | R1-11, R10-13 | sample fixed 2026-09-17 (`useChatMessageScroll.test.tsx`) |
 | 4 | `listenerGuard` ref-count order | R4-01 | test gap only |
 | 5 | `QueryEngine` tool_batch timeout | R4-03 | test gap only |
