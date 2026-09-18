@@ -43,6 +43,9 @@ const CopyableCommand: React.FC<CopyableCommandProps> = ({ label, command }) => 
   );
 };
 
+export const LINUX_CHROME_DEBUG_COMMAND =
+  'google-chrome --remote-debugging-port=9222 --remote-debugging-address=127.0.0.1 --user-data-dir="$HOME/.config/pipi-shrimp/chrome-debug-profile" --no-first-run --no-default-browser-check --no-sandbox --disable-dev-shm-usage --enable-unsafe-swiftshader about:blank';
+
 interface Props {
   onClose: () => void;
 }
@@ -171,7 +174,7 @@ export const CdpConnectorModal: React.FC<Props> = ({ onClose }) => {
               />
               <CopyableCommand
                 label="Linux (终端)"
-                command={`google-chrome --remote-debugging-port=9222 --user-data-dir="$HOME/.config/pipi-shrimp/chrome-debug-profile" --no-first-run --no-default-browser-check about:blank`}
+                command={LINUX_CHROME_DEBUG_COMMAND}
               />
             </div>
             <button

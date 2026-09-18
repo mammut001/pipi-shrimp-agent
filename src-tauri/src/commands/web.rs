@@ -425,6 +425,26 @@ async fn chrome_debug_port_ready() -> bool {
         .is_ok()
 }
 
+/// Builds Chrome/Chromium launch arguments for Linux environments.
+/// In containerized/box desktop environments, Chrome remote debugging requires
+/// --no-sandbox and --disable-dev-shm-usage to stay healthy and avoid shared memory crashes.
+/// --remote-debugging-address=127.0.0.1 binds explicitly to localhost.
+/// --enable-unsafe-swiftshader provides software rendering fallback when hardware GPU is unavailable.
+#[cfg(any(test, not(any(target_os = "macos", target_os = "windows"))))]
+fn linux_chrome_debug_args(debug_profile: &str) -> Vec<String> {
+    vec![
+        "--remote-debugging-port=9222".to_string(),
+        "--remote-debugging-address=127.0.0.1".to_string(),
+        format!("--user-data-dir={}", debug_profile),
+        "--no-first-run".to_string(),
+        "--no-default-browser-check".to_string(),
+        "--no-sandbox".to_string(),
+        "--disable-dev-shm-usage".to_string(),
+        "--enable-unsafe-swiftshader".to_string(),
+        "about:blank".to_string(),
+    ]
+}
+
 async fn ensure_chrome_debug_process(timeout: Duration) -> Result<ChromeDebugLaunchOutcome, String> {
     if chrome_debug_port_ready().await {
         return Ok(ChromeDebugLaunchOutcome::DebugPortReady);
@@ -516,16 +536,12 @@ async fn ensure_chrome_debug_process(timeout: Duration) -> Result<ChromeDebugLau
             "chromium-browser",
         ];
 
+        let args = linux_chrome_debug_args(&debug_profile);
+
         let mut spawned = false;
         for cmd in &commands {
             match std::process::Command::new(cmd)
-                .args([
-                    "--remote-debugging-port=9222",
-                    &format!("--user-data-dir={}", debug_profile),
-                    "--no-first-run",
-                    "--no-default-browser-check",
-                    "about:blank",
-                ])
+                .args(&args)
                 .spawn()
             {
                 Ok(_) => {
@@ -1282,5 +1298,20 @@ mod tests {
         harness_shutdown?;
         server_shutdown?;
         Ok(())
+    }
+
+    #[test]
+    fn test_linux_chrome_debug_args_includes_sandbox_and_debug_flags() {
+        let profile = "/home/user/.config/pipi-shrimp/chrome-debug-profile";
+        let args = linux_chrome_debug_args(profile);
+        assert!(args.contains(&"--remote-debugging-port=9222".to_string()));
+        assert!(args.contains(&"--remote-debugging-address=127.0.0.1".to_string()));
+        assert!(args.contains(&format!("--user-data-dir={}", profile)));
+        assert!(args.contains(&"--no-first-run".to_string()));
+        assert!(args.contains(&"--no-default-browser-check".to_string()));
+        assert!(args.contains(&"--no-sandbox".to_string()));
+        assert!(args.contains(&"--disable-dev-shm-usage".to_string()));
+        assert!(args.contains(&"--enable-unsafe-swiftshader".to_string()));
+        assert_eq!(args.last().map(|s| s.as_str()), Some("about:blank"));
     }
 }
