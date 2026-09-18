@@ -120,7 +120,18 @@ export async function inspectBrowserState(): Promise<RawBrowserInspection> {
  * Navigate to a specific URL in the browser window
  */
 export async function browserNavigate(url: string): Promise<string> {
-  return invoke<string>('browser_navigate', { url });
+  try {
+    return await invoke<string>('browser_navigate', { url });
+  } catch (error) {
+    try {
+      return await invoke<string>('navigate_and_wait', {
+        url,
+        waitSelector: null,
+      });
+    } catch (cdpError) {
+      throw cdpError || error;
+    }
+  }
 }
 
 /**

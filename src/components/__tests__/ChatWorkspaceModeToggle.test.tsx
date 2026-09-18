@@ -24,9 +24,9 @@ describe('ChatWorkspaceModeToggle', () => {
 
     expect(getByTestId('chat-workspace-mode-toggle')).toBeTruthy();
     expect(getByRole('button', { name: 'nav.chat' }).getAttribute('aria-pressed')).toBe('true');
-    expect(getByRole('button', { name: 'common.preview' }).getAttribute('aria-pressed')).toBe('false');
+    expect(getByRole('button', { name: 'chat.workspacePreviewTab' }).getAttribute('aria-pressed')).toBe('false');
 
-    fireEvent.click(getByRole('button', { name: 'common.preview' }));
+    fireEvent.click(getByRole('button', { name: 'chat.workspacePreviewTab' }));
     expect(onChange).toHaveBeenCalledWith('preview');
   });
 
@@ -40,7 +40,7 @@ describe('ChatWorkspaceModeToggle', () => {
       }),
     );
 
-    const preview = getByRole('button', { name: 'common.preview' }) as HTMLButtonElement;
+    const preview = getByRole('button', { name: 'chat.workspacePreviewTab' }) as HTMLButtonElement;
     expect(preview.disabled).toBe(true);
     fireEvent.click(preview);
     expect(onChange).not.toHaveBeenCalled();
@@ -57,7 +57,7 @@ describe('ChatWorkspaceModeToggle', () => {
     );
 
     expect(getByRole('button', { name: 'nav.chat' }).getAttribute('aria-pressed')).toBe('false');
-    expect(getByRole('button', { name: 'common.preview' }).getAttribute('aria-pressed')).toBe('true');
+    expect(getByRole('button', { name: 'chat.workspacePreviewTab' }).getAttribute('aria-pressed')).toBe('true');
 
     fireEvent.click(getByRole('button', { name: 'nav.chat' }));
     expect(onChange).toHaveBeenCalledWith('chat');

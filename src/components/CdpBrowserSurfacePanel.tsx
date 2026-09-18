@@ -1,7 +1,8 @@
+import { useEffect, useRef, useState } from 'react';
 import { useBrowserAgentStore, useCdpStore } from '@/store';
 import { useBrowserObservabilityStore } from '@/store/browserObservabilityStore';
 import { t } from '@/i18n';
-import { showBrowserWindow } from '@/utils/browserCommands';
+import { browserNavigate, showBrowserWindow } from '@/utils/browserCommands';
 import { resolveCdpBrowserDisplayState } from '@/utils/cdpBrowserDisplayState';
 
 interface CdpBrowserSurfacePanelProps {
@@ -53,6 +54,65 @@ export function CdpBrowserSurfacePanel({
   const recentLogs = logs.slice(variant === 'expanded' ? -8 : -3);
   const screenshotSrc = resolveScreenshotSrc(latestPageState?.screenshot?.value);
 
+  const [urlInput, setUrlInput] = useState(displayState.displayUrl || '');
+  const [isDirty, setIsDirty] = useState(false);
+  const [isNavigating, setIsNavigating] = useState(false);
+  const [navError, setNavError] = useState<string | null>(null);
+  const prevDisplayUrlRef = useRef(displayState.displayUrl);
+
+  useEffect(() => {
+    const currentDisplayUrl = displayState.displayUrl || '';
+    const previousDisplayUrl = prevDisplayUrlRef.current || '';
+
+    if (currentDisplayUrl !== previousDisplayUrl) {
+      if (!isDirty || !urlInput.trim() || urlInput === previousDisplayUrl) {
+        setUrlInput(currentDisplayUrl);
+        setIsDirty(false);
+      }
+      prevDisplayUrlRef.current = displayState.displayUrl;
+    }
+  }, [displayState.displayUrl, isDirty, urlInput]);
+
+  const handleUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setNavError(null);
+    const value = e.target.value;
+    setUrlInput(value);
+    setIsDirty(value !== (displayState.displayUrl || ''));
+  };
+
+  const handleNavigate = async () => {
+    const rawUrl = urlInput.trim();
+    if (!rawUrl || !displayState.connected || isNavigating) {
+      return;
+    }
+
+    const effectiveUrl = rawUrl.startsWith('http://') || rawUrl.startsWith('https://')
+      ? rawUrl
+      : `https://${rawUrl}`;
+
+    setIsNavigating(true);
+    setNavError(null);
+
+    try {
+      await browserNavigate(effectiveUrl);
+      setUrlInput(effectiveUrl);
+      setIsDirty(false);
+      await refreshCdpRuntimeState();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setNavError(message || t('browser.surface.navigateFailed'));
+    } finally {
+      setIsNavigating(false);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      void handleNavigate();
+    }
+  };
+
   const handleOpenChrome = async () => {
     try {
       await showBrowserWindow();
@@ -65,6 +125,7 @@ export function CdpBrowserSurfacePanel({
     await refreshCdpRuntimeState();
   };
 
+  const isNavigateDisabled = !displayState.connected || !urlInput.trim() || isNavigating;
   const paddingClass = variant === 'expanded' ? 'p-6' : 'p-3';
   const titleClass = variant === 'expanded' ? 'text-lg' : 'text-sm';
 
@@ -98,6 +159,47 @@ export function CdpBrowserSurfacePanel({
               ? t('browser.status.opening')
               : t('browser.surface.cdpDisconnected')}
         </span>
+      </div>
+
+      <div className={`mt-3 rounded-lg border border-gray-200 bg-white ${variant === 'expanded' ? 'p-3' : 'p-2'}`}>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void handleNavigate();
+          }}
+          className="flex flex-col gap-1.5"
+        >
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={urlInput}
+              onChange={handleUrlChange}
+              onKeyDown={handleKeyDown}
+              placeholder={displayState.displayUrl || t('browserMiniPreview.enterTargetUrl')}
+              aria-label={t('browser.url')}
+              disabled={isNavigating}
+              className="flex-1 min-w-0 rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs text-gray-800 placeholder-gray-400 focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400 disabled:bg-gray-100 disabled:text-gray-400"
+              data-testid="cdp-surface-url-input"
+            />
+            <button
+              type="submit"
+              disabled={isNavigateDisabled}
+              className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium text-white transition-colors ${
+                isNavigateDisabled
+                  ? 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  : 'bg-blue-600 hover:bg-blue-700 active:bg-blue-800'
+              }`}
+              data-testid="cdp-surface-navigate-button"
+            >
+              {isNavigating ? t('browser.surface.navigating') : t('browser.surface.navigate')}
+            </button>
+          </div>
+          {navError && (
+            <p className="text-[11px] text-red-600 break-words" role="alert" data-testid="cdp-surface-nav-error">
+              {navError}
+            </p>
+          )}
+        </form>
       </div>
 
       <div className={`mt-4 grid gap-3 ${variant === 'expanded' ? 'grid-cols-2' : 'grid-cols-1'}`}>

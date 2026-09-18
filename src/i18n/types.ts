@@ -158,6 +158,7 @@ export type TranslationKeys = {
   'chat.total': string;
   'chat.noMessages': string;
   'chat.startConversation': string;
+  'chat.workspacePreviewTab': string;
   'chat.workspaceView': string;
   'chat.workspaceViewDescription': string;
   'chat.conversationPanel': string;
@@ -664,6 +665,9 @@ export type TranslationKeys = {
   'browser.surface.cdpTaskFailedDescription': string;
   'browser.surface.resyncCdpState': string;
   'browser.surface.noCdpSession': string;
+  'browser.surface.navigate': string;
+  'browser.surface.navigating': string;
+  'browser.surface.navigateFailed': string;
   'browser.loginRequired': string;
   'browser.loggedIn': string;
   'browser.notLoggedIn': string;
