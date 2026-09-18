@@ -19,7 +19,7 @@ export function ChatWorkspaceModeToggle({
       className={workspacePreviewChrome.segmented}
       data-testid="chat-workspace-mode-toggle"
       role="group"
-      aria-label={`${t('nav.chat')} / ${t('common.preview')}`}
+      aria-label={`${t('nav.chat')} / ${t('chat.workspacePreviewTab')}`}
     >
       <button
         type="button"
@@ -50,7 +50,7 @@ export function ChatWorkspaceModeToggle({
         <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17v-6h13M9 5h13M3 5h.01M3 11h.01M3 17h.01" />
         </svg>
-        {t('common.preview')}
+        {t('chat.workspacePreviewTab')}
       </button>
     </div>
   );
