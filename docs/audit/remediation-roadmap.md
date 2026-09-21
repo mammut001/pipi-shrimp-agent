@@ -33,7 +33,7 @@ Earlier post-audit fixes (still need regression tests): R1-01–03, R4-01–03, 
 | **High — AutoResearch** | R5-02 preflight abort controller leak ✅ |
 | **Test infra** | INFRA-01 `@testing-library/react`, TOP-15 regression suites |
 | **Architecture** | AG-02 `loopEngine.ts` (**PR2a+PR2b** shipped 2026-09-17 — loopEngine.ts & iterationPhase split modules all ≤800 LOC), AG-05 `browserAgentStore.ts`, AG-10 `web.rs` splits |
-| **Rust High (round-02)** | R2-05 typst resolve_path ✅, R2-06 backup sibling-prefix ✅, R2-07 blocked exact roots ✅, R2-08 Autoresearch bypass network ✅, R2-09 SSHPASS env-not-cmdline ✅, R2-10–R2-12 open |
+| **Rust High (round-02)** | R2-05 typst resolve_path ✅, R2-06 backup sibling-prefix ✅, R2-07 blocked exact roots ✅, R2-08 Autoresearch bypass network ✅, R2-09 SSHPASS env-not-cmdline ✅, R2-10 CDP navigate scheme allowlist ✅, R2-11–R2-12 open |
 
 **Open P0/Critical in backlog:** 0.
 
@@ -562,7 +562,7 @@ Open **High** items (Critical covered in Lane A):
 | R2-07 | `/sys` exact root not blocked | High | `path_security.rs` | Exact roots without trailing slash **fixed** 2026-09-21 | `test_blocked_sys_directory` | No |
 | R2-08 | Autoresearch bypass skips network | High | `execution_policy.rs` | Drop AutoresearchPhase from early bypass **fixed** 2026-09-21 | `test_bypass_curl_rejected` | No |
 | R2-09 | SSHPASS in process list | High | `ssh_bridge.rs` | Pass SSHPASS via Command.env **fixed** 2026-09-21 | `test_cmdline_does_not_contain_password` | No |
-| R2-10 | CDP goto no scheme allowlist | High | `navigate.rs` | Deny `file://` | scheme table test | No |
+| R2-10 | CDP goto no scheme allowlist | High | `actions/navigate.rs` | Deny `file://` **fixed** 2026-09-21 | `test_file_scheme_rejected` | No |
 | R2-11 | MCP stdio cwd unsandboxed | High | `mcp/stdio.rs` | validate cwd | `/etc` rejected | No |
 | R2-12 | `mcp_call_tool` no policy | High | `commands/mcp.rs` | Policy wrapper | destructive needs approval | No |
 | R2-13–R2-34 | Medium/Low Rust | Med–Low | various | One per PR | `#[cfg(test)]` | Yes |

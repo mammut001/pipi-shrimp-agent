@@ -22,7 +22,7 @@
 | R2-07 | High | `path_security.rs:204-218` | `/sys` 等精确根路径可能不匹配 blocked prefix | `validate_path("/sys")` |
 | R2-08 | High | `execution_policy.rs:396-403` | Autoresearch bypass 跳过网络检查 | bypass + curl 应确认或拒绝 |
 | R2-09 | High | `ssh_bridge.rs:134-137` | `SSHPASS` 在进程列表可见 | 密码不出现在 cmdline |
-| R2-10 | High | `browser/navigate.rs:42-48` | CDP goto 无 scheme allowlist | `file://` 拒绝 |
+| R2-10 | High | `browser/actions/navigate.rs` | CDP goto 无 scheme allowlist | `file://` 拒绝 |
 | R2-11 | High | `mcp/stdio.rs:116-118` | MCP stdio `cwd` 无沙箱 | `cwd: /etc` 拒绝 |
 | R2-12 | High | `commands/mcp.rs:79-88` | `mcp_call_tool` 无策略层 | 破坏性 MCP 需审批 |
 
