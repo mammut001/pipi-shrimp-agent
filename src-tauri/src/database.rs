@@ -707,7 +707,9 @@ fn validate_backup_path(backup_path: &Path) -> SqliteResult<PathBuf> {
         .canonicalize()
         .map_err(|e| storage_error(format!("Failed to access backup directory: {}", e)))?;
 
-    if !canonical_backup_path.starts_with(&backup_dir) {
+    // AUDIT-FIX [R2-06] — Use `is_within_dir` so a sibling like
+    // `{backup_dir}-evil/...` cannot pass a naive prefix / starts_with check.
+    if !crate::commands::path_security::is_within_dir(&canonical_backup_path, &backup_dir) {
         return Err(storage_error(format!(
             "Backup path {} is outside the managed backup directory",
             backup_path.display()
@@ -2336,6 +2338,50 @@ mod tests {
 
         std::env::remove_var("PIPI_SHRIMP_DATA_DIR");
         fs::remove_dir_all(&temp_dir).expect("remove temp data dir");
+    }
+
+    #[test]
+    fn backup_sibling_prefix() {
+        with_temp_data_dir(|_| {
+            let backup_dir = get_backup_directory().expect("backup dir");
+            let backup_dir = backup_dir
+                .canonicalize()
+                .expect("canonicalize backup dir");
+
+            // Accepted: real file under the managed backup directory.
+            let inside = backup_dir.join("db-20240101-000000-v1.sqlite");
+            fs::write(&inside, b"ok").expect("write inside backup");
+            let accepted = validate_backup_path(&inside);
+            assert!(
+                accepted.is_ok(),
+                "path under backup dir must be accepted: {:?}",
+                accepted
+            );
+
+            // Rejected: sibling-prefix escape (`backups-evil/...`).
+            let parent = backup_dir.parent().expect("backup parent");
+            let evil_dir = parent.join(format!(
+                "{}-evil",
+                backup_dir
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .expect("backup dir name")
+            ));
+            fs::create_dir_all(&evil_dir).expect("create evil sibling dir");
+            let evil = evil_dir.join("db-evil.sqlite");
+            fs::write(&evil, b"evil").expect("write evil backup");
+            let rejected = validate_backup_path(&evil);
+            assert!(
+                rejected.is_err(),
+                "sibling-prefix path must be rejected; got {:?}",
+                rejected
+            );
+            let err = rejected.unwrap_err().to_string();
+            assert!(
+                err.contains("outside the managed backup directory"),
+                "unexpected error message: {err}"
+            );
+        });
     }
 
     #[test]
