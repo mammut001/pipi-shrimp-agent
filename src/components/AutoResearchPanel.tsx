@@ -335,21 +335,26 @@ export function AutoResearchPanel() {
     }
   }, [selectedRun]);
 
+  // Always copy/download through redaction so callers cannot ship raw secrets.
+  const copyRedactedText = useCallback((text: string) => {
+    void writeClipboardText(redactSensitiveText(text)).catch(() => undefined);
+  }, []);
+
   const handleCopyLiveOutput = useCallback(() => {
-    if (!visibleLiveOutput) {
+    if (!displayedLiveOutput) {
       return;
     }
-    void writeClipboardText(visibleLiveOutput)
+    void writeClipboardText(displayedLiveOutput)
       .then(() => showLiveOutputFeedback('copied'))
       .catch(() => undefined);
-  }, [showLiveOutputFeedback, visibleLiveOutput]);
+  }, [displayedLiveOutput, showLiveOutputFeedback]);
 
   const handleDownloadLiveOutput = useCallback(() => {
-    if (!visibleLiveOutput || !selectedRun) {
+    if (!displayedLiveOutput || !selectedRun) {
       return;
     }
-    downloadTextFile(buildAutoResearchLiveOutputFilename(selectedRun), visibleLiveOutput);
-  }, [selectedRun, visibleLiveOutput]);
+    downloadTextFile(buildAutoResearchLiveOutputFilename(selectedRun), displayedLiveOutput);
+  }, [displayedLiveOutput, selectedRun]);
 
   const handleClearLiveOutput = useCallback(() => {
     setClearedLiveChars(normalizedLiveOutput.length);
@@ -360,8 +365,8 @@ export function AutoResearchPanel() {
     if (!allEventLines) {
       return;
     }
-    void writeClipboardText(allEventLines).catch(() => undefined);
-  }, [allEventLines]);
+    copyRedactedText(allEventLines);
+  }, [allEventLines, copyRedactedText]);
 
   useEffect(() => {
     if (liveOutputRef.current && liveExpanded) {
@@ -628,7 +633,7 @@ export function AutoResearchPanel() {
                     </div>
                     <RowCopyButton
                       onClick={() => {
-                        void writeClipboardText(formatAutoResearchEventLine(event)).catch(() => undefined);
+                        copyRedactedText(formatAutoResearchEventLine(event));
                       }}
                       label={t('autoresearch.recentEvents.copyOne')}
                       dataCopyTarget="recent-event-line"

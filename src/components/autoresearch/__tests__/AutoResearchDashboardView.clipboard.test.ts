@@ -26,6 +26,16 @@ jest.mock('@/services/autoresearch/demoRun', () => ({
   isDemoRun: () => false,
 }));
 
+const mockDownloadTextFile = jest.fn();
+
+jest.mock('@/utils/clipboard', () => {
+  const actual = jest.requireActual('@/utils/clipboard');
+  return {
+    ...actual,
+    downloadTextFile: (...args: unknown[]) => mockDownloadTextFile(...args),
+  };
+});
+
 beforeAll(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 });
@@ -99,6 +109,7 @@ describe('AutoResearchDashboardView clipboard actions', () => {
       },
     });
     writeText.mockClear();
+    mockDownloadTextFile.mockClear();
   });
 
   afterEach(() => {
@@ -162,4 +173,80 @@ describe('AutoResearchDashboardView clipboard actions', () => {
     });
     expect(writeText).toHaveBeenNthCalledWith(4, 'line 1\nline 2\nline 3\n');
   });
+
+  it('redacts API key patterns from live output copy, download, and event-line copies', async () => {
+    const secretLive = 'stdout\napi_key=sk-dash-secret-abcdef\nok\n';
+    const secretRun: AutoResearchRunRecord = {
+      ...run,
+      liveOutputExcerpt: secretLive,
+      events: [
+        {
+          id: 'event-secret',
+          runId: 'run-local-1',
+          timestamp: '2026-05-11T10:06:00.000Z',
+          level: 'warn',
+          phase: 'agent_execution',
+          message: 'Request failed with api_key=sk-dash-event-secret-111',
+        },
+      ],
+    };
+
+    const { AutoResearchDashboardView } = await import('../AutoResearchDashboardView');
+
+    await act(async () => {
+      root.render(React.createElement(AutoResearchDashboardView, {
+        run: secretRun,
+        liveOutput: secretLive,
+      }));
+    });
+
+    const timelineButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Timeline');
+    expect(timelineButton).not.toBeNull();
+    await act(async () => {
+      timelineButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const allFilterButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'All');
+    expect(allFilterButton).not.toBeNull();
+    await act(async () => {
+      allFilterButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const copyOneButton = container.querySelector('[data-copy-target="recent-event-line"]') as HTMLButtonElement | null;
+    expect(copyOneButton).not.toBeNull();
+    await act(async () => {
+      copyOneButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const eventPayload = String(writeText.mock.calls[0][0]);
+    expect(eventPayload).toContain('api_key=[redacted]');
+    expect(eventPayload).not.toMatch(/sk-dash-event-secret-111/);
+
+    const debugButton = Array.from(container.querySelectorAll('button')).find((button) => button.textContent === 'Debug');
+    expect(debugButton).not.toBeNull();
+    await act(async () => {
+      debugButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+
+    const copyRawConversationButton = container.querySelector('[data-copy-target="debug-raw-conversation"]') as HTMLButtonElement | null;
+    const downloadButton = container.querySelector('[data-copy-target="live-output-download"]') as HTMLButtonElement | null;
+    expect(copyRawConversationButton).not.toBeNull();
+    expect(downloadButton).not.toBeNull();
+
+    await act(async () => {
+      copyRawConversationButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    const conversationPayload = String(writeText.mock.calls[1][0]);
+    expect(conversationPayload).toBe('stdout\napi_key=[redacted]\nok\n');
+    expect(conversationPayload).not.toMatch(/sk-dash-secret-abcdef/);
+
+    await act(async () => {
+      downloadButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    });
+    expect(mockDownloadTextFile).toHaveBeenCalledWith(
+      'run-local-1-iter-002-live.log',
+      'stdout\napi_key=[redacted]\nok\n',
+    );
+    expect(String(mockDownloadTextFile.mock.calls[0][1])).not.toMatch(/sk-dash-secret-abcdef/);
+  });
+
 });

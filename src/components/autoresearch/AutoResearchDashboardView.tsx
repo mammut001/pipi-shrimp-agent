@@ -519,15 +519,19 @@ export function AutoResearchDashboardView({
     },
   ];
 
+  // Centralize redaction so every copy/download path strips secrets once.
   const handleCopy = (text: string) => {
-    void writeClipboardText(text).catch(() => undefined);
+    void writeClipboardText(redactSensitiveText(text)).catch(() => undefined);
   };
 
   const handleDownload = () => {
     if (!displayedLiveOutput) {
       return;
     }
-    downloadTextFile(buildAutoResearchLiveOutputFilename(run), displayedLiveOutput);
+    downloadTextFile(
+      buildAutoResearchLiveOutputFilename(run),
+      redactSensitiveText(displayedLiveOutput),
+    );
   };
 
   return (
@@ -863,7 +867,7 @@ export function AutoResearchDashboardView({
                     <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#9b9a97]">Raw Conversation</p>
                     <DebugCopyButton
                       label={t('autoresearch.debug.copyRawConversation')}
-                      onClick={() => handleCopy(redactSensitiveText(displayedLiveOutput))}
+                      onClick={() => handleCopy(displayedLiveOutput)}
                       dataCopyTarget="debug-raw-conversation"
                     />
                   </div>
