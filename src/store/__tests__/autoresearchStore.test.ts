@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from '@jest/globals';
 import { AUTORESEARCH_LAST_USED_CONFIG_STORAGE_KEY } from '@/services/autoresearch/defaultConfig';
+import { AUTORESEARCH_HISTORY_STORAGE_KEY } from '@/services/autoresearch/history';
 import {
+  flushAutoResearchPersistOnClose,
   getSelectedAutoResearchRunContext,
   getSelectedAutoResearchRun,
   useAutoResearchStore,
@@ -380,5 +382,132 @@ describe('autoresearchStore history behavior', () => {
     expect(resumedRun?.status).toBe('running');
     expect(resumedRun?.resumeToken?.pendingIteration).toBe(2);
     expect(resumedRun?.events.at(-1)?.message).toContain('resumed from recovery token');
+  });
+
+  it('keeps consecutiveFailures and run.failureCount in lockstep (R5-12)', () => {
+    useAutoResearchStore.getState().initSession({
+      id: 'run-fail-count',
+      maxIterations: 5,
+      metricName: 'val_loss',
+      metricDirection: 'lower',
+      baseline: 0.75,
+      sshConfig: {
+        mode: 'local',
+        host: '',
+        user: '',
+        keyPath: '',
+        port: 22,
+        remoteWorkDir: '/tmp/workdir',
+        authMode: 'agent',
+        password: '',
+      },
+      experimentDir: '/tmp/experiment',
+      sessionFilePath: '/tmp/workdir/session.md',
+      livingDocPath: '/tmp/workdir/runs/run-fail-count/autoresearch.md',
+      agentConfigSnapshot: {
+        configName: 'MiniMax',
+        provider: 'minimax',
+        apiFormat: 'openai',
+        baseUrl: 'https://api.minimaxi.com/v1',
+        model: 'MiniMax-M2.7',
+        keyPreview: 'secret...',
+        keyPresent: true,
+        source: 'settings.activeConfig',
+      },
+    });
+
+    const failedEntry = {
+      iteration: 1,
+      hypothesis: 'bad change',
+      change: 'noop',
+      metricValue: null as number | null,
+      status: 'FAILED' as const,
+      failReason: 'no metrics',
+      reasoning: 'failed',
+      timestamp: new Date().toISOString(),
+      durationMs: 10,
+    };
+
+    // addExperiment alone must NOT bump failureCount (old race with increment).
+    useAutoResearchStore.getState().addExperiment(failedEntry);
+    let state = useAutoResearchStore.getState();
+    expect(state.consecutiveFailures).toBe(0);
+    expect(state.runHistory[0]?.failureCount).toBe(0);
+
+    useAutoResearchStore.getState().incrementConsecutiveFailures();
+    state = useAutoResearchStore.getState();
+    expect(state.consecutiveFailures).toBe(1);
+    expect(state.runHistory[0]?.failureCount).toBe(1);
+
+    useAutoResearchStore.getState().addExperiment({ ...failedEntry, iteration: 2 });
+    useAutoResearchStore.getState().incrementConsecutiveFailures();
+    state = useAutoResearchStore.getState();
+    expect(state.consecutiveFailures).toBe(2);
+    expect(state.runHistory[0]?.failureCount).toBe(2);
+
+    useAutoResearchStore.getState().addExperiment({ ...failedEntry, iteration: 3 });
+    useAutoResearchStore.getState().incrementConsecutiveFailures();
+    state = useAutoResearchStore.getState();
+    expect(state.consecutiveFailures).toBe(3);
+    expect(state.runHistory[0]?.failureCount).toBe(3);
+
+    useAutoResearchStore.getState().resetConsecutiveFailures();
+    state = useAutoResearchStore.getState();
+    expect(state.consecutiveFailures).toBe(0);
+    expect(state.runHistory[0]?.failureCount).toBe(0);
+
+    useAutoResearchStore.getState().incrementConsecutiveFailures();
+    useAutoResearchStore.getState().incrementConsecutiveFailures();
+    useAutoResearchStore.getState().updateBestMetric(0.5);
+    state = useAutoResearchStore.getState();
+    expect(state.consecutiveFailures).toBe(0);
+    expect(state.runHistory[0]?.failureCount).toBe(0);
+  });
+
+  it('flushes history on close even when persist timer is null (R5-13)', () => {
+    useAutoResearchStore.getState().initSession({
+      id: 'run-close-flush',
+      maxIterations: 3,
+      metricName: 'val_loss',
+      metricDirection: 'lower',
+      baseline: 0.8,
+      sshConfig: {
+        mode: 'local',
+        host: '',
+        user: '',
+        keyPath: '',
+        port: 22,
+        remoteWorkDir: '/tmp/workdir',
+        authMode: 'agent',
+        password: '',
+      },
+      experimentDir: '/tmp/experiment',
+      sessionFilePath: '/tmp/workdir/session.md',
+      livingDocPath: '/tmp/workdir/runs/run-close-flush/autoresearch.md',
+      agentConfigSnapshot: {
+        configName: 'MiniMax',
+        provider: 'minimax',
+        apiFormat: 'openai',
+        baseUrl: 'https://api.minimaxi.com/v1',
+        model: 'MiniMax-M2.7',
+        keyPreview: 'secret...',
+        keyPresent: true,
+        source: 'settings.activeConfig',
+      },
+    });
+
+    // Simulate post-failed-persist close: debounce timer already null (or
+    // never armed), storage empty, but in-memory runHistory still has data.
+    storage.data = {};
+    expect(storage.getItem(AUTORESEARCH_HISTORY_STORAGE_KEY)).toBeNull();
+    expect(useAutoResearchStore.getState().runHistory).toHaveLength(1);
+
+    flushAutoResearchPersistOnClose();
+
+    const raw = storage.getItem(AUTORESEARCH_HISTORY_STORAGE_KEY);
+    expect(raw).toBeTruthy();
+    const parsed = JSON.parse(raw!);
+    expect(parsed.runs?.[0]?.id).toBe('run-close-flush');
+    expect(parsed.selectedRunId).toBe('run-close-flush');
   });
 });

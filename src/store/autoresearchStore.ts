@@ -901,10 +901,15 @@ export const useAutoResearchStore = create<AutoResearchStore>((set, get) => ({
 
       const shouldUpdateBest = entry.metricValue !== null && isBetterMetric(state.metricDirection, entry.metricValue, run.bestMetricValue);
 
+      // AUDIT-FIX [R5-12]: Do not mutate `failureCount` here.
+      // `incrementConsecutiveFailures` / `resetConsecutiveFailures` (and
+      // `updateBestMetric`'s reset path) are the single source of truth for
+      // both the live `consecutiveFailures` counter and the persisted
+      // `run.failureCount`. Updating failureCount from experiment status
+      // here raced those helpers and could disagree for auto-stop/backoff.
       return {
         ...run,
         updatedAt: entry.timestamp,
-        failureCount: entry.status === 'FAILED' ? run.failureCount + 1 : 0,
         iterations: nextIterations,
         bestMetricValue: shouldUpdateBest ? entry.metricValue : run.bestMetricValue ?? null,
         bestIteration: shouldUpdateBest ? entry.iteration : run.bestIteration,
@@ -1030,6 +1035,8 @@ export const useAutoResearchStore = create<AutoResearchStore>((set, get) => ({
     })),
   })),
 
+  // AUDIT-FIX [R5-12]: Keep persisted failureCount in lockstep when
+  // resetting consecutiveFailures on a new best metric.
   updateBestMetric: (value) => set((state) => ({
     bestMetric: value,
     consecutiveFailures: 0,
@@ -1038,6 +1045,7 @@ export const useAutoResearchStore = create<AutoResearchStore>((set, get) => ({
       updatedAt: new Date().toISOString(),
       bestMetricValue: value,
       bestIteration: state.currentIteration || run.bestIteration,
+      failureCount: 0,
     })),
   })),
 
@@ -1075,14 +1083,21 @@ export const useAutoResearchStore = create<AutoResearchStore>((set, get) => ({
     })),
   })),
 
-  incrementConsecutiveFailures: () => set((state) => ({
-    consecutiveFailures: state.consecutiveFailures + 1,
-    ...withActiveRunUpdate(state, (run) => ({
-      ...run,
-      updatedAt: new Date().toISOString(),
-      failureCount: state.consecutiveFailures + 1,
-    })),
-  })),
+  // AUDIT-FIX [R5-12]: Source of truth for stop/backoff counters.
+  // Live `consecutiveFailures` and persisted `run.failureCount` are updated
+  // together so auto-stop (`consecutiveFailures >= 3`) and resume
+  // (`activateHistoricalRun` → consecutiveFailures = failureCount) cannot diverge.
+  incrementConsecutiveFailures: () => set((state) => {
+    const next = state.consecutiveFailures + 1;
+    return {
+      consecutiveFailures: next,
+      ...withActiveRunUpdate(state, (run) => ({
+        ...run,
+        updatedAt: new Date().toISOString(),
+        failureCount: next,
+      })),
+    };
+  }),
 
   resetConsecutiveFailures: () => set((state) => ({
     consecutiveFailures: 0,
@@ -1284,6 +1299,33 @@ useAutoResearchStore.subscribe((state) => {
 });
 
 /**
+ * AUDIT-FIX [R5-13]: Flush current AutoResearch history/config on close
+ * regardless of debounce timer state.
+ *
+ * Previously both `onCloseRequested` and `beforeunload` only flushed when
+ * `persistTimer` was non-null. After a debounced persist attempt failed
+ * (quota / storage-broken), the timer was already cleared to null, so
+ * close skipped the retry and in-memory metrics were lost. Always clear
+ * any pending timer, then write the latest `getState()` snapshot.
+ */
+export function flushAutoResearchPersistOnClose(): void {
+  // No `window` guard: unit tests run in node with a localStorage mock, and
+  // persistAutoResearchHistory / persistAutoResearchLastUsedConfig already
+  // no-op when storage is unavailable (SSR / broken webview).
+  if (persistTimer) {
+    clearTimeout(persistTimer);
+    persistTimer = null;
+  }
+  try {
+    const state = useAutoResearchStore.getState();
+    persistAutoResearchHistory(state.runHistory, state.selectedRunId);
+    persistAutoResearchLastUsedConfig(state.lastUsedConfig);
+  } catch (flushError) {
+    console.error('Failed to flush AutoResearch history on close:', flushError);
+  }
+}
+
+/**
  * Flush any pending debounced AutoResearch writes BEFORE the window
  * actually closes.
  *
@@ -1303,17 +1345,7 @@ if (typeof window !== 'undefined') {
     try {
       const { getCurrentWindow } = await import('@tauri-apps/api/window');
       await getCurrentWindow().onCloseRequested(async (event) => {
-        if (persistTimer) {
-          clearTimeout(persistTimer);
-          persistTimer = null;
-          try {
-            const state = useAutoResearchStore.getState();
-            persistAutoResearchHistory(state.runHistory, state.selectedRunId);
-            persistAutoResearchLastUsedConfig(state.lastUsedConfig);
-          } catch (flushError) {
-            console.error('Failed to flush AutoResearch history on close:', flushError);
-          }
-        }
+        flushAutoResearchPersistOnClose();
         // Do NOT preventDefault — let the close proceed. The flush above is
         // synchronous (localStorage.setItem) so the webview can tear down
         // safely immediately after. If we ever migrate to an async store
@@ -1338,14 +1370,9 @@ if (typeof window !== 'undefined') {
   // webview may be torn down before the JS handler finishes). The
   // P1#3 fix adds a `tauri://close-requested` listener as a more
   // reliable alternative.
+  // AUDIT-FIX [R5-13]: Always flush — see flushAutoResearchPersistOnClose.
   window.addEventListener('beforeunload', () => {
-    if (persistTimer) {
-      clearTimeout(persistTimer);
-      persistTimer = null;
-      const state = useAutoResearchStore.getState();
-      persistAutoResearchHistory(state.runHistory, state.selectedRunId);
-      persistAutoResearchLastUsedConfig(state.lastUsedConfig);
-    }
+    flushAutoResearchPersistOnClose();
   });
 
   // Surface localStorage quota / persist failures as a visible run event so
