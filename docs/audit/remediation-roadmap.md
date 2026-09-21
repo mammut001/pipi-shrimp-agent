@@ -532,7 +532,7 @@ Items remediated per [README remediation section](./README.md#修复进展remedi
 | R5-13 | Close flush on failed persist | Low | open | Lost metrics on close | `autoresearchStore.ts` | Flush regardless of timer | close after fail | Yes | No | No |
 | R5-14 | chatAdapter signal test gap | — | test gap only | R5-01 fixed, test thin | `chatAdapter.test.ts` | Add abort test | T-04 | — | — | No |
 | R5-15 | loopEngine integration gaps | — | partially fixed | R5-03/05 fixed; preflight/stop thin | `loopEngine.integration.test.ts` | Add describe blocks | T-05, R5-02 | — | — | No |
-| R5-16 | BootstrapChatView test gap | — | test gap only | SSH/double-start untested | `BootstrapChatView` | New test file | partial+duplicate | — | — | No |
+| R5-16 | BootstrapChatView test gap | — | fixed (tests 2026-09-21) | SSH/double-start untested | `BootstrapChatView` | New tests in BootstrapChatView.test.tsx | SSH fail + double-Start | — | — | No |
 
 ---
 

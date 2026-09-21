@@ -27,7 +27,7 @@ Chinese version: [../round-05-autoresearch.md](../round-05-autoresearch.md)
 | R5-13 | Low | `autoresearchStore.ts:1256-1273` | Close flush only when timer non-null | Flush after failed persist on close | Open |
 | R5-14 | Test-gap | `chatAdapter.test.ts` | No signal propagation test | See R5-01 | Partially addressed |
 | R5-15 | Test-gap | `loopEngine.integration.test.ts` | No stop/preflight/failed-continue tests | See R5-02/03/05 | Partially addressed |
-| R5-16 | Test-gap | `BootstrapChatView` | No SSH failure or double-Start tests | Partial upload + duplicate | Open |
+| R5-16 | Test-gap | `BootstrapChatView` | No SSH failure or double-Start tests | Partial upload + duplicate | ✅ Fixed 2026-09-21 |
 
 ---
 

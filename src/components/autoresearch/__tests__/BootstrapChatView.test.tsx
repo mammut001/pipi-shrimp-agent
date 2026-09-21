@@ -30,6 +30,11 @@ jest.mock('@/services/autoresearch/setupFlow', () => ({
   logAutoResearchSetupFailure: jest.fn(() => 'failed'),
 }));
 
+const mockUploadBootstrapScaffoldWithRollback = jest.fn();
+jest.mock('@/services/autoresearch/bootstrap/uploadBootstrapScaffold', () => ({
+  uploadBootstrapScaffoldWithRollback: (...args: any[]) => mockUploadBootstrapScaffoldWithRollback(...args),
+}));
+
 jest.mock('../BootstrapRecipeBuilder', () => ({
   BootstrapRecipeBuilder: ({ onChange, recipe, onSend, disabled }: { onChange: (r: any) => void; recipe: any; onSend: (val: string) => void; disabled?: boolean }) => (
     <div>
@@ -64,6 +69,8 @@ describe('BootstrapChatView (Guided UI)', () => {
     document.body.appendChild(container);
     root = createRoot(container);
     mockStartAutoResearchRun.mockReset();
+    mockUploadBootstrapScaffoldWithRollback.mockReset();
+    mockUploadBootstrapScaffoldWithRollback.mockResolvedValue({ uploadedPaths: [] });
     mockRunHeadlessAgentTurn.mockReset();
     mockRunHeadlessAgentTurn.mockImplementation(async (input: { signal?: AbortSignal }) => {
       await new Promise((resolve) => setTimeout(resolve, 50));
@@ -942,6 +949,245 @@ describe('BootstrapChatView (Guided UI)', () => {
     expect(errorPanel?.textContent).toContain('AutoResearch is still running');
     expect(errorPanel?.textContent).toContain('Stop the active run before you start a new run');
     expect(container.textContent).not.toMatch(/autoresearch\.bootstrap\.started:/);
+  });
+
+
+  it('surfaces SSH upload/handoff failure and clears bootstrappedAtRef so Start can retry (R5-16)', async () => {
+    // AUDIT-FIX [R5-16]: SSH scaffold upload failure must not start a run and must
+    // clear the handoff lock so the user can click Start again after fixing SSH.
+    mockUploadBootstrapScaffoldWithRollback.mockRejectedValue(new Error('SSH upload failed on file 2'));
+
+    const { persistBootstrapSession } = await import('@/services/autoresearch/bootstrap/bootstrapSessionPersist');
+    persistBootstrapSession({
+      version: 1,
+      recipe: {
+        researchGoal: {
+          goalText: 'SSH handoff failure experiment',
+          taskType: 'beat_baseline',
+          source: 'user',
+        },
+        references: {},
+        baselineAndMetric: {
+          primaryMetric: 'accuracy',
+          direction: 'higher',
+          baselineValue: '0.5',
+          successCriteria: 'Beat 0.5 accuracy.',
+        },
+        workspace: {
+          workDir: '/tmp/r5-16-ssh-fail',
+          folderName: 'r5-16-ssh-fail',
+        },
+        verification: { commands: [] },
+        outputContract: {
+          includeMetrics: true,
+          includeArtifacts: true,
+          includeCommandsRun: true,
+          includeFailureReason: true,
+          includeRemainingRisks: true,
+        },
+      },
+      recipeDirty: false,
+      selectedTemplateId: 'beat-baseline',
+      templatesExpanded: false,
+      hasStarted: true,
+      readyResult: {
+        status: 'ready',
+        createdAt: '2026-09-21T02:00:00.000Z',
+        warnings: [],
+        unresolvedQuestions: [],
+        schemaVersion: 1,
+        plan: {
+          researchGoal: 'SSH handoff failure experiment',
+          successCriteria: 'Beat 0.5 accuracy.',
+          primaryMetric: 'accuracy',
+          direction: 'higher',
+          secondaryMetrics: [],
+          papers: [],
+          baselines: [],
+          scaffold: {
+            templateId: 'python-ml-baseline',
+            workDir: '/tmp/r5-16-ssh-fail',
+            language: 'python',
+            entryCommand: 'python3 train.py',
+            vars: {},
+            files: [
+              { path: 'train.py', purpose: 'train' },
+              { path: 'eval.py', purpose: 'eval' },
+            ],
+          },
+          gitInitialized: true,
+          conversationalTemplateId: 'beat-baseline',
+        },
+      },
+      currentStep: 'ready',
+      observedTools: ['bootstrap_finalize'],
+      warnings: [],
+      iterations: 3,
+      agentLogs: '[SYSTEM] ready\n',
+      handoffSummary: null,
+      lastCompiledPrompt: 'prompt',
+      missingFinalize: false,
+      error: null,
+    });
+
+    act(() => {
+      root.unmount();
+    });
+    root = createRoot(container);
+    act(() => {
+      root.render(
+        <BootstrapChatView
+          sshConfig={{
+            mode: 'ssh',
+            host: '10.0.0.8',
+            user: 'ubuntu',
+            port: 22,
+            remoteWorkDir: '~/r5-16-ssh-fail',
+            authMode: 'agent',
+            keyPath: '',
+            password: '',
+          }}
+        />,
+      );
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const startBtn = container.querySelector('[data-testid="bootstrap-start-handoff"]') as HTMLButtonElement;
+    expect(startBtn).toBeTruthy();
+
+    await act(async () => {
+      startBtn.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(mockUploadBootstrapScaffoldWithRollback).toHaveBeenCalledTimes(1);
+    expect(mockStartAutoResearchRun).not.toHaveBeenCalled();
+    const errorPanel = container.querySelector('[data-testid="bootstrap-error-panel"]');
+    expect(errorPanel?.textContent).toContain('failed');
+    expect(container.textContent).not.toMatch(/autoresearch\.bootstrap\.started:/);
+
+    // Failure clears bootstrappedAtRef — a second Start must retry upload.
+    mockUploadBootstrapScaffoldWithRollback.mockRejectedValueOnce(new Error('SSH still down'));
+    await act(async () => {
+      startBtn.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(mockUploadBootstrapScaffoldWithRollback).toHaveBeenCalledTimes(2);
+    expect(mockStartAutoResearchRun).not.toHaveBeenCalled();
+  });
+
+  it('blocks duplicate Start / handoff via bootstrappedAtRef (R5-16 / R5-07 lock)', async () => {
+    // AUDIT-FIX [R5-16]: double-click Start must not hand off twice for the same readyResult.
+    mockStartAutoResearchRun.mockResolvedValue({
+      sessionId: 'run-r5-16-double',
+      resolvedConfig: {
+        mode: 'local',
+        host: '',
+        user: 'root',
+        keyPath: '',
+        port: 22,
+        remoteWorkDir: '/tmp/r5-16-double',
+        authMode: 'agent',
+        password: '',
+      },
+    });
+
+    const { persistBootstrapSession } = await import('@/services/autoresearch/bootstrap/bootstrapSessionPersist');
+    persistBootstrapSession({
+      version: 1,
+      recipe: {
+        researchGoal: {
+          goalText: 'Double-start guard experiment',
+          taskType: 'beat_baseline',
+          source: 'user',
+        },
+        references: {},
+        baselineAndMetric: {
+          primaryMetric: 'f1',
+          direction: 'higher',
+          baselineValue: '0.7',
+          successCriteria: 'Beat 0.7 F1.',
+        },
+        workspace: {
+          workDir: '/tmp/r5-16-double',
+          folderName: 'r5-16-double',
+        },
+        verification: { commands: [] },
+        outputContract: {
+          includeMetrics: true,
+          includeArtifacts: true,
+          includeCommandsRun: true,
+          includeFailureReason: true,
+          includeRemainingRisks: true,
+        },
+      },
+      recipeDirty: false,
+      selectedTemplateId: 'beat-baseline',
+      templatesExpanded: false,
+      hasStarted: true,
+      readyResult: {
+        status: 'ready',
+        createdAt: '2026-09-21T03:00:00.000Z',
+        warnings: [],
+        unresolvedQuestions: [],
+        schemaVersion: 1,
+        plan: {
+          researchGoal: 'Double-start guard experiment',
+          successCriteria: 'Beat 0.7 F1.',
+          primaryMetric: 'f1',
+          direction: 'higher',
+          secondaryMetrics: [],
+          papers: [],
+          baselines: [],
+          scaffold: {
+            templateId: 'python-ml-baseline',
+            workDir: '/tmp/r5-16-double',
+            language: 'python',
+            entryCommand: 'python3 train.py',
+            vars: {},
+            files: [{ path: 'train.py', purpose: 'train' }],
+          },
+          gitInitialized: true,
+          conversationalTemplateId: 'beat-baseline',
+        },
+      },
+      currentStep: 'ready',
+      observedTools: ['bootstrap_finalize'],
+      warnings: [],
+      iterations: 2,
+      agentLogs: '[SYSTEM] ready\n',
+      handoffSummary: null,
+      lastCompiledPrompt: 'prompt',
+      missingFinalize: false,
+      error: null,
+    });
+
+    act(() => {
+      root.unmount();
+    });
+    root = createRoot(container);
+    act(() => {
+      root.render(<BootstrapChatView />);
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const startBtn = container.querySelector('[data-testid="bootstrap-start-handoff"]') as HTMLButtonElement;
+    expect(startBtn).toBeTruthy();
+
+    await act(async () => {
+      startBtn.click();
+      startBtn.click(); // duplicate Start / double-click
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(mockStartAutoResearchRun).toHaveBeenCalledTimes(1);
+    expect(mockUploadBootstrapScaffoldWithRollback).not.toHaveBeenCalled(); // local mode
   });
 
 });
