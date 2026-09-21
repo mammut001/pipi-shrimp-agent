@@ -522,7 +522,7 @@ Items remediated per [README remediation section](./README.md#修复进展remedi
 | --- | ----- | --- | ------ | --- | --------- | ----------- | ----- | ------- | -- | ------ |
 | R5-02 | Preflight abort controller leak | High | fixed (2026-09-17) | Orphan AbortController after preflight fail | `loopEngine.ts` | try/finally around preflight | controller null after fail | Yes | No | No |
 | R5-04 | Unmount doesn't stop `paused` loop | Med | open | Loop continues after navigate away | `AutoResearch.tsx` | Stop on any non-idle state | pause+unmount | Yes | Yes | No |
-| R5-06 | SSH upload no transaction | Med | open | Partial upload corrupts remote state | `BootstrapChatView.tsx` | Rollback on Nth failure | partial upload | Yes | Yes | No |
+| R5-06 | SSH upload no transaction | Med | fixed (2026-09-21) | Partial upload corrupts remote state | `BootstrapChatView.tsx`, `uploadBootstrapScaffold.ts` | Rollback on Nth failure | uploadBootstrapScaffold.test.ts | Yes | Yes | No |
 | R5-07 | Handoff no lifecycle lock | Med | fixed (2026-09-21) | Two active runs possible | `BootstrapChatView.tsx` | Block handoff if running | active run blocks | Yes | Yes | No |
 | R5-08 | `guessMetricDirection` vs plan | Med | fixed (2026-09-21) | Wrong metric optimization direction | `BootstrapChatView.tsx` | Use plan direction | direction matches plan | Yes | No | No |
 | R5-09 | Pause 1s timeout not abortable | Low | open | Slow stop response | `loopEngine.ts` | AbortSignal on pause wait | stop <200ms | Yes | No | No |
