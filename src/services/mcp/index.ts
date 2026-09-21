@@ -45,8 +45,32 @@ export const MCPService = {
     return invoke<[string, MCPTool[]][]>('mcp_list_all_tools');
   },
 
-  async callTool(serverId: string, toolName: string, args: Record<string, unknown>): Promise<ToolResult> {
-    return invoke<ToolResult>('mcp_call_tool', { serverId, toolName, args });
+  async callTool(
+    serverId: string,
+    toolName: string,
+    args: Record<string, unknown>,
+    options?: {
+      mcpToolName?: string;
+      sessionId?: string;
+      approvalToken?: string;
+      source?: string;
+      executionMode?: string;
+      toolCallId?: string;
+    },
+  ): Promise<ToolResult> {
+    // Settings / manual UI: default to user_requested_command so non-destructive
+    // tools allow; destructive tools fail closed without an approval token.
+    return invoke<ToolResult>('mcp_call_tool', {
+      serverId,
+      toolName,
+      args,
+      sessionId: options?.sessionId ?? null,
+      approvalToken: options?.approvalToken ?? null,
+      source: options?.source ?? 'user_requested_command',
+      executionMode: options?.executionMode ?? null,
+      mcpToolName: options?.mcpToolName ?? null,
+      toolCallId: options?.toolCallId ?? null,
+    });
   },
 
   /**

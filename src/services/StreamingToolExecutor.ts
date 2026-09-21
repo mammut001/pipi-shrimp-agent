@@ -449,7 +449,14 @@ export class StreamingToolExecutor {
       allowedTools,
       executionMode,
     );
-    const frontendResults = await this.executeFrontendOnlyBatch(frontendOnlyRequests, reportProgress, workDir);
+    const frontendResults = await this.executeFrontendOnlyBatch(
+      frontendOnlyRequests,
+      reportProgress,
+      workDir,
+      sessionId,
+      source,
+      executionMode,
+    );
 
     const resultsById = new Map<string, ToolResult>();
     for (const result of [...prevalidatedResults, ...nativeResults.results, ...frontendResults.results]) {
@@ -478,12 +485,21 @@ export class StreamingToolExecutor {
     toolRequests: ToolRequest[],
     onProgress: (toolName: string) => void,
     workDir?: string,
+    sessionId?: string,
+    source: ToolExecutionSource = DEFAULT_TOOL_EXECUTION_SOURCE,
+    executionMode?: string,
   ): Promise<{ results: ToolResult[]; errors: ToolResult[] }> {
     const results: ToolResult[] = [];
     const errors: ToolResult[] = [];
 
     for (const request of toolRequests) {
-      const result = await this.executeFrontendOnlyTool(request, workDir).catch((error) => ({
+      const result = await this.executeFrontendOnlyTool(
+        request,
+        workDir,
+        sessionId,
+        source,
+        executionMode,
+      ).catch((error) => ({
         id: request.id,
         content: '',
         is_error: true,
@@ -654,11 +670,14 @@ export class StreamingToolExecutor {
   private async executeFrontendOnlyTool(
     request: ToolRequest,
     _workDir?: string,
+    sessionId?: string,
+    source: ToolExecutionSource = DEFAULT_TOOL_EXECUTION_SOURCE,
+    executionMode?: string,
   ): Promise<ToolResult> {
     const startTime = Date.now();
 
     if (request.name.startsWith('mcp__')) {
-      return this.executeMCPTool(request, startTime);
+      return this.executeMCPTool(request, startTime, sessionId, source, executionMode);
     }
 
     try {
@@ -676,7 +695,13 @@ export class StreamingToolExecutor {
   }
 
   /** Execute an MCP tool by resolving the server from store. */
-  private async executeMCPTool(request: ToolRequest, startTime: number): Promise<ToolResult> {
+  private async executeMCPTool(
+    request: ToolRequest,
+    startTime: number,
+    sessionId?: string,
+    source: ToolExecutionSource = DEFAULT_TOOL_EXECUTION_SOURCE,
+    executionMode?: string,
+  ): Promise<ToolResult> {
     const parsed = parseMCPToolName(request.name);
     if (!parsed) {
       const errorMessage = `Invalid MCP tool name: ${request.name}`;
@@ -719,6 +744,12 @@ export class StreamingToolExecutor {
           serverId: runtime.id,
           toolName: parsed.toolName,
           args: request.arguments,
+          sessionId: sessionId ?? null,
+          approvalToken: request.approvalToken ?? null,
+          source,
+          executionMode: executionMode ?? null,
+          mcpToolName: request.name,
+          toolCallId: request.id,
         }),
         new Promise<never>((_, reject) =>
           setTimeout(
