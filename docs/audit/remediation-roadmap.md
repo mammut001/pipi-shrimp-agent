@@ -595,13 +595,13 @@ Also see **R4-04–R4-24** (store/workflow cross-cuts) in [round-04](./round-04-
 | R7-06 | `outputDir` unused in artifactDetector | High | fixed | `artifactDetector.ts`, `chatArtifacts.ts`, `chatToolExecution.ts` | Honor workDir + outputDir roots | artifactDetector + chatArtifacts tests |
 | R7-12 | telegram invoke / Rust handler parity | High | fixed (2026-09-17) | `telegramService.ts`, `lib.rs`, `telegram.rs` | Handlers + dynamic T-15 + check-tauri-commands | T-15, `check-tauri-commands.mjs` |
 | R7-02 | Artifact path containment lexical only (symlink escape) | Med | fixed | `artifactPathPolicy.ts`, `path_security.rs` | Canonical/realpath containment | artifactPathPolicy.test.ts |
-| R7-03 | artifactDetector Unix-only paths | Med | open | `artifactDetector.ts` | Windows path support | `C:\` paths |
+| R7-03 | artifactDetector Unix-only paths | Med | fixed (code 2026-06-24; verified 2026-09-21) | `artifactDetector.ts` | Windows path support | `artifactDetector.test.ts` Windows drive-letter/WSL patterns |
 | R7-05 | `addFileArtifact` no workDir check | Med | fixed | `artifactPathPolicy.ts`, `artifactDetector.ts` | Shared workDir/outputDir sandbox | addFileArtifact tests |
-| R7-09 | `ChatImage` arbitrary src | Med | open | `ChatImage.tsx` | Allowlist schemes | `javascript:` img blocked |
-| R7-10 | Telegram token in URL logs | Med | open | `telegram.rs` | Redact in errors | log scan |
+| R7-09 | `ChatImage` arbitrary src | Med | fixed (code 2026-06-24; verified 2026-09-21) | `ChatImage.tsx` | Allowlist schemes | `ChatImage.test.tsx` scheme allowlist |
+| R7-10 | Telegram token in URL logs | Med | fixed (code 2026-06-24; verified 2026-09-21) | `telegram.rs` | Redact in errors | `redact_token_*` unit tests |
 | R7-13 | `terminal_create` cwd no path_security | Med | fixed (code 2026-06-24; tests 2026-09-21) | `terminal.rs` | validate_terminal_cwd → path_security | `/etc` + relative rejected |
 | R7-15 | Telegram token in localStorage XOR | Med | open | settings | Keychain migration spike | — |
-| R7-16 | TS BLOCKED_PREFIXES missing Windows | Med | open | `pathValidation.ts` | Add Windows roots | `C:\Windows` blocked |
+| R7-16 | TS BLOCKED_PREFIXES missing Windows | Med | fixed (code 2026-06-24; verified 2026-09-21) | `pathValidation.ts` | Add Windows roots | `pathValidation.test.ts` Windows describe |
 | R7-14, R7-17, R7-18 | Low/Info | Low | open | various | Hardening batch | per item |
 
 ---
