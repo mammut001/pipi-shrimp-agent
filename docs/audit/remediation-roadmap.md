@@ -599,7 +599,7 @@ Also see **R4-04–R4-24** (store/workflow cross-cuts) in [round-04](./round-04-
 | R7-05 | `addFileArtifact` no workDir check | Med | fixed | `artifactPathPolicy.ts`, `artifactDetector.ts` | Shared workDir/outputDir sandbox | addFileArtifact tests |
 | R7-09 | `ChatImage` arbitrary src | Med | open | `ChatImage.tsx` | Allowlist schemes | `javascript:` img blocked |
 | R7-10 | Telegram token in URL logs | Med | open | `telegram.rs` | Redact in errors | log scan |
-| R7-13 | `terminal_create` cwd no path_security | Med | open | terminal commands | validate cwd | `/etc` rejected |
+| R7-13 | `terminal_create` cwd no path_security | Med | fixed (code 2026-06-24; tests 2026-09-21) | `terminal.rs` | validate_terminal_cwd → path_security | `/etc` + relative rejected |
 | R7-15 | Telegram token in localStorage XOR | Med | open | settings | Keychain migration spike | — |
 | R7-16 | TS BLOCKED_PREFIXES missing Windows | Med | open | `pathValidation.ts` | Add Windows roots | `C:\Windows` blocked |
 | R7-14, R7-17, R7-18 | Low/Info | Low | open | various | Hardening batch | per item |

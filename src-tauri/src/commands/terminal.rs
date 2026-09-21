@@ -79,6 +79,15 @@ fn detect_shell() -> String {
     "/bin/sh".to_string()
 }
 
+/// AUDIT-FIX [R7-13] — Validate terminal PTY spawn `cwd` through path_security
+/// before `CommandBuilder::cwd` / shell spawn. Terminal create has no work_dir
+/// scope, so we call `validate_path(cwd, None)` which requires an absolute
+/// path, resolves symlinks, and rejects blocked system prefixes (e.g. `/etc`).
+/// Extracted so unit tests can exercise the same gate without a Tauri Window.
+fn validate_terminal_cwd(cwd: &str) -> Result<(), String> {
+    validate_path(cwd, None).map_err(|e| format!("Invalid cwd: {}", e))
+}
+
 /// Create a new PTY terminal session.
 ///
 /// Spawns a shell process in the given cwd and starts streaming output
@@ -102,14 +111,7 @@ pub async fn terminal_create(
     // tool that pipes through it) read access to system secrets.
     if let Some(ref dir) = cwd {
         if !dir.trim().is_empty() {
-            // No work_dir — we're starting from whatever the caller asked
-            // for. validate_path with no work_dir enforces:
-            //   - non-empty
-            //   - no path traversal (.. segments rejected)
-            //   - not inside a blocked system prefix (/etc/, /usr/, etc.)
-            //   - not inside a user-home sensitive dir (~/.ssh, etc.)
-            //   - Windows equivalents on Windows
-            validate_path(dir, None).map_err(|e| format!("Invalid cwd: {}", e))?;
+            validate_terminal_cwd(dir)?;
         }
     }
 
@@ -288,6 +290,7 @@ pub fn close_all_terminals() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
 
     #[test]
     fn detect_shell_returns_an_absolute_existing_path() {
@@ -295,5 +298,50 @@ mod tests {
         let path = std::path::Path::new(&shell);
         assert!(path.is_absolute(), "shell should be an absolute path, got {shell}");
         assert!(path.is_file(), "shell should exist on disk, got {shell}");
+    }
+
+    #[test]
+    fn test_terminal_cwd_sandbox() {
+        // Blocked system roots must be rejected before PTY spawn.
+        let err = validate_terminal_cwd("/etc")
+            .expect_err("cwd=/etc must be rejected by path sandbox");
+        assert!(
+            err.contains("Invalid cwd") || err.contains("not allowed") || err.contains("/etc"),
+            "unexpected rejection message: {err}"
+        );
+
+        let err = validate_terminal_cwd("/etc/passwd")
+            .expect_err("cwd under /etc must be rejected");
+        assert!(
+            err.contains("Invalid cwd") || err.contains("not allowed") || err.contains("/etc"),
+            "unexpected rejection message: {err}"
+        );
+
+        // Relative paths (including traversal) have no work_dir in terminal
+        // create — reject rather than resolving against process cwd.
+        let err = validate_terminal_cwd("relative/cwd")
+            .expect_err("relative cwd must be rejected without work_dir");
+        assert!(
+            err.contains("Invalid cwd") || err.contains("Relative") || err.contains("work_dir"),
+            "unexpected relative rejection: {err}"
+        );
+
+        let err = validate_terminal_cwd("../etc")
+            .expect_err("relative ../etc must be rejected without work_dir");
+        assert!(
+            err.contains("Invalid cwd") || err.contains("Relative") || err.contains("work_dir"),
+            "unexpected ../etc rejection: {err}"
+        );
+
+        // An existing temp directory outside blocked prefixes is accepted.
+        let allowed = std::env::temp_dir().join(format!(
+            "pipi-terminal-cwd-ok-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&allowed).expect("create temp cwd");
+        let allowed_str = allowed.to_string_lossy().to_string();
+        validate_terminal_cwd(&allowed_str)
+            .unwrap_or_else(|e| panic!("temp cwd should be allowed: {e}"));
+        let _ = fs::remove_dir_all(&allowed);
     }
 }

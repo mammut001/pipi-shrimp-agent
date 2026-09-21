@@ -27,7 +27,7 @@ Chinese version: [../round-07-security.md](../round-07-security.md)
 | R7-05 | `addFileArtifact` has no workDir check |
 | R7-09 | `ChatImage` accepts arbitrary img src |
 | R7-10 | Telegram token in URL — log leakage risk |
-| R7-13 | `terminal_create` cwd has no path_security |
+| R7-13 | `terminal_create` cwd has no path_security ✅ Fixed (code 2026-06-24; tests 2026-09-21) |
 | R7-15 | Telegram token XOR localStorage, not keychain |
 | R7-16 | TS `BLOCKED_PREFIXES` missing Windows entries |
 
