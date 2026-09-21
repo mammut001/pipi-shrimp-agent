@@ -25,7 +25,7 @@ Chinese version: [../round-02-rust-backend.md](../round-02-rust-backend.md)
 | R2-06 | High | `database.rs:710-714` | Backup `starts_with` sibling-prefix escape | `backups-evil/` rejected | ❌ Open |
 | R2-07 | High | `path_security.rs:204-218` | Exact roots like `/sys` may not match blocked prefix | `validate_path("/sys")` | ❌ Open |
 | R2-08 | High | `execution_policy.rs:396-403` | Autoresearch bypass skips network checks | bypass + curl should confirm or deny | ❌ Open |
-| R2-09 | High | `ssh_bridge.rs:134-137` | `SSHPASS` visible in process list | Password not in cmdline | ❌ Open |
+| R2-09 | High | `ssh_bridge.rs:134-137` | `SSHPASS` visible in process list | Password not in cmdline | ✅ Fixed 2026-09-21 |
 | R2-10 | High | `browser/navigate.rs:42-48` | CDP goto has no scheme allowlist | `file://` rejected | ❌ Open |
 | R2-11 | High | `mcp/stdio.rs:116-118` | MCP stdio `cwd` unsandboxed | `cwd: /etc` rejected | ❌ Open |
 | R2-12 | High | `commands/mcp.rs:79-88` | `mcp_call_tool` has no policy layer | Destructive MCP needs approval | ❌ Open |

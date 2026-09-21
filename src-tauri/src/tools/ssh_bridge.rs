@@ -131,13 +131,26 @@ fn build_ssh_args(cfg: &SshConfig, binary: &str) -> anyhow::Result<(String, Stri
     parts.push(if binary == "scp" { "-P" } else { "-p" }.to_string());
     parts.push(cfg.port.to_string());
 
+    // AUDIT-FIX [R2-09] — Use `sshpass -e` and pass SSHPASS via the real
+    // process environment (Command.env), never as `SSHPASS=…` on the shell
+    // command string (that leaks via /proc/<pid>/cmdline).
     let env_prefix = if cfg.auth_mode == "password" {
-        format!("SSHPASS={} sshpass -e ", shell_escape(&cfg.password)?)
+        "sshpass -e ".to_string()
     } else {
         String::new()
     };
 
     Ok((parts.join(" "), env_prefix))
+}
+
+/// Env vars that must be set on the spawned process for password auth.
+/// Password is intentionally NOT included in the command string (R2-09).
+fn sshpass_extra_env(cfg: &SshConfig) -> Option<Vec<(String, String)>> {
+    if cfg.auth_mode == "password" {
+        Some(vec![("SSHPASS".to_string(), cfg.password.clone())])
+    } else {
+        None
+    }
 }
 
 /// Build the shell command string for local or remote execution.
@@ -219,6 +232,7 @@ pub fn execute_ssh_exec(args: &Value) -> anyhow::Result<ToolHandlerOutput> {
         None
     };
     let execution_work_dir = local_work_dir.unwrap_or(pinned_workdir.as_str());
+    let extra_env = sshpass_extra_env(&cfg);
     let result = execute_bash_for_tool(
         &full_command,
         None,
@@ -226,6 +240,7 @@ pub fn execute_ssh_exec(args: &Value) -> anyhow::Result<ToolHandlerOutput> {
         timeout_secs,
         execution_id,
         None,
+        extra_env.as_deref(),
     )
     .map_err(|e| anyhow::anyhow!(e.to_string()))?;
     handler_output_from_execute_code(result)
@@ -270,6 +285,7 @@ pub fn execute_ssh_upload(args: &Value) -> anyhow::Result<String> {
     };
 
     let command = build_upload_command(&cfg, &local_path, remote_path)?;
+    let extra_env = sshpass_extra_env(&cfg);
     let result = execute_bash_for_tool(
         &command,
         None,
@@ -277,6 +293,7 @@ pub fn execute_ssh_upload(args: &Value) -> anyhow::Result<String> {
         Some(120),
         None,
         None,
+        extra_env.as_deref(),
     )
     .map_err(|e| anyhow::anyhow!(e.to_string()))?;
     if result.exit_code != 0 {
@@ -316,6 +333,7 @@ pub fn execute_ssh_read_file(args: &Value) -> anyhow::Result<String> {
         ..cfg
     };
     let command = build_remote_bash_command(&read_cfg, &remote_cmd)?;
+    let extra_env = sshpass_extra_env(&read_cfg);
     let result = execute_bash_for_tool(
         &command,
         None,
@@ -323,6 +341,7 @@ pub fn execute_ssh_read_file(args: &Value) -> anyhow::Result<String> {
         Some(30),
         None,
         None,
+        extra_env.as_deref(),
     )
     .map_err(|e| anyhow::anyhow!(e.to_string()))?;
     if result.exit_code != 0 {
@@ -478,5 +497,75 @@ mod tests {
         let command = build_remote_bash_command(&local_cfg(""), &remote_cmd).unwrap();
         assert_eq!(command, "cat '/etc/passwd; echo PWNED'");
         assert!(!command.contains("cd "));
+    }
+
+    fn password_cfg() -> SshConfig {
+        SshConfig {
+            mode: "ssh".to_string(),
+            host: "example.com".to_string(),
+            user: "deploy".to_string(),
+            port: 22,
+            auth_mode: "password".to_string(),
+            key_path: String::new(),
+            password: "s3cret-pass-WORD!".to_string(),
+            remote_work_dir: String::new(),
+        }
+    }
+
+    #[test]
+    fn test_cmdline_does_not_contain_password() {
+        let cfg = password_cfg();
+        let remote = build_remote_bash_command(&cfg, "echo SAFE").unwrap();
+        assert!(
+            remote.contains("sshpass -e"),
+            "expected sshpass -e in command: {remote}"
+        );
+        assert!(
+            !remote.contains(&cfg.password),
+            "password leaked into remote cmdline: {remote}"
+        );
+        assert!(
+            !remote.contains("SSHPASS="),
+            "SSHPASS= must not appear in cmdline: {remote}"
+        );
+
+        let upload = build_upload_command(&cfg, "/tmp/local.txt", "/tmp/remote.txt").unwrap();
+        assert!(
+            upload.contains("sshpass -e"),
+            "expected sshpass -e in upload command: {upload}"
+        );
+        assert!(
+            !upload.contains(&cfg.password),
+            "password leaked into upload cmdline: {upload}"
+        );
+        assert!(
+            !upload.contains("SSHPASS="),
+            "SSHPASS= must not appear in upload cmdline: {upload}"
+        );
+    }
+
+    #[test]
+    fn test_sshpass_env_only_for_password_auth() {
+        let password_cfg = password_cfg();
+        let env = sshpass_extra_env(&password_cfg).expect("password auth needs SSHPASS env");
+        assert_eq!(env.len(), 1);
+        assert_eq!(env[0].0, "SSHPASS");
+        assert_eq!(env[0].1, password_cfg.password);
+
+        let agent_cfg = ssh_cfg("");
+        assert!(
+            sshpass_extra_env(&agent_cfg).is_none(),
+            "non-password auth must not set SSHPASS"
+        );
+
+        let mut key_cfg = ssh_cfg("");
+        key_cfg.auth_mode = "key".to_string();
+        key_cfg.key_path = "/tmp/id_rsa".to_string();
+        key_cfg.password = "should-not-leak".to_string();
+        assert!(sshpass_extra_env(&key_cfg).is_none());
+        let cmd = build_remote_bash_command(&key_cfg, "echo SAFE").unwrap();
+        assert!(!cmd.contains("sshpass"));
+        assert!(!cmd.contains("should-not-leak"));
+        assert!(!cmd.contains("SSHPASS="));
     }
 }

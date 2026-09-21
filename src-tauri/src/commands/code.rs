@@ -287,6 +287,7 @@ pub fn execute_bash_for_tool(
     timeout_secs: Option<u64>,
     requested_execution_id: Option<&str>,
     windows_shell_profile: Option<WindowsShellProfile>,
+    extra_env: Option<&[(String, String)]>,
 ) -> AppResult<ExecuteCodeResponse> {
     // AUDIT-FIX [fix-1#12] — `check_command_safety` already calls
     // `path_security::validate_command` and then layers a second pass. We
@@ -330,6 +331,7 @@ pub fn execute_bash_for_tool(
         &shell_plan.args,
         shell_plan.host_cwd.as_deref(),
         requested_execution_id,
+        extra_env,
     )?;
     let execution_id = handle.execution_id.clone();
     let managed = wait_for_managed_process(handle, timeout_secs.unwrap_or(300))?;
@@ -387,6 +389,7 @@ pub async fn execute_bash(args: ExecuteBashArgs) -> AppResult<ExecuteCodeRespons
             args.timeout_secs,
             args.execution_id.as_deref(),
             args.windows_shell_profile,
+            None,
         )
     })
     .await
@@ -998,6 +1001,7 @@ mod tests {
             Some(0),
             Some("timeout-test"),
             None,
+            None,
         )
         .expect("timeout should still return a structured response");
 
@@ -1021,6 +1025,7 @@ mod tests {
             Some(work_dir.to_string_lossy().as_ref()),
             Some(5),
             Some("smoke-command-json"),
+            None,
             None,
         )
         .expect("command should return a structured response");
@@ -1054,6 +1059,7 @@ mod tests {
             Some(work_dir.to_string_lossy().as_ref()),
             Some(5),
             Some("dangerous-command"),
+            None,
             None,
         )
         .expect_err("dangerous command should be blocked");

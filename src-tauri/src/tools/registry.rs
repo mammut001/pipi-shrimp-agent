@@ -660,6 +660,7 @@ pub fn register_builtin_tools(registry: &mut ToolRegistry) {
                 timeout_secs,
                 execution_id,
                 windows_shell_profile,
+                None,
             )
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
             // Status comes from typed ExecuteCodeResponse — not JSON sniffing.
