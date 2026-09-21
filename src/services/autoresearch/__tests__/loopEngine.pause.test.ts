@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from '@jest/globals';
+import { suspendExperimentLoopOnUnmount, waitForResumeOrAbort } from '../loopEngine';
 
 /**
  * R5-04 + R5-09 regression tests.
@@ -56,42 +57,51 @@ describe('AutoResearch pause/stop wiring (R5-04, R5-09)', () => {
     });
   });
 
-  describe('AbortSignal aware pause', () => {
-    it('an aborted signal aborts within the polling interval (250ms)', () => {
-      // We model the waitForResumeOrAbort contract: poll loopState
-      // every 250ms and bail when the signal fires. The contract
-      // says maximum wait is 250ms from abort to resolution.
-      const ac = new AbortController();
-      const start = Date.now();
-      let resolved = false;
-      let interval: ReturnType<typeof setInterval> | undefined;
-
-      const check = () => {
-        // Simulate the loop's waitForResumeOrAbort polling
-        // useAutoResearchStore.getState().loopState.
-        if (ac.signal.aborted) {
-          resolved = true;
-          if (interval) clearInterval(interval);
-        }
-      };
-      interval = setInterval(check, 250);
-
-      // Abort after a short delay.
-      setTimeout(() => ac.abort(), 100);
-      // Wait for the abort to take effect.
-      return new Promise<void>((resolve) => {
-        const verify = setInterval(() => {
-          if (resolved) {
-            clearInterval(verify);
-            const elapsed = Date.now() - start;
-            // Resolved within the next 250ms poll after abort.
-            // Total: 100ms abort delay + at most 250ms poll = 350ms.
-            expect(elapsed).toBeLessThan(1000);
-            expect(ac.signal.aborted).toBe(true);
-            resolve();
-          }
-        }, 50);
+  describe('pause + unmount (R5-04)', () => {
+    it('suspendExperimentLoopOnUnmount keeps already-paused runs paused (does not no-op)', async () => {
+      const { useAutoResearchStore } = await import('@/store/autoresearchStore');
+      useAutoResearchStore.setState({
+        id: 'pause-unmount-run',
+        selectedRunId: 'pause-unmount-run',
+        loopState: 'paused',
+        runHistory: [{
+          id: 'pause-unmount-run',
+          status: 'paused',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          experimentDir: '/tmp/exp',
+          metricName: 'acc',
+          metricDirection: 'higher',
+          maxIterations: 3,
+          currentIteration: 1,
+          resumeToken: { resumable: true, status: 'paused' },
+        } as any],
       });
+
+      suspendExperimentLoopOnUnmount();
+
+      expect(useAutoResearchStore.getState().loopState).toBe('paused');
+      const run = useAutoResearchStore.getState().runHistory.find((r) => r.id === 'pause-unmount-run');
+      expect(run?.status).toBe('paused');
+      expect(run?.resumeToken?.resumable).toBe(true);
+    });
+  });
+
+  describe('AbortSignal aware pause (R5-09)', () => {
+    it('waitForResumeOrAbort resolves within 200ms of abort while paused', async () => {
+      const { useAutoResearchStore } = await import('@/store/autoresearchStore');
+      useAutoResearchStore.setState({ loopState: 'paused' });
+
+      const ac = new AbortController();
+      const waitPromise = waitForResumeOrAbort(ac.signal);
+
+      // Abort after a short delay; signal listener should finish
+      // immediately (no need to wait for the 250ms poll).
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const abortedAt = Date.now();
+      ac.abort();
+      await waitPromise;
+      expect(Date.now() - abortedAt).toBeLessThan(200);
     });
   });
 });

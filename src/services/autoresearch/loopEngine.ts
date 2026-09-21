@@ -48,7 +48,8 @@ function clearActiveLoopHandle(controller: AbortController): void {
  * AUDIT-FIX [R5-09]: replaces the previous bare `setTimeout(resolve,
  * 1000)` so the abort path is signal-aware.
  */
-function waitForResumeOrAbort(signal?: AbortSignal): Promise<void> {
+/** @internal exported for R5-09 regression tests */
+export function waitForResumeOrAbort(signal?: AbortSignal): Promise<void> {
   return new Promise<void>((resolve) => {
     if (signal?.aborted) {
       resolve();
