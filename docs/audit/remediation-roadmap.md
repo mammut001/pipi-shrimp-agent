@@ -521,11 +521,11 @@ Items remediated per [README remediation section](./README.md#修复进展remedi
 | ID | Title | Sev | Status | Why | Key files | Smallest PR | Tests | Runtime | UI | Split? |
 | --- | ----- | --- | ------ | --- | --------- | ----------- | ----- | ------- | -- | ------ |
 | R5-02 | Preflight abort controller leak | High | fixed (2026-09-17) | Orphan AbortController after preflight fail | `loopEngine.ts` | try/finally around preflight | controller null after fail | Yes | No | No |
-| R5-04 | Unmount doesn't stop `paused` loop | Med | open | Loop continues after navigate away | `AutoResearch.tsx` | Stop on any non-idle state | pause+unmount | Yes | Yes | No |
+| R5-04 | Unmount doesn't stop `paused` loop | Med | fixed (code 2026-06-24; verified 2026-09-21) | Loop continues after navigate away | `AutoResearch.tsx`, `loopEngine.ts` | Stop/suspend on any non-idle state | loopEngine.pause.test.ts pause+unmount | Yes | Yes | No |
 | R5-06 | SSH upload no transaction | Med | fixed (2026-09-21) | Partial upload corrupts remote state | `BootstrapChatView.tsx`, `uploadBootstrapScaffold.ts` | Rollback on Nth failure | uploadBootstrapScaffold.test.ts | Yes | Yes | No |
 | R5-07 | Handoff no lifecycle lock | Med | fixed (2026-09-21) | Two active runs possible | `BootstrapChatView.tsx` | Block handoff if running | active run blocks | Yes | Yes | No |
 | R5-08 | `guessMetricDirection` vs plan | Med | fixed (2026-09-21) | Wrong metric optimization direction | `BootstrapChatView.tsx` | Use plan direction | direction matches plan | Yes | No | No |
-| R5-09 | Pause 1s timeout not abortable | Low | open | Slow stop response | `loopEngine.ts` | AbortSignal on pause wait | stop <200ms | Yes | No | No |
+| R5-09 | Pause 1s timeout not abortable | Low | fixed (code 2026-06-24; verified 2026-09-21) | Slow stop response | `loopEngine.ts` | AbortSignal on pause wait | waitForResumeOrAbort <200ms | Yes | No | No |
 | R5-10 | Copy leaks raw live output | Med | fixed (2026-09-21) | API keys in clipboard | `AutoResearchPanel.tsx`, DashboardView | Use redacted output | clipboard scan | No | Yes | No |
 | R5-11 | Recovery button opens modal only | Med | fixed (2026-09-21) | Broken recovery UX | `recoveryActions.ts`, Panel, DashboardView | Wire handler | retry_iteration fires | Yes | Yes | No |
 | R5-12 | `failureCount` inconsistency | Low | open | Wrong backoff / stop logic | `autoresearchStore.ts` | Unify counters | consecutive count | Yes | No | No |
@@ -573,7 +573,7 @@ Open **High** items (Critical covered in Lane A):
 
 | ID | Title | Sev | Status | Key files | Smallest PR | Tests | Runtime | UI |
 | --- | ----- | --- | ------ | --------- | ----------- | ----- | ------- | -- |
-| R6-03 | Abort not checked during tool batch (120s) | Med | open | `agentRunner.ts` | Poll abort in batch loop | abort during batch | Yes | No |
+| R6-03 | Abort not checked during tool batch (120s) | Med | fixed (code 2026-06-24; verified 2026-09-21) | `agentRunner.ts` | AbortSignal on retry backoff sleep | abort during backoff <200ms | Yes | No |
 | R6-04 | Streaming `finalText` O(n²) | Med | open | `agentRunner.ts` | Use array join | 10k chunks perf | Yes | No |
 | R6-05 | Missing upstream agent throws | Med | open | `engine.ts` | Graceful skip | stale inputFrom | Yes | No |
 | R6-06 | Goal preflight no AbortController | Med | open | `WorkflowGoalPreflightPanel` | Cancel on close | panel close aborts | Yes | Yes |

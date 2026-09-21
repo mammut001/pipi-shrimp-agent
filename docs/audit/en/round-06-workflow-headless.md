@@ -14,7 +14,7 @@ Chinese version: [../round-06-workflow-headless.md](../round-06-workflow-headles
 | --- | --- | -------- | ----------- | -------------- | ------ |
 | R6-01 | P0 | `engine.ts:559-589` | `createRunDirectory` failure still continued execution — artifacts silently lost | Reject → run transitions to error | ❌ Open |
 | R6-02 | P0 | `engine.ts:239-250`, `agentRunner.ts:163-228` | `stop()` did not cancel in-flight streaming invoke | Stop does not wait for full completion | ❌ Open |
-| R6-03 | Medium | `agentRunner.ts:336-398` | Abort not checked during tool batch (up to 120s) | Abort during executeBatch | Open |
+| R6-03 | Medium | `agentRunner.ts:336-398` | Abort not checked during tool batch (up to 120s) | Abort during executeBatch | ✅ Fixed (code 2026-06-24; verified 2026-09-21) |
 | R6-04 | Medium | `agentRunner.ts:342-350` | Streaming `finalText +=` is O(n²) | 10k chunks performance | Open |
 | R6-05 | Medium | `engine.ts:403-409` | Missing upstream agent throws with `!` | Graceful skip for stale inputFrom | Open |
 | R6-06 | Medium | `WorkflowGoalPreflightPanel` | No AbortController | Closing panel cancels headless | Open |

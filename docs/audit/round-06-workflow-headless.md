@@ -10,7 +10,7 @@
 | --- | --- | -------- | ----------- | -------------- |
 | R6-01 | P0 | `engine.ts:559-589` | `createRunDirectory` 失败后继续执行，产物静默丢失 | reject 后 run → error |
 | R6-02 | P0 | `engine.ts:239-250`, `agentRunner.ts:163-228` | `stop()` 不取消 in-flight streaming invoke | stop 后不等待完整 completion |
-| R6-03 | Medium | `agentRunner.ts:336-398` | abort 在 tool batch 期间不检查（最长 120s） | abort during executeBatch |
+| R6-03 | Medium | `agentRunner.ts:336-398` | abort 在 tool batch 期间不检查（最长 120s） ✅ Fixed (code 2026-06-24; verified 2026-09-21) | abort during executeBatch |
 | R6-04 | Medium | `agentRunner.ts:342-350` | 流式 `finalText +=` O(n²) | 10k chunks 性能 |
 | R6-05 | Medium | `engine.ts:403-409` | 缺失 upstream agent 用 `!` 抛错 | stale inputFrom 优雅 skip |
 | R6-06 | Medium | `WorkflowGoalPreflightPanel` | 无 AbortController | 关闭 panel 取消 headless |
