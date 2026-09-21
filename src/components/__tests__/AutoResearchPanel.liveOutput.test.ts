@@ -223,6 +223,9 @@ describe('AutoResearchPanel live output controls', () => {
     expect(mockDownloadTextFile).toHaveBeenCalledWith('run-1-iter-002-live.log', 'line 1\nline 2\n');
   });
 
+
+
+
   it('clears only the visible live output and does not invoke any tauri delete command', async () => {
     const { AutoResearchPanel } = await import('../AutoResearchPanel');
 
@@ -276,4 +279,90 @@ describe('AutoResearchPanel live output controls', () => {
       '[2026-05-12T09:02:00.000Z] [terminal] stdout captured.',
     );
   });
+
+  it('redacts API key patterns from live output copy and download payloads', async () => {
+    const previousLiveOutput = mockState.liveOutput;
+    const previousContextLiveOutput = mockState.selectedRunContext.liveOutput;
+    const secretOutput = 'before\napi_key=sk-test-secret-value-12345\nafter\n';
+    mockState.liveOutput = secretOutput;
+    mockState.selectedRunContext = {
+      ...mockState.selectedRunContext,
+      liveOutput: secretOutput,
+    };
+
+    try {
+      const { AutoResearchPanel } = await import('../AutoResearchPanel');
+
+      await act(async () => {
+        root.render(React.createElement(AutoResearchPanel));
+      });
+
+      const copyButton = container.querySelector('[data-copy-target="live-output-copy"]') as HTMLButtonElement | null;
+      const downloadButton = container.querySelector('[data-copy-target="live-output-download"]') as HTMLButtonElement | null;
+      expect(copyButton).not.toBeNull();
+      expect(downloadButton).not.toBeNull();
+
+      await act(async () => {
+        copyButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+      expect(mockNavigatorWriteText).toHaveBeenCalledWith('before\napi_key=[redacted]\nafter\n');
+      expect(mockNavigatorWriteText.mock.calls[0][0]).not.toMatch(/sk-test-secret-value-12345/);
+
+      await act(async () => {
+        downloadButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+      expect(mockDownloadTextFile).toHaveBeenCalledWith('run-1-iter-002-live.log', 'before\napi_key=[redacted]\nafter\n');
+      expect(String(mockDownloadTextFile.mock.calls[0][1])).not.toMatch(/sk-test-secret-value-12345/);
+    } finally {
+      mockState.liveOutput = previousLiveOutput;
+      mockState.selectedRunContext = {
+        ...mockState.selectedRunContext,
+        liveOutput: previousContextLiveOutput,
+      };
+    }
+  });
+
+  it('redacts API key patterns when copying recent event lines', async () => {
+    const previousEvents = run.events;
+    run.events = [
+      {
+        id: 'event-secret',
+        runId: 'run-1',
+        timestamp: '2026-05-12T09:03:00.000Z',
+        level: 'info',
+        phase: 'agent_execution',
+        message: 'Using api_key=sk-event-secret-99999 for request',
+      },
+    ];
+
+    try {
+      const { AutoResearchPanel } = await import('../AutoResearchPanel');
+
+      await act(async () => {
+        root.render(React.createElement(AutoResearchPanel));
+      });
+
+      const copyAllButton = container.querySelector('[data-copy-target="recent-events-all"]') as HTMLButtonElement | null;
+      const rowCopyButtons = Array.from(container.querySelectorAll('[data-copy-target="recent-event-line"]')) as HTMLButtonElement[];
+      expect(copyAllButton).not.toBeNull();
+      expect(rowCopyButtons.length).toBeGreaterThan(0);
+
+      await act(async () => {
+        copyAllButton?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+      const copiedAll = String(mockNavigatorWriteText.mock.calls[0][0]);
+      expect(copiedAll).toContain('api_key=[redacted]');
+      expect(copiedAll).not.toMatch(/sk-event-secret-99999/);
+
+      await act(async () => {
+        rowCopyButtons[0]?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+      });
+      const copiedOne = String(mockNavigatorWriteText.mock.calls[1][0]);
+      expect(copiedOne).toContain('api_key=[redacted]');
+      expect(copiedOne).not.toMatch(/sk-event-secret-99999/);
+    } finally {
+      run.events = previousEvents;
+    }
+  });
+
 });

@@ -221,15 +221,19 @@ export function AutoResearchDocumentReport({
   const displayedLiveOutput = liveOutput || run.liveOutputExcerpt || '';
   const allEventLines = useMemo(() => formatAutoResearchEventDump(run.events), [run.events]);
 
+  // Centralize redaction so every copy/download path strips secrets once.
   const handleCopy = (text: string) => {
-    void writeClipboardText(text).catch(() => undefined);
+    void writeClipboardText(redactSensitiveText(text)).catch(() => undefined);
   };
 
   const handleDownload = () => {
     if (!displayedLiveOutput) {
       return;
     }
-    downloadTextFile(buildAutoResearchLiveOutputFilename(run), displayedLiveOutput);
+    downloadTextFile(
+      buildAutoResearchLiveOutputFilename(run),
+      redactSensitiveText(displayedLiveOutput),
+    );
   };
   const baseline = typeof run.config.baseline === 'number' ? run.config.baseline : null;
   const bestValue = typeof run.bestMetricValue === 'number' ? run.bestMetricValue : bestPoint?.value ?? null;

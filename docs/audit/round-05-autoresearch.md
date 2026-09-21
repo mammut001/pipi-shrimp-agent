@@ -21,7 +21,7 @@
 | R5-07 | Medium | `BootstrapChatView.tsx:222-233` | handoff 无 lifecycle lock ✅ Fixed 2026-09-21 | 有 active run 时 block handoff |
 | R5-08 | Medium | `BootstrapChatView.tsx:169-170` | 用 `guessMetricDirection` 非 plan direction ✅ Fixed 2026-09-21 | direction 跟 plan 一致 |
 | R5-09 | Low | `loopEngine.ts:1132-1134` | pause 用 1s setTimeout 无 AbortSignal | stop during pause <200ms |
-| R5-10 | Medium | `AutoResearchPanel.tsx:322-336` | copy 用 raw `visibleLiveOutput` 非 redacted | clipboard 无 API key |
+| R5-10 | Medium | `AutoResearchPanel.tsx:322-336` | copy 用 raw `visibleLiveOutput` 非 redacted ✅ Fixed 2026-09-21 | clipboard 无 API key |
 | R5-11 | Medium | `AutoResearchPanel.tsx:479-488` | recovery 按钮只开 modal 不执行动作 ✅ Fixed 2026-09-21 | retry_iteration 应调用 handler |
 | R5-12 | Low | `autoresearchStore.ts:1036-1042` | `failureCount` vs `consecutiveFailures` 不一致 | 连续失败计数一致 |
 | R5-13 | Low | `autoresearchStore.ts:1256-1273` | close flush 仅 timer 非 null 时 | 失败 persist 后 close 仍 flush |
