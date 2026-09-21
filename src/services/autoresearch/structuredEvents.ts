@@ -466,14 +466,19 @@ function buildFallbackRecoveryActions(
 
   return [
     {
-      type: 'retry_failed_phase',
-      supported: false,
-      reason: 'Runtime does not expose phase retry yet.',
+      type: 'retry_iteration',
+      supported: true,
+      label: 'Retry iteration',
     },
     {
-      type: 'retry_iteration',
+      type: 'abort_run',
+      supported: true,
+      label: 'Abort run',
+    },
+    {
+      type: 'retry_failed_phase',
       supported: false,
-      reason: 'Runtime does not expose iteration retry yet.',
+      reason: 'Runtime does not expose phase retry yet. Use Retry iteration to resume from the saved workspace.',
     },
     {
       type: 'switch_provider',

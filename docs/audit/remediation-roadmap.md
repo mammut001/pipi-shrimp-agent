@@ -527,7 +527,7 @@ Items remediated per [README remediation section](./README.md#修复进展remedi
 | R5-08 | `guessMetricDirection` vs plan | Med | fixed (2026-09-21) | Wrong metric optimization direction | `BootstrapChatView.tsx` | Use plan direction | direction matches plan | Yes | No | No |
 | R5-09 | Pause 1s timeout not abortable | Low | open | Slow stop response | `loopEngine.ts` | AbortSignal on pause wait | stop <200ms | Yes | No | No |
 | R5-10 | Copy leaks raw live output | Med | open | API keys in clipboard | `AutoResearchPanel.tsx` | Use redacted output | clipboard scan | No | Yes | No |
-| R5-11 | Recovery button opens modal only | Med | open | Broken recovery UX | `AutoResearchPanel.tsx` | Wire handler | retry_iteration fires | Yes | Yes | No |
+| R5-11 | Recovery button opens modal only | Med | fixed (2026-09-21) | Broken recovery UX | `recoveryActions.ts`, Panel, DashboardView | Wire handler | retry_iteration fires | Yes | Yes | No |
 | R5-12 | `failureCount` inconsistency | Low | open | Wrong backoff / stop logic | `autoresearchStore.ts` | Unify counters | consecutive count | Yes | No | No |
 | R5-13 | Close flush on failed persist | Low | open | Lost metrics on close | `autoresearchStore.ts` | Flush regardless of timer | close after fail | Yes | No | No |
 | R5-14 | chatAdapter signal test gap | — | test gap only | R5-01 fixed, test thin | `chatAdapter.test.ts` | Add abort test | T-04 | — | — | No |

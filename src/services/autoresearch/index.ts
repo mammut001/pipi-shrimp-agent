@@ -20,3 +20,11 @@ export { appendIterationMetrics, readAllMetrics, summarize } from './metricsStor
 export { rebuildLivingDoc, readLivingDoc, renderLivingDoc } from './livingDoc';
 export { resumeInterruptedAutoResearchRun } from './setupFlow';
 export type { AutoResearchNotifier } from './notifier';
+export {
+  dispatchAutoResearchRecoveryAction,
+  handleAutoResearchRecoveryAction,
+} from './recoveryActions';
+export type {
+  AutoResearchRecoveryDispatchResult,
+  AutoResearchRecoveryLoopHandlers,
+} from './recoveryActions';
