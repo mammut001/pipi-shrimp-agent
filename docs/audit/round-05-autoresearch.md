@@ -27,7 +27,7 @@
 | R5-13 | Low | `autoresearchStore.ts:1256-1273` | close flush 仅 timer 非 null 时 | 失败 persist 后 close 仍 flush |
 | R5-14 | Test-gap | `chatAdapter.test.ts` | 无 signal 传播测试 | 见 R5-01 |
 | R5-15 | Test-gap | `loopEngine.integration.test.ts` | 无 stop/preflight/failed-continue | 见 R5-02/03/05 |
-| R5-16 | Test-gap | `BootstrapChatView` | SSH 失败、双点 Start | partial upload + duplicate |
+| R5-16 | Test-gap | `BootstrapChatView` | SSH 失败、双点 Start ✅ Fixed 2026-09-21 | partial upload + duplicate |
 
 ---
 

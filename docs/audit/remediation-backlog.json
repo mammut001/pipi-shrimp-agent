@@ -674,11 +674,15 @@
     "title": "BootstrapChatView SSH failure and double-Start test gap",
     "lane": "H. Test Infrastructure",
     "severity": "Test-gap",
-    "status": "open",
+    "status": "fixed",
+    "fixNote": "2026-09-21: Added BootstrapChatView tests for SSH upload/handoff failure (mock uploadBootstrapScaffoldWithRollback reject; bootstrappedAtRef cleared for retry) and double-Start blocked by bootstrappedAtRef + R5-07 lock. AUDIT-FIX [R5-16].",
     "whyItMatters": "Bootstrap failure modes untested",
-    "files": ["src/components/autoresearch/BootstrapChatView.tsx"],
+    "files": [
+      "src/components/autoresearch/BootstrapChatView.tsx",
+      "src/components/autoresearch/__tests__/BootstrapChatView.test.tsx"
+    ],
     "smallestPrScope": "New BootstrapChatView test file",
-    "tests": ["partial upload", "duplicate Start click"],
+    "tests": ["BootstrapChatView.test.tsx: SSH upload failure + retry", "BootstrapChatView.test.tsx: double-Start blocked by bootstrappedAtRef"],
     "dependencies": [],
     "runtimeBehavior": false,
     "uiBehavior": false,
