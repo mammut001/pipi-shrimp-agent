@@ -674,8 +674,8 @@ Per [complexity-governance.md](../architecture/complexity-governance.md) and `np
 | ID | Title | Sev | Status | Why | Docs | Action |
 | --- | ----- | --- | ------ | --- | ---- | ------ |
 | AG-16 | Two-folder vs three-folder drift | Med | fixed (2026-09-21) | Wrong cwd in tools/AR | [folders-and-runs.md](../concepts/folders-and-runs.md) / [ag-16 audit](./ag-16-cwd-callsite-audit.md) | Audit + browser handoff `getSessionProjectDir` fix |
-| AG-17 | Execution mode gating inconsistency | Med | open | Legacy bypass (R2-01) | [execution-modes.md](../concepts/execution-modes.md) | Align Rust registry with mode docs |
-| AG-18 | AutoResearch runtime doc vs code | Med | open | Abort wiring, loop state | [autoresearch-runtime.md](../concepts/autoresearch-runtime.md) | Update doc after R5-02 fix |
+| AG-17 | Execution mode gating inconsistency | Med | fixed (2026-09-21) | Legacy bypass (R2-01) | [execution-modes.md](../concepts/execution-modes.md) | Doc aligned with registry + Rust policy after R2-01 |
+| AG-18 | AutoResearch runtime doc vs code | Med | fixed (2026-09-21) | Abort wiring, loop state | [autoresearch-runtime.md](../concepts/autoresearch-runtime.md) | Doc §10 matches loopEngine abort/pause/unmount |
 | AG-19 | `pages/Chat.tsx` parallel to shell | Low | open | Dead route (R1-14, R9-11) | folders-and-runs | Delete in dedicated PR |
 | AG-20 | PR size regression guard | Low | open | >20 file PRs slip through | complexity-governance | CI warning on large diffs |
 

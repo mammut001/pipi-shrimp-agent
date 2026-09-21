@@ -3,6 +3,8 @@
 PiPi Shrimp exposes exactly three product-facing execution modes: **Ask**, **Plan**, and **Danger**.
 The registry in `src/services/executionMode/registry.ts` is the source of truth for the dropdown, prompt harness, model-facing tool catalog, and the compatibility mapping used while old sessions are migrated.
 
+Historical ids **Debug**, **Agent**, and **Bypass** remain accepted only as load-time aliases (see [Historical mode migration](#historical-mode-migration)). They are not rendered in the composer.
+
 > Hard rule: UI copy, prompt harnesses, tool visibility, and approval behavior must describe the same capability. A prompt-only instruction is never a substitute for runtime enforcement.
 
 ## Defaults affordance (composer)
@@ -11,7 +13,7 @@ Fresh sessions **default to Ask**. The composer shows a compact status hint unde
 
 - **Ask** — default · no tools — switch to Danger for shell/tools
 - **Plan** — read-only tools · Danger needed for shell/writes
-- **Danger** — tools/shell active · risky ops still confirm (not legacy Bypass)
+- **Danger** — tools/shell active · risky ops still confirm (not legacy Bypass auto-approve)
 
 Selecting Danger still shows the warning dialog; approval gates for risky categories remain. See [`docs/danger-mode-defaults-affordance.md`](../danger-mode-defaults-affordance.md).
 
@@ -52,7 +54,7 @@ Plan is read-only investigation plus a decision-ready plan.
 Danger is the single tool-capable execution mode exposed to users.
 
 - The model-facing catalog is unfiltered (`allowedToolPolicy: full`).
-- The permission layer is `auto-edits`, not legacy `bypass`, so risky categories continue through the existing approval gates.
+- The permission layer is `auto-edits`, **not** legacy `bypass`, so risky categories continue through the existing approval gates.
 - Dangerous-command and path-validation hooks still run.
 - The harness requires a destructive-operation double-check: identify exact targets, inspect references/dependents and persisted-data compatibility, then re-check requested scope immediately before delete/overwrite/reset/migration operations.
 - Reversible changes are preferred when they satisfy the request.
@@ -81,23 +83,57 @@ If an explicit `executionMode` is present but invalid, it collapses to Ask even 
 
 The next save persists the active three-mode id and its derived permission mode in lockstep.
 
+### Non-UI consumers that still pass `bypass`
+
+Product chat never selects Bypass. Some automated runners still pass the
+legacy `execution_mode` / `permissionMode` string `bypass` on purpose:
+
+- AutoResearch agent turns (`chatAdapter` → `runHeadlessAgentTurn`) use
+  `executionMode: 'bypass'` so the Rust `execution_policy` can auto-allow
+  ordinary project-scoped commands for `AutoresearchPhase` without a
+  confirmation modal.
+- That shortcut **does not** skip dangerous-command / path-escape hooks,
+  and AutoresearchPhase **still rejects** network/package-install commands
+  even under bypass (R2-08).
+
+Do not confuse that internal runner flag with a user-facing Bypass mode.
+
 ## Enforcement layers
 
 The harness is only one layer. Runtime behavior must remain aligned across:
 
+### TypeScript (chat composer → tool batch)
+
 1. `src/services/executionMode/registry.ts` — three active profiles + legacy aliases.
-2. `src/services/executionMode/guards.ts` — active-mode normalization and tool visibility.
+2. `src/services/executionMode/guards.ts` — active-mode normalization and tool visibility (`isToolAllowedForMode`, `getAllowedToolsForMode`).
 3. `src/services/tools/preToolUseHooks.ts` — dangerous-command, path, browser, and permission checks.
 4. `src/store/chat/chatActions.ts` — prompt harness attachment and request-time tool catalog.
-5. `src/services/tools/toolExecutionPolicy.ts` — per-tool approval rules.
+5. `src/services/tools/toolExecutionPolicy.ts` — per-tool approval rules; routes registry tools through `execute_single_tool` / `execute_tool_batch`.
 
-Tests in `src/services/executionMode/__tests__/registry.test.ts`, `modeConsistency.test.ts`, and chat/tool-policy suites must be updated whenever those layers change.
+### Rust (hard gate after R2-01)
+
+6. `src-tauri/src/tools/registry.rs` + `execute_single_tool` / `execute_tool_batch` — canonical execution path for registry-backed tools.
+7. `src-tauri/src/tools/execution_policy.rs` — `preview_request_policy` / `enforce_request_policy` (workspace bind, source policy, network/long-running, SSH, MCP, browser mutation, approval tokens).
+8. `src-tauri/src/commands/legacy_execute_tool.rs` — **rejects** registry-backed tools on the deprecated `execute_tool` Tauri command (`LEGACY_EXECUTE_TOOL_DISABLED_MSG`). Remaining chat-only tools (browser / Typst / Skill) still call `enforce_request_policy`; there is no “legacy bypass” of policy.
+
+### Browser observe-only (orthogonal to Ask/Plan/Danger)
+
+`PIPI_BROWSER_ACTION_PERMISSION_MODE=observe_only` is a browser-agent flag
+(R3-02), not a chat execution mode. When set, mutating browser actions are
+blocked before approval; read-only observation actions remain allowed.
+
+Tests in `src/services/executionMode/__tests__/registry.test.ts`,
+`modeConsistency.test.ts`, chat/tool-policy suites, and
+`cargo test legacy_execute_tool` (T-18) must be updated whenever those
+layers change.
 
 ## AutoResearch
 
 AutoResearch has its own runtime loop. Its structured Recipe remains the bootstrap source of truth. The old advanced Prompt-block editor has been removed from the AutoResearch launch surface, but persisted recipe/schema fields were intentionally not deleted in the same change.
 
 That separation is deliberate: removing a redundant UI path must not make old saved data unreadable.
+
+See also [`autoresearch-runtime.md`](./autoresearch-runtime.md) for abort/stop/pause wiring and the intentional `bypass` runner flag above.
 
 ## Skill runtime
 
