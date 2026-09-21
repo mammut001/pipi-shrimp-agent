@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useMemo, useState, type ReactNode } from 'react';
 import { t } from '@/i18n';
 import {
   buildAutoResearchLiveOutputFilename,
@@ -12,6 +12,7 @@ import { AutoResearchRunChips } from './AutoResearchRunChips';
 import { AutoResearchDashboardMetricCard } from './AutoResearchDashboardMetricCard';
 import { redactSensitiveText } from '@/services/autoresearch/runDocument';
 import { buildAutoResearchRecoverySummary } from '@/services/autoresearch/recoverySummary';
+import { handleAutoResearchRecoveryAction } from '@/services/autoresearch/recoveryActions';
 import {
   DocumentContentCard,
   DocumentDetailShell,
@@ -460,6 +461,19 @@ export function AutoResearchDashboardView({
   const iterationCards = useMemo(() => buildAutoResearchIterationViewModels(run), [run]);
   const currentIterationCard = iterationCards.find((item) => item.iteration === run.currentIteration) || iterationCards[iterationCards.length - 1] || null;
   const recoverySummary = useMemo(() => buildAutoResearchRecoverySummary(run), [run]);
+  const handleRecoveryAction = useCallback((action: Parameters<typeof handleAutoResearchRecoveryAction>[0]) => {
+    // Dynamic import keeps DashboardView mountable in light UI tests without
+    // pulling the full loopEngine dependency graph at module load time.
+    void import('@/services/autoresearch/loopEngine').then(({ resumeExperimentLoop, stopExperimentLoop }) => {
+      const result = handleAutoResearchRecoveryAction(action, run.id, {
+        resumeExperimentLoop,
+        stopExperimentLoop,
+      });
+      if (result.kind === 'inspect') {
+        setActiveTab('debug');
+      }
+    });
+  }, [run.id]);
   const gpuTemperatureTone = typeof run.config.gpuTemperatureC === 'number'
     ? run.config.gpuTemperatureC >= 85
       ? 'error'
@@ -595,7 +609,8 @@ export function AutoResearchDashboardView({
                       key={`run-recovery-${action.type}-${action.label || 'label'}`}
                       type="button"
                       disabled={action.supported === false}
-                      onClick={() => setActiveTab('debug')}
+                      title={action.reason || action.label || action.type}
+                      onClick={() => handleRecoveryAction(action)}
                       className="rounded-full border border-current/20 bg-white/70 px-3 py-1 text-[11px] font-medium transition-colors hover:bg-white disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       {action.label || action.type}
@@ -750,8 +765,10 @@ export function AutoResearchDashboardView({
                                   <button
                                     key={`${iteration.id}-${action.type}`}
                                     type="button"
-                                    onClick={() => setActiveTab('debug')}
-                                    className="rounded-full border border-gray-200 bg-white px-3 py-1 text-[11px] font-medium text-gray-600 hover:border-gray-300 hover:text-gray-900"
+                                    disabled={action.supported === false}
+                                    title={action.reason || action.label || action.type}
+                                    onClick={() => handleRecoveryAction(action)}
+                                    className="rounded-full border border-gray-200 bg-white px-3 py-1 text-[11px] font-medium text-gray-600 hover:border-gray-300 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-60"
                                   >
                                     {action.label || action.type}
                                   </button>

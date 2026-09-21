@@ -73,6 +73,8 @@ describe('loopEngine.metricsPhase helpers', () => {
       failReason: 'parse error',
     });
     expect(plain.some((a) => a.type === 'increase_tool_budget')).toBe(false);
+    expect(plain.find((a) => a.type === 'retry_iteration')?.supported).toBe(true);
+    expect(plain.find((a) => a.type === 'abort_run')?.supported).toBe(true);
     expect(plain.find((a) => a.type === 'open_logs')?.supported).toBe(false);
 
     const budget = buildIterationRecoveryActions({
@@ -80,6 +82,8 @@ describe('loopEngine.metricsPhase helpers', () => {
       hasLogs: true,
       failReason: 'tool budget exhausted before evaluation completed',
     });
-    expect(budget.some((a) => a.type === 'increase_tool_budget')).toBe(true);
+    const budgetAction = budget.find((a) => a.type === 'increase_tool_budget');
+    expect(budgetAction).toBeTruthy();
+    expect(budgetAction?.supported).toBe(false);
   });
 });

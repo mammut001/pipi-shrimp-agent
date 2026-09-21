@@ -133,6 +133,16 @@ export function buildIterationRecoveryActions(options: {
 
   const actions: Array<{ type: 'retry_failed_phase' | 'retry_iteration' | 'switch_provider' | 'open_raw_request_summary' | 'open_logs' | 'abort_run' | 'increase_tool_budget'; supported: boolean; label?: string; reason?: string }> = [
     {
+      type: 'retry_iteration',
+      supported: true,
+      label: 'Retry iteration',
+    },
+    {
+      type: 'abort_run',
+      supported: true,
+      label: 'Abort run',
+    },
+    {
       type: 'open_raw_request_summary',
       supported: true,
       label: 'Open raw request summary',
@@ -148,9 +158,10 @@ export function buildIterationRecoveryActions(options: {
   if (isToolBudgetExhaustedReason(options.failReason)) {
     actions.push({
       type: 'increase_tool_budget',
-      supported: true,
+      // No loop-engine API yet — keep supported=false so UI does not fake success.
+      supported: false,
       label: 'Increase tool budget or fix tool permission/confirmation settings.',
-      reason: 'This iteration stopped because the AutoResearch tool budget ran out before evaluation completed. Increase the tool-round budget for the active agent config, or fix any tool permission/confirmation settings so reads and writes no longer require manual approval.',
+      reason: 'This iteration stopped because the AutoResearch tool budget ran out before evaluation completed. Increase the tool-round budget for the active agent config, or fix any tool permission/confirmation settings so reads and writes no longer require manual approval, then start a new run.',
     });
   }
 

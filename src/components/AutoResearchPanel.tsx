@@ -36,6 +36,7 @@ import {
 } from '@/services/autoresearch/modelDisplay';
 import { toAgentConfigSnapshot } from '@/services/autoresearch/errors';
 import { buildAutoResearchRecoverySummary } from '@/services/autoresearch/recoverySummary';
+import { handleAutoResearchRecoveryAction } from '@/services/autoresearch/recoveryActions';
 import { downloadTextFile, stripAnsiText, writeClipboardText } from '@/utils/clipboard';
 
 type LiveOutputFeedback = 'copied' | 'cleared' | null;
@@ -293,6 +294,20 @@ export function AutoResearchPanel() {
   const handlePause = useCallback(() => pauseExperimentLoop(), []);
   const handleResume = useCallback(() => resumeExperimentLoop(selectedRun?.id), [selectedRun?.id]);
   const handleStop = useCallback(() => stopExperimentLoop(selectedRun?.id), [selectedRun?.id]);
+  const handleRecoveryAction = useCallback((action: Parameters<typeof handleAutoResearchRecoveryAction>[0]) => {
+    if (!selectedRun) {
+      return;
+    }
+    const result = handleAutoResearchRecoveryAction(action, selectedRun.id, {
+      resumeExperimentLoop,
+      stopExperimentLoop,
+    });
+    if (result.kind === 'inspect') {
+      setDetailOpen(true);
+    } else if (result.kind === 'unsupported' && result.reason) {
+      setPanelWarning(redactSensitiveText(result.reason));
+    }
+  }, [selectedRun]);
   const handleResumeInterruptedRun = useCallback(() => {
     if (!selectedRun || !canResumeInterruptedRun || isResumingInterruptedRun) {
       return;
@@ -482,7 +497,8 @@ export function AutoResearchPanel() {
                         key={`panel-recovery-${action.type}-${action.label || 'label'}`}
                         type="button"
                         disabled={action.supported === false}
-                        onClick={() => setDetailOpen(true)}
+                        title={action.reason || action.label || action.type}
+                        onClick={() => handleRecoveryAction(action)}
                         className="rounded-full border border-current/20 bg-white/70 px-2 py-0.5 text-[8px] font-medium disabled:cursor-not-allowed disabled:opacity-60"
                       >
                         {action.label || action.type}
