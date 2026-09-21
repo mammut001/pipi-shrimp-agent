@@ -138,6 +138,7 @@ pub fn spawn_bash_process(
         &["-lc".to_string(), command.to_string()],
         Some(cwd),
         requested_execution_id,
+        None,
     )
 }
 
@@ -146,11 +147,17 @@ pub fn spawn_shell_process(
     args: &[String],
     cwd: Option<&str>,
     requested_execution_id: Option<&str>,
+    extra_env: Option<&[(String, String)]>,
 ) -> AppResult<ManagedProcessHandle> {
     let mut child_command = Command::new(program);
     child_command.args(args);
     if let Some(dir) = cwd {
         child_command.current_dir(dir);
+    }
+    if let Some(envs) = extra_env {
+        for (key, value) in envs {
+            child_command.env(key, value);
+        }
     }
     child_command.stdout(Stdio::piped()).stderr(Stdio::piped());
     prepare_command(&mut child_command);
