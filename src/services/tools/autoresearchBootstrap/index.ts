@@ -299,6 +299,9 @@ async function executeBootstrapFinalizeTool(args: Record<string, any>, workDir?:
     researchGoal: args.researchGoal,
     successCriteria: args.successCriteria,
     primaryMetric: args.primaryMetric,
+    direction: args.direction === 'higher' || args.direction === 'lower'
+      ? args.direction
+      : undefined,
     secondaryMetrics: args.secondaryMetrics ?? [],
     papers: args.papers ?? [],
     baselines: args.baselines ?? [],

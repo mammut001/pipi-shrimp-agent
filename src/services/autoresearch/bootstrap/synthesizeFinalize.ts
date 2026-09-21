@@ -73,6 +73,7 @@ export function synthesizeBootstrapFinalizeFromRecipe(
       researchGoal: recipe.researchGoal.goalText.trim(),
       successCriteria,
       primaryMetric,
+      direction: recipe.baselineAndMetric.direction,
       secondaryMetrics: [],
       papers: [],
       baselines: [

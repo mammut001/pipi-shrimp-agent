@@ -62,6 +62,8 @@ export interface BootstrapPlan {
   researchGoal: string;
   successCriteria: string;
   primaryMetric: string;
+  /** Explicit optimization direction from bootstrap/recipe; omit only when unknown. */
+  direction?: 'higher' | 'lower';
   secondaryMetrics: string[];
   papers: PaperReference[];
   baselines: ExtractedBaseline[];

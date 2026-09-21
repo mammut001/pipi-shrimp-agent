@@ -64,6 +64,29 @@ function guessMetricDirection(metricName: string): 'higher' | 'lower' {
   return 'higher';
 }
 
+function isExplicitMetricDirection(value: unknown): value is 'higher' | 'lower' {
+  return value === 'higher' || value === 'lower';
+}
+
+/**
+ * AUDIT-FIX [R5-08]: Prefer explicit bootstrap plan / recipe direction end-to-end.
+ * Only fall back to metric-name guessing when both omit a direction — never override
+ * an explicit plan value with a guess (or with a stale recipe default).
+ */
+export function resolveBootstrapMetricDirection(options: {
+  planDirection?: unknown;
+  recipeDirection?: unknown;
+  primaryMetric: string;
+}): 'higher' | 'lower' {
+  if (isExplicitMetricDirection(options.planDirection)) {
+    return options.planDirection;
+  }
+  if (isExplicitMetricDirection(options.recipeDirection)) {
+    return options.recipeDirection;
+  }
+  return guessMetricDirection(options.primaryMetric);
+}
+
 function resolveBaselineValue(baselines: ExtractedBaseline[], primaryMetric: string): number | null {
   const normalizedMetric = primaryMetric.trim().toLowerCase();
   for (const baseline of baselines) {
@@ -322,7 +345,12 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
         };
 
     const baseline = resolveBaselineValue(result.plan.baselines, result.plan.primaryMetric);
-    const direction = recipe.baselineAndMetric.direction || guessMetricDirection(result.plan.primaryMetric);
+    // AUDIT-FIX [R5-08]: plan.direction wins; recipe next; guess only if both omit.
+    const direction = resolveBootstrapMetricDirection({
+      planDirection: result.plan.direction,
+      recipeDirection: recipe.baselineAndMetric.direction,
+      primaryMetric: result.plan.primaryMetric,
+    });
     const autoResearchState = useAutoResearchStore.getState();
 
     try {

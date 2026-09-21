@@ -63,6 +63,16 @@ describe('AutoResearchBootstrapResultSchema', () => {
     expect(parsed.success).toBe(true);
   });
 
+  it('accepts an optional plan.direction and rejects invalid values', () => {
+    const withDirection = createValidResult();
+    withDirection.plan.direction = 'lower';
+    expect(AutoResearchBootstrapResultSchema.safeParse(withDirection).success).toBe(true);
+
+    const invalid = createValidResult();
+    (invalid.plan as any).direction = 'sideways';
+    expect(AutoResearchBootstrapResultSchema.safeParse(invalid).success).toBe(false);
+  });
+
   it.each([
     ['missing successCriteria', (value: any) => { delete value.plan.successCriteria; }],
     ['empty baselines', (value: any) => { value.plan.baselines = []; }],

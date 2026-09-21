@@ -3,7 +3,7 @@ import React from 'react';
 import { describe, expect, it, jest, beforeEach, afterEach } from '@jest/globals';
 import { createRoot, type Root } from 'react-dom/client';
 import { act } from 'react-dom/test-utils';
-import { BootstrapChatView } from '../BootstrapChatView';
+import { BootstrapChatView, resolveBootstrapMetricDirection } from '../BootstrapChatView';
 import { useBootstrapPlanStore } from '@/services/autoresearch/bootstrap/bootstrapPlanStore';
 import { clearPersistedBootstrapSession } from '@/services/autoresearch/bootstrap/bootstrapSessionPersist';
 import { useAutoResearchStore } from '@/store/autoresearchStore';
@@ -736,6 +736,161 @@ describe('BootstrapChatView (Guided UI)', () => {
       selectedRunId: 'run-active',
     });
   }
+
+  describe('resolveBootstrapMetricDirection (R5-08)', () => {
+    it('prefers explicit plan direction over recipe and guess', () => {
+      // AUDIT-FIX [R5-08]: plan.direction must win even when guess/recipe disagree.
+      expect(resolveBootstrapMetricDirection({
+        planDirection: 'lower',
+        recipeDirection: 'higher',
+        primaryMetric: 'accuracy', // guess would be higher
+      })).toBe('lower');
+      expect(resolveBootstrapMetricDirection({
+        planDirection: 'higher',
+        recipeDirection: 'lower',
+        primaryMetric: 'val_loss', // guess would be lower
+      })).toBe('higher');
+    });
+
+    it('falls back to recipe when plan omits direction', () => {
+      expect(resolveBootstrapMetricDirection({
+        planDirection: undefined,
+        recipeDirection: 'lower',
+        primaryMetric: 'accuracy',
+      })).toBe('lower');
+    });
+
+    it('guesses only when both plan and recipe omit direction', () => {
+      expect(resolveBootstrapMetricDirection({
+        primaryMetric: 'val_loss',
+      })).toBe('lower');
+      expect(resolveBootstrapMetricDirection({
+        planDirection: 'sideways',
+        recipeDirection: '',
+        primaryMetric: 'top1_acc',
+      })).toBe('higher');
+    });
+  });
+
+  it('starts handoff with plan.direction even when recipe/guess disagree', async () => {
+    // AUDIT-FIX [R5-08]: end-to-end handoff must pass plan direction into startAutoResearchRun.
+    mockStartAutoResearchRun.mockResolvedValue({
+      sessionId: 'run-r5-08',
+      resolvedConfig: {
+        mode: 'local',
+        host: '',
+        user: 'root',
+        keyPath: '',
+        port: 22,
+        remoteWorkDir: '/tmp/r5-08-workdir',
+        authMode: 'agent',
+        password: '',
+      },
+    });
+
+    const { persistBootstrapSession } = await import('@/services/autoresearch/bootstrap/bootstrapSessionPersist');
+    persistBootstrapSession({
+      version: 1,
+      recipe: {
+        researchGoal: {
+          goalText: 'Minimize validation loss',
+          taskType: 'beat_baseline',
+          source: 'user',
+        },
+        references: {},
+        baselineAndMetric: {
+          // Stale / wrong recipe default — must not override plan.direction.
+          primaryMetric: 'accuracy',
+          direction: 'higher',
+          baselineValue: '0.1',
+          successCriteria: 'Drive val_loss below 0.05.',
+        },
+        workspace: {
+          workDir: '/tmp/r5-08-workdir',
+          folderName: 'r5-08',
+        },
+        verification: { commands: [] },
+        outputContract: {
+          includeMetrics: true,
+          includeArtifacts: true,
+          includeCommandsRun: true,
+          includeFailureReason: true,
+          includeRemainingRisks: true,
+        },
+      },
+      recipeDirty: true,
+      selectedTemplateId: 'beat-baseline',
+      templatesExpanded: false,
+      hasStarted: true,
+      readyResult: {
+        status: 'ready',
+        createdAt: '2026-09-21T01:00:00.000Z',
+        warnings: [],
+        unresolvedQuestions: [],
+        schemaVersion: 1,
+        plan: {
+          researchGoal: 'Minimize validation loss',
+          successCriteria: 'Drive val_loss below 0.05.',
+          primaryMetric: 'accuracy', // guess would say higher; plan says lower
+          direction: 'lower',
+          secondaryMetrics: [],
+          papers: [],
+          baselines: [{
+            name: 'Baseline',
+            task: 'classification',
+            dataset: 'demo',
+            reportedMetrics: [{ name: 'accuracy', value: 0.1 }],
+            method: { summary: 'Test' },
+            reproducibility: { hasOfficialCode: false },
+          }],
+          scaffold: {
+            templateId: 'python-ml-baseline',
+            workDir: '/tmp/r5-08-workdir',
+            language: 'python',
+            entryCommand: 'python3 run_experiment.py',
+            vars: { project_name: 'r5-08' },
+            files: [{ path: 'train.py', purpose: 'train' }],
+          },
+          gitInitialized: true,
+          conversationalTemplateId: 'beat-baseline',
+        },
+      },
+      currentStep: 'ready',
+      observedTools: ['bootstrap_finalize'],
+      warnings: [],
+      iterations: 3,
+      agentLogs: '[SYSTEM] ready\n',
+      handoffSummary: null,
+      lastCompiledPrompt: 'compiled prompt',
+      missingFinalize: false,
+      error: null,
+    });
+
+    act(() => {
+      root.unmount();
+    });
+    root = createRoot(container);
+    act(() => {
+      root.render(<BootstrapChatView />);
+    });
+
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    const startBtn = container.querySelector('[data-testid="bootstrap-start-handoff"]') as HTMLButtonElement;
+    expect(startBtn).toBeTruthy();
+
+    await act(async () => {
+      startBtn.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(mockStartAutoResearchRun).toHaveBeenCalled();
+    const setupArg = mockStartAutoResearchRun.mock.calls[0]?.[0] as { direction?: string; metric?: string };
+    expect(setupArg.direction).toBe('lower');
+    expect(setupArg.metric).toBe('accuracy');
+  });
 
   it('blocks handoff when an AutoResearch run is already active', async () => {
     // AUDIT-FIX [R5-07]: active run must block bootstrap Start / handoff.
