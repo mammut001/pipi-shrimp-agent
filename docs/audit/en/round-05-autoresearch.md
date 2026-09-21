@@ -17,7 +17,7 @@ Chinese version: [../round-05-autoresearch.md](../round-05-autoresearch.md)
 | R5-03 | P0 | `loopEngine.ts:1744-1820` | Agent error set `failed` but `loopState` did not stop — iterations could continue | No second sendMessage after throw | ✅ Fixed |
 | R5-04 | Medium | `AutoResearch.tsx:373-380` | Unmount only stopped `running`, not `paused` | Pause + unmount stops loop | Open |
 | R5-05 | P0 | `autoresearchStore.ts:632-659` | `deleteRun` did not call `stopExperimentLoop` | Deleting active run stops SSH/LLM | ✅ Fixed |
-| R5-06 | Medium | `BootstrapChatView.tsx:174-219` | SSH upload has no transaction/rollback | Handle failure on Nth file | Open |
+| R5-06 | Medium | `BootstrapChatView.tsx` + `uploadBootstrapScaffold.ts` | SSH upload has no transaction/rollback | Handle failure on Nth file | ✅ Fixed 2026-09-21 |
 | R5-07 | Medium | `BootstrapChatView.tsx:222-233` | Handoff has no lifecycle lock | Block handoff when active run exists | ✅ Fixed 2026-09-21 |
 | R5-08 | Medium | `BootstrapChatView.tsx:169-170` | Uses `guessMetricDirection` not plan direction | Direction matches plan | ✅ Fixed 2026-09-21 |
 | R5-09 | Low | `loopEngine.ts:1132-1134` | Pause uses 1s setTimeout without AbortSignal | Stop during pause <200ms | Open |

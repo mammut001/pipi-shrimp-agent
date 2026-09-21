@@ -32,10 +32,8 @@ import { useWorkflowStore } from '@/store/workflowStore';
 import { BootstrapQuickStartCards } from './BootstrapQuickStartCards';
 import { BootstrapProgressRail } from './BootstrapProgressRail';
 import { AutoResearchRunProgressRail } from './AutoResearchRunProgressRail';
-import { runSshExec, runSshUpload } from '@/tools/impl/SshTool';
-import { shellEscapePath } from '@/utils/remoteExec';
+import { uploadBootstrapScaffoldWithRollback } from '@/services/autoresearch/bootstrap/uploadBootstrapScaffold';
 import { shouldAutoOpenAutoResearchTerminal } from '@/utils/windowsShellProfile';
-import { invoke } from '@tauri-apps/api/core';
 import { useSettingsStore } from '@/store';
 import { BootstrapRecipeBuilder } from './BootstrapRecipeBuilder';
 import { RecipeTemplateChooser } from './recipe/RecipeTemplateChooser';
@@ -117,12 +115,6 @@ function resolveBootstrapRemoteWorkDir(sshConfig: SshConfig, workDir: string): s
   }
 
   return `${remoteRoot}/${folderName}`;
-}
-
-function parentRemotePath(filePath: string): string {
-  const normalized = filePath.replace(/\\/g, '/');
-  const idx = normalized.lastIndexOf('/');
-  return idx > 0 ? normalized.slice(0, idx) : '.';
 }
 
 function createDefaultRecipe(sshConfig?: SshConfig): Recipe {
@@ -354,76 +346,16 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
     const autoResearchState = useAutoResearchStore.getState();
 
     try {
+      // AUDIT-FIX [R5-06]: SSH scaffold upload tracks newly written paths and
+      // rolls them back on Nth-file / bootstrap.json / git-init failure so a
+      // partial handoff cannot corrupt remote experiment state.
       if (isSshMode) {
-        await runSshExec({
-          ...sshConfig,
-          command: `mkdir -p ${shellEscapePath(remoteWorkDir)}`,
-        });
-
-        for (const file of result.plan.scaffold.files) {
-          const localFilePath = `${workDir}/${file.path}`;
-          const remoteFilePath = `${remoteWorkDir}/${file.path}`;
-          const remoteParent = parentRemotePath(remoteFilePath);
-          if (remoteParent && remoteParent !== '.') {
-            await runSshExec({
-              ...sshConfig,
-              command: `mkdir -p ${shellEscapePath(remoteParent)}`,
-            });
-          }
-
-          let content: string | null = null;
-          try {
-            const localFileResponse = await invoke<{ content: string }>('read_file', {
-              path: localFilePath,
-              workDir: null,
-            });
-            content = localFileResponse.content;
-          } catch {
-            content = null;
-          }
-          if (content == null) {
-            continue;
-          }
-
-          // Preserve existing experiment files on remote host (never clobber)
-          const checkRemote = await runSshExec({
-            ...sshConfig,
-            command: `if [ -f ${shellEscapePath(remoteFilePath)} ]; then echo "EXISTS"; fi`,
-          });
-          if (checkRemote.stdout?.trim() === 'EXISTS') {
-            continue;
-          }
-
-          await runSshUpload({
-            ...sshConfig,
-            content,
-            remotePath: remoteFilePath,
-          });
-        }
-
-        const remoteBootstrapResultPath = `${remoteWorkDir}/.pipi-shrimp/autoresearch.bootstrap.json`;
-        await runSshExec({
-          ...sshConfig,
-          command: `mkdir -p ${shellEscapePath(parentRemotePath(remoteBootstrapResultPath))}`,
-        });
-        await runSshUpload({
-          ...sshConfig,
-          content: JSON.stringify(result, null, 2),
-          remotePath: remoteBootstrapResultPath,
-        });
-
-        await runSshExec({
-          ...sshConfig,
-          command: [
-            `cd ${shellEscapePath(remoteWorkDir)}`,
-            'if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then',
-            '  git init',
-            '  git config user.name "AutoResearch"',
-            '  git config user.email "autoresearch@local"',
-            '  git add -A',
-            '  git commit --allow-empty -m "Initial bootstrap scaffold"',
-            'fi',
-          ].join('\n'),
+        await uploadBootstrapScaffoldWithRollback({
+          sshConfig,
+          localWorkDir: workDir,
+          remoteWorkDir,
+          files: result.plan.scaffold.files,
+          bootstrapResultJson: JSON.stringify(result, null, 2),
         });
       }
 

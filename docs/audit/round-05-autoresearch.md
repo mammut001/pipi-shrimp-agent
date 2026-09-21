@@ -17,7 +17,7 @@
 | R5-03 | P0 | `loopEngine.ts:1744-1820` | agent 错误设 `failed` 但 `loopState` 不停，迭代可能继续 | throw 后无第二次 sendMessage |
 | R5-04 | Medium | `AutoResearch.tsx:373-380` | unmount 仅 stop `running`，`paused` 不 stop | pause + unmount 停止 loop |
 | R5-05 | P0 | `autoresearchStore.ts:632-659` | `deleteRun` 不 `stopExperimentLoop` | 删 active run 停止 SSH/LLM |
-| R5-06 | Medium | `BootstrapChatView.tsx:174-219` | SSH 上传无事务/回滚 | 第 N 个文件失败处理 |
+| R5-06 | Medium | `BootstrapChatView.tsx` + `uploadBootstrapScaffold.ts` | SSH 上传无事务/回滚 ✅ Fixed 2026-09-21 | 第 N 个文件失败处理 |
 | R5-07 | Medium | `BootstrapChatView.tsx:222-233` | handoff 无 lifecycle lock ✅ Fixed 2026-09-21 | 有 active run 时 block handoff |
 | R5-08 | Medium | `BootstrapChatView.tsx:169-170` | 用 `guessMetricDirection` 非 plan direction ✅ Fixed 2026-09-21 | direction 跟 plan 一致 |
 | R5-09 | Low | `loopEngine.ts:1132-1134` | pause 用 1s setTimeout 无 AbortSignal | stop during pause <200ms |

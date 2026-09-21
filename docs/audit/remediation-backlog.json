@@ -506,11 +506,15 @@
     "title": "SSH upload has no transaction or rollback",
     "lane": "C. AutoResearch Runtime",
     "severity": "Medium",
-    "status": "open",
+    "status": "fixed",
+    "fixNote": "2026-09-21: Extracted uploadBootstrapScaffoldWithRollback — tracks newly uploaded remote paths (skips EXISTS), best-effort rm -f rollback on Nth-file/bootstrap.json/git-init failure; handleReadyResult catch clears bootstrappedAtRef and skips onReady/start. Unit tests cover fail-on-2nd-file + git-init rollback. AUDIT-FIX [R5-06].",
     "whyItMatters": "Partial upload corrupts remote experiment state",
-    "files": ["src/components/autoresearch/BootstrapChatView.tsx"],
+    "files": [
+      "src/components/autoresearch/BootstrapChatView.tsx",
+      "src/services/autoresearch/bootstrap/uploadBootstrapScaffold.ts"
+    ],
     "smallestPrScope": "Rollback remote files on Nth failure",
-    "tests": ["R5-16 partial upload"],
+    "tests": ["uploadBootstrapScaffold.test.ts", "R5-16 partial upload"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": true,
