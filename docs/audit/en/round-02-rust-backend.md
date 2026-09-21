@@ -28,7 +28,7 @@ Chinese version: [../round-02-rust-backend.md](../round-02-rust-backend.md)
 | R2-09 | High | `ssh_bridge.rs:134-137` | `SSHPASS` visible in process list | Password not in cmdline | ✅ Fixed 2026-09-21 |
 | R2-10 | High | `browser/actions/navigate.rs` | CDP goto has no scheme allowlist | `file://` rejected | ✅ Fixed 2026-09-21 |
 | R2-11 | High | `mcp/transport/stdio.rs` | MCP stdio `cwd` unsandboxed | `cwd: /etc` rejected | ✅ Fixed 2026-09-21 |
-| R2-12 | High | `commands/mcp.rs:79-88` | `mcp_call_tool` has no policy layer | Destructive MCP needs approval | ❌ Open |
+| R2-12 | High | `commands/mcp.rs` | `mcp_call_tool` has no policy layer | Destructive MCP needs approval | ✅ Fixed 2026-09-21 |
 
 ## Medium (15)
 

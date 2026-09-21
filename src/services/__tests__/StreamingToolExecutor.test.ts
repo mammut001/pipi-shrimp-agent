@@ -160,14 +160,14 @@ describe('StreamingToolExecutor.executeBatch', () => {
     expect(result.results[0]?.content.trim().length).toBeGreaterThan(0);
   });
 
-  it('requires backend-approved confirmation before executing MCP tools', async () => {
+  it('requires backend-approved confirmation before executing destructive MCP tools', async () => {
     mockInvoke.mockImplementation(async (command: string) => {
       if (command === 'preview_tool_policy') {
         return {
           toolCallId: 'tool-1',
-          toolName: 'mcp__server__fetch_data',
+          toolName: 'mcp__server__delete_file',
           decision: 'awaiting_confirmation',
-          reason: 'MCP tool execution requires explicit approval.',
+          reason: 'Destructive MCP tool execution requires explicit approval.',
           approvalToken: 'approval-1',
         };
       }
@@ -183,7 +183,7 @@ describe('StreamingToolExecutor.executeBatch', () => {
     const requestPermission = jest.fn(async () => true);
     const executor = new StreamingToolExecutor({ timeoutMs: 5000 });
     const result = await executor.executeBatch([
-      { id: 'tool-1', name: 'mcp__server__fetch_data', arguments: { query: 'x' } },
+      { id: 'tool-1', name: 'mcp__server__delete_file', arguments: { path: '/tmp/x' } },
     ], {
       sessionId: 'session-1',
       source: 'assistant_tool_call',
@@ -192,21 +192,75 @@ describe('StreamingToolExecutor.executeBatch', () => {
 
     expect(requestPermission).toHaveBeenCalledWith({
       id: 'tool-1',
-      name: 'mcp__server__fetch_data',
-      arguments: '{"query":"x"}',
-      reason: 'MCP tool execution requires explicit approval.',
+      name: 'mcp__server__delete_file',
+      arguments: '{"path":"/tmp/x"}',
+      reason: 'Destructive MCP tool execution requires explicit approval.',
       approvalToken: 'approval-1',
       source: 'assistant_tool_call',
       workDir: undefined,
     });
     expect(mockInvoke).toHaveBeenCalledWith('mcp_call_tool', {
       serverId: 'runtime-1',
-      toolName: 'fetch_data',
-      args: { query: 'x' },
+      toolName: 'delete_file',
+      args: { path: '/tmp/x' },
+      sessionId: 'session-1',
+      approvalToken: 'approval-1',
+      source: 'assistant_tool_call',
+      executionMode: null,
+      mcpToolName: 'mcp__server__delete_file',
+      toolCallId: 'tool-1',
     });
     expect(result.results[0]).toEqual(expect.objectContaining({
       id: 'tool-1',
       content: 'ok',
+      is_error: false,
+    }));
+  });
+
+  it('executes non-destructive MCP tools without confirmation and forwards policy context', async () => {
+    mockInvoke.mockImplementation(async (command: string) => {
+      if (command === 'preview_tool_policy') {
+        return {
+          toolCallId: 'tool-2',
+          toolName: 'mcp__server__fetch_data',
+          decision: 'allowed',
+        };
+      }
+      if (command === 'mcp_call_tool') {
+        return {
+          content: [{ type: 'text', text: 'fetched' }],
+          is_error: false,
+        };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    const requestPermission = jest.fn(async () => true);
+    const executor = new StreamingToolExecutor({ timeoutMs: 5000 });
+    const result = await executor.executeBatch([
+      { id: 'tool-2', name: 'mcp__server__fetch_data', arguments: { query: 'x' } },
+    ], {
+      sessionId: 'session-1',
+      source: 'assistant_tool_call',
+      executionMode: 'agent',
+      requestPermission,
+    });
+
+    expect(requestPermission).not.toHaveBeenCalled();
+    expect(mockInvoke).toHaveBeenCalledWith('mcp_call_tool', {
+      serverId: 'runtime-1',
+      toolName: 'fetch_data',
+      args: { query: 'x' },
+      sessionId: 'session-1',
+      approvalToken: null,
+      source: 'assistant_tool_call',
+      executionMode: 'agent',
+      mcpToolName: 'mcp__server__fetch_data',
+      toolCallId: 'tool-2',
+    });
+    expect(result.results[0]).toEqual(expect.objectContaining({
+      id: 'tool-2',
+      content: 'fetched',
       is_error: false,
     }));
   });

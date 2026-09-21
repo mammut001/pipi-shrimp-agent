@@ -113,6 +113,26 @@ fn is_mcp_tool(name: &str) -> bool {
     name.starts_with("mcp__")
 }
 
+/// Heuristic: treat MCP tools whose leaf name contains destructive verbs
+/// as requiring explicit approval (R2-12).
+///
+/// Accepts either the full agent name (`mcp__server__delete_file`) or the
+/// raw MCP tool leaf (`delete_file`). Keep the keyword list simple and
+/// conservative — false positives only add an approval prompt.
+pub(crate) fn is_destructive_mcp_tool(tool_name: &str) -> bool {
+    const KEYWORDS: &[&str] = &[
+        "delete", "remove", "write", "put", "update", "create", "send",
+        "execute", "run", "destroy", "drop", "unlink", "truncate",
+        "overwrite", "insert", "patch", "upload", "move", "rename", "kill",
+    ];
+    let leaf = tool_name
+        .rsplit("__")
+        .next()
+        .unwrap_or(tool_name)
+        .to_ascii_lowercase();
+    KEYWORDS.iter().any(|kw| leaf.contains(kw))
+}
+
 fn is_ssh_tool(name: &str) -> bool {
     matches!(name, "ssh_exec" | "ssh_read_file" | "ssh_upload_file")
 }
@@ -464,7 +484,10 @@ fn evaluate_request_policy(
             ToolExecutionSource::Unknown => {
                 reject("Unknown execution source cannot run MCP tools.")
             }
-            _ => require_confirmation("MCP tool execution requires explicit approval."),
+            _ if is_destructive_mcp_tool(&req.name) => require_confirmation(
+                "Destructive MCP tool execution requires explicit approval.",
+            ),
+            _ => allow(None),
         });
     }
 

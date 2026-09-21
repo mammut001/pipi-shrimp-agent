@@ -46,7 +46,10 @@ export function useMCP() {
         );
       }
 
-      return MCPService.callTool(runtime.id, parsed.toolName, args);
+      return MCPService.callTool(runtime.id, parsed.toolName, args, {
+        mcpToolName: normalizedName,
+        source: 'user_requested_command',
+      });
     },
     [store.runtimes],
   );
