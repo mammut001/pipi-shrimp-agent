@@ -91,10 +91,11 @@ export interface Session {
   workingFiles?: ImportedFile[]; // session-level working files
   permissionMode?: 'standard' | 'auto-edits' | 'bypass' | 'plan-only'; // NEW: execution permission mode
   /**
-   * Chat execution mode (5-mode dropdown). When present, this is the source
-   * of truth for the composer; `permissionMode` is derived from it via
-   * `resolvePermissionMode`. Older sessions without this field fall back to
-   * the default Ask mode and `permissionMode` is still honored.
+   * Chat execution mode (Ask / Plan / Danger). When present, this is the
+   * source of truth for the composer; `permissionMode` is derived from it via
+   * `resolvePermissionMode`. Historical Debug / Agent / Bypass ids hydrate
+   * into the three active modes. Older sessions without this field fall back
+   * to the default Ask mode and `permissionMode` is still honored.
    */
   executionMode?: import('@/services/executionMode').ExecutionModeId;
 }
