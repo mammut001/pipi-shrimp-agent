@@ -25,6 +25,47 @@ pub struct NavigateOutput {
 
 pub struct NavigateAction;
 
+/// AUDIT-FIX [R2-10] — CDP `page.goto` must only accept http(s) (plus exact
+/// `about:blank` used for blank-page launches). Rejects `file`, `javascript`,
+/// `data`, and other non-http(s) schemes before any CDP call.
+pub(crate) fn assert_http_navigation_url(url: &str) -> Result<(), BrowserActionError> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Err(BrowserActionError::navigation_failed(
+            "navigation URL cannot be empty",
+        ));
+    }
+
+    // Exact blank page only — used by session/new_page launches.
+    if trimmed == "about:blank" {
+        return Ok(());
+    }
+
+    let scheme = trimmed
+        .split_once(':')
+        .map(|(scheme, _)| scheme)
+        .unwrap_or("");
+
+    if scheme.is_empty() {
+        return Err(BrowserActionError::navigation_failed(format!(
+            "Blocked navigation: URL must use http or https scheme (got no scheme): {trimmed}"
+        )));
+    }
+
+    let scheme_lower = scheme.to_ascii_lowercase();
+    let rest = &trimmed[scheme.len()..];
+    let is_http_absolute =
+        (scheme_lower == "http" || scheme_lower == "https") && rest.starts_with("://");
+
+    if is_http_absolute {
+        return Ok(());
+    }
+
+    Err(BrowserActionError::navigation_failed(format!(
+        "Blocked navigation to non-http(s) URL scheme '{scheme}': only http, https, and about:blank are allowed"
+    )))
+}
+
 #[async_trait]
 impl BrowserAction for NavigateAction {
     type Input = NavigateInput;
@@ -40,6 +81,8 @@ impl BrowserAction for NavigateAction {
             .map(ToOwned::to_owned);
 
         if let Some(url) = url.as_ref() {
+            assert_http_navigation_url(url)?;
+
             let nav_timeout_ms = input
                 .timeout_ms
                 .unwrap_or_else(|| ActionTimeoutPolicy::default().timeout_ms);
@@ -117,4 +160,65 @@ pub async fn navigate(ctx: &ActionContext, input: NavigateInput) -> ActionResult
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::assert_http_navigation_url;
+
+    fn assert_blocked(url: &str) {
+        let err = assert_http_navigation_url(url).expect_err("expected blocked URL");
+        assert_eq!(err.code, "browser.navigation_failed");
+        assert!(
+            err.message.contains("Blocked") || err.message.contains("cannot be empty"),
+            "unexpected message for {url}: {}",
+            err.message
+        );
+    }
+
+    #[test]
+    fn test_file_scheme_rejected() {
+        assert_blocked("file:///etc/passwd");
+        assert_blocked("FILE:///tmp/secret");
+        assert_blocked("file://localhost/tmp/x");
+    }
+
+    #[test]
+    fn test_http_https_schemes_allowed() {
+        assert_http_navigation_url("https://example.com").unwrap();
+        assert_http_navigation_url("http://example.com/path?q=1").unwrap();
+        assert_http_navigation_url("  HTTPS://Example.COM  ").unwrap();
+        assert_http_navigation_url("HTTP://127.0.0.1:8080/").unwrap();
+    }
+
+    #[test]
+    fn test_dangerous_and_non_http_schemes_rejected() {
+        assert_blocked("javascript:alert(1)");
+        assert_blocked("data:text/html,hi");
+        assert_blocked("about:srcdoc");
+        assert_blocked("about:blank#frag");
+        assert_blocked("blob:https://example.com/uuid");
+        assert_blocked("chrome://settings");
+        assert_blocked("example.com");
+        assert_blocked("//evil.example");
+        assert_blocked("");
+        assert_blocked("   ");
+    }
+
+    #[test]
+    fn test_about_blank_exact_allowed() {
+        assert_http_navigation_url("about:blank").unwrap();
+        assert_blocked("ABOUT:blank");
+        assert_blocked("about:BLANK");
+    }
+
+    #[test]
+    fn test_reject_message_mentions_scheme() {
+        let err = assert_http_navigation_url("file:///etc/passwd").unwrap_err();
+        assert!(
+            err.message.contains("file"),
+            "message should mention scheme: {}",
+            err.message
+        );
+    }
 }
