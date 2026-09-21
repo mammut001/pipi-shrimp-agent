@@ -233,6 +233,7 @@ pub fn is_within_or_matches_blocked_prefix(path: &str) -> bool {
                 return true;
             }
             // Also block the directory itself (e.g. `/etc` for prefix `/etc/`).
+            // AUDIT-FIX R2-07 — exact roots without trailing slash must match.
             let trimmed = prefix.trim_end_matches('/');
             if !trimmed.is_empty() && path == trimmed {
                 return true;
@@ -242,7 +243,15 @@ pub fn is_within_or_matches_blocked_prefix(path: &str) -> bool {
     for prefix in WINDOWS_BLOCKED_PREFIXES {
         // WINDOWS_BLOCKED_PREFIXES use the canonical upper-case drive letter
         // so we compare against the lowered copy of the input.
-        if lower.starts_with(&prefix.to_lowercase()) {
+        let prefix_lower = prefix.to_lowercase();
+        if lower.starts_with(&prefix_lower) {
+            return true;
+        }
+        // AUDIT-FIX R2-07 — also block exact Windows roots without trailing slash
+        // (e.g. `C:\\Windows` for prefix `C:\\WINDOWS\\`). Sibling prefixes like
+        // `C:\\WindowsFoo` must NOT match.
+        let trimmed = prefix_lower.trim_end_matches('\\');
+        if !trimmed.is_empty() && lower == trimmed {
             return true;
         }
     }
@@ -701,5 +710,67 @@ mod tests {
         assert!(is_within_dir(&nested, &parent));
 
         fs::remove_dir_all(root).expect("temp root should be removed");
+    }
+
+    /// AUDIT-FIX R2-07 — Exact system roots without a trailing slash must be
+    /// treated as blocked (e.g. `/sys` for prefix `/sys/`). Sibling names like
+    /// `/etcd` must NOT match `/etc/`.
+    #[test]
+    fn test_blocked_sys_directory() {
+        let exact_unix_roots = ["/sys", "/proc", "/etc", "/dev", "/usr", "/boot"];
+        for root in exact_unix_roots {
+            assert!(
+                is_within_or_matches_blocked_prefix(root),
+                "exact root `{root}` must match blocked prefix"
+            );
+            assert!(
+                is_within_or_matches_blocked_prefix(&format!("{root}/")),
+                "trailing-slash form `{root}/` must still match"
+            );
+            assert!(
+                is_within_or_matches_blocked_prefix(&format!("{root}/anything")),
+                "child of `{root}` must match"
+            );
+        }
+
+        // Prefix-separator guarantee: `/etcd` is NOT under `/etc/`.
+        assert!(
+            !is_within_or_matches_blocked_prefix("/etcd"),
+            "/etcd must not match blocked prefix /etc/"
+        );
+        assert!(!is_within_or_matches_blocked_prefix("/etcetera"));
+        assert!(!is_within_or_matches_blocked_prefix("/system"));
+        assert!(!is_within_or_matches_blocked_prefix("/sysctl"));
+
+        // Windows exact roots (string-level check; host OS independent).
+        let exact_windows_roots = [
+            "C:\\Windows",
+            "C:\\Program Files",
+            "C:\\Program Files (x86)",
+            "C:\\Users\\Default",
+            "c:\\windows", // case-insensitive
+        ];
+        for root in exact_windows_roots {
+            assert!(
+                is_within_or_matches_blocked_prefix(root),
+                "exact Windows root `{root}` must match blocked prefix"
+            );
+        }
+        assert!(
+            !is_within_or_matches_blocked_prefix("C:\\WindowsFoo"),
+            "sibling prefix C:\\WindowsFoo must not match C:\\Windows\\"
+        );
+
+        // validate_path must still deny exact `/sys` (blocked-prefix and/or
+        // canonicalize path — either denial is acceptable).
+        let root = create_temp_root("blocked-sys");
+        let work_dir = root.to_string_lossy().to_string();
+        assert!(
+            validate_path("/sys", Some(work_dir.as_str())).is_err(),
+            "validate_path(\"/sys\") must be denied"
+        );
+        assert!(validate_path("/proc", Some(work_dir.as_str())).is_err());
+        assert!(validate_path("/etc", Some(work_dir.as_str())).is_err());
+        let _ = fs::remove_dir_all(root);
     }
 }
