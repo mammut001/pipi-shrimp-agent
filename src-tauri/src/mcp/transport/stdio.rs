@@ -16,6 +16,19 @@ const ALLOWED_COMMANDS: &[&str] = &[
     "npx", "node", "python", "python3", "uvx", "uv", "deno", "bun", "docker",
 ];
 
+/// AUDIT-FIX [R2-11] — Validate MCP stdio spawn `cwd` through path_security
+/// before `Command::current_dir`. MCP transport has no work_dir scope, so we
+/// call `validate_path(cwd, None)` which requires an absolute path, resolves
+/// symlinks, and rejects blocked system prefixes (e.g. `/etc`).
+fn validate_mcp_stdio_cwd(cwd: &str) -> Result<(), MCPError> {
+    crate::commands::path_security::validate_path(cwd, None).map_err(|e| {
+        MCPError::ConnectionFailed(format!(
+            "MCP stdio cwd rejected by path sandbox: {}",
+            e.message
+        ))
+    })
+}
+
 /// Validate that a command is safe to execute.
 fn validate_command(command: &str) -> Result<(), MCPError> {
     // Reject empty commands
@@ -114,6 +127,7 @@ impl Transport for StdioTransport {
             cmd.env(k, v);
         }
         if let Some(cwd) = &self.cwd {
+            validate_mcp_stdio_cwd(cwd)?;
             cmd.current_dir(cwd);
         }
 
@@ -249,5 +263,51 @@ impl Drop for StdioTransport {
         if let Some(task) = self.stderr_task.take() {
             task.abort();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_mcp_stdio_cwd;
+    use std::fs;
+
+    #[test]
+    fn test_cwd_sandbox() {
+        // Blocked system roots must be rejected before spawn.
+        let err = validate_mcp_stdio_cwd("/etc")
+            .expect_err("cwd=/etc must be rejected by path sandbox");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("cwd rejected") || msg.contains("not allowed") || msg.contains("/etc"),
+            "unexpected rejection message: {msg}"
+        );
+
+        let err = validate_mcp_stdio_cwd("/etc/passwd")
+            .expect_err("cwd under /etc must be rejected");
+        assert!(
+            err.to_string().contains("rejected")
+                || err.to_string().contains("not allowed")
+                || err.to_string().contains("/etc"),
+            "unexpected rejection message: {err}"
+        );
+
+        // An existing temp directory outside blocked prefixes is accepted.
+        let allowed = std::env::temp_dir().join(format!(
+            "pipi-mcp-stdio-cwd-ok-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&allowed).expect("create temp cwd");
+        let allowed_str = allowed.to_string_lossy().to_string();
+        validate_mcp_stdio_cwd(&allowed_str)
+            .unwrap_or_else(|e| panic!("temp cwd should be allowed: {e}"));
+        let _ = fs::remove_dir_all(&allowed);
+
+        // Relative paths have no work_dir in MCP spawn context — reject.
+        let err = validate_mcp_stdio_cwd("relative/cwd")
+            .expect_err("relative cwd must be rejected without work_dir");
+        assert!(
+            err.to_string().contains("rejected") || err.to_string().contains("Relative"),
+            "unexpected relative rejection: {err}"
+        );
     }
 }
