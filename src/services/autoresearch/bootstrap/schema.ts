@@ -63,6 +63,7 @@ export const BootstrapPlanSchema: z.ZodType<BootstrapPlan> = z.object({
   researchGoal: z.string().min(1),
   successCriteria: z.string().min(1),
   primaryMetric: z.string().min(1),
+  direction: z.enum(['higher', 'lower']).optional(),
   secondaryMetrics: z.array(z.string().min(1)),
   papers: z.array(PaperReferenceSchema),
   baselines: z.array(ExtractedBaselineSchema).min(1),

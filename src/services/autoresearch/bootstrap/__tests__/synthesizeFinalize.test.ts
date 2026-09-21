@@ -58,10 +58,21 @@ describe('synthesizeBootstrapFinalizeFromRecipe', () => {
     expect(result?.status).toBe('ready');
     expect(result?.plan.scaffold.workDir).toBe('/tmp/harness-smoke');
     expect(result?.plan.primaryMetric).toBe('cv_accuracy');
+    expect(result?.plan.direction).toBe('higher');
     expect(result?.plan.baselines).toHaveLength(1);
     expect(result?.plan.baselines[0]?.reportedMetrics[0]?.value).toBe(0.91);
     expect(result?.warnings).toContain(HOST_SYNTHESIZED_BOOTSTRAP_FINALIZE_WARNING);
     expect(result?.unresolvedQuestions).toEqual([]);
+  });
+
+
+  it('copies recipe direction into the synthesized plan (lower)', () => {
+    const lowerRecipe = recipe();
+    lowerRecipe.baselineAndMetric.direction = 'lower';
+    lowerRecipe.baselineAndMetric.primaryMetric = 'val_loss';
+    const result = synthesizeBootstrapFinalizeFromRecipe(lowerRecipe);
+    expect(result?.plan.direction).toBe('lower');
+    expect(result?.plan.primaryMetric).toBe('val_loss');
   });
 
   it('returns null when the recipe is missing a goal or metric', () => {

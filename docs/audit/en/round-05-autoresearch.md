@@ -19,7 +19,7 @@ Chinese version: [../round-05-autoresearch.md](../round-05-autoresearch.md)
 | R5-05 | P0 | `autoresearchStore.ts:632-659` | `deleteRun` did not call `stopExperimentLoop` | Deleting active run stops SSH/LLM | ✅ Fixed |
 | R5-06 | Medium | `BootstrapChatView.tsx:174-219` | SSH upload has no transaction/rollback | Handle failure on Nth file | Open |
 | R5-07 | Medium | `BootstrapChatView.tsx:222-233` | Handoff has no lifecycle lock | Block handoff when active run exists | ✅ Fixed 2026-09-21 |
-| R5-08 | Medium | `BootstrapChatView.tsx:169-170` | Uses `guessMetricDirection` not plan direction | Direction matches plan | Open |
+| R5-08 | Medium | `BootstrapChatView.tsx:169-170` | Uses `guessMetricDirection` not plan direction | Direction matches plan | ✅ Fixed 2026-09-21 |
 | R5-09 | Low | `loopEngine.ts:1132-1134` | Pause uses 1s setTimeout without AbortSignal | Stop during pause <200ms | Open |
 | R5-10 | Medium | `AutoResearchPanel.tsx:322-336` | Copy uses raw `visibleLiveOutput` not redacted | Clipboard has no API key | Open |
 | R5-11 | Medium | `AutoResearchPanel.tsx:479-488` | Recovery button only opens modal, does not execute action | retry_iteration should call handler | Open |
