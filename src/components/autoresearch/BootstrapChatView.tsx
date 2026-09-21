@@ -19,6 +19,11 @@ import {
   synthesizeBootstrapFinalizeFromRecipe,
 } from '@/services/autoresearch/bootstrap/synthesizeFinalize';
 import { startAutoResearchRun, logAutoResearchSetupFailure } from '@/services/autoresearch/setupFlow';
+import {
+  buildAutoResearchRunLockMessage,
+  getAutoResearchLifecycleLock,
+  useAutoResearchLifecycleLock,
+} from '@/services/autoresearch/runLock';
 import { getAutoResearchDefaultConfig } from '@/services/autoresearch/defaultConfig';
 import { normalizeSuccessCriteria } from '@/services/goal';
 import type { SshConfig } from '@/store/autoresearchStore';
@@ -161,6 +166,8 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
   const warnings = useBootstrapPlanStore((state) => state.warnings);
   const readyResult = useBootstrapPlanStore((state) => state.readyResult);
   const storeLoopState = useAutoResearchStore((state) => state.loopState);
+  // AUDIT-FIX [R5-07]: reactive lock so Start stays disabled while another run is live.
+  const lifecycleLock = useAutoResearchLifecycleLock();
   const storeCurrentIteration = useAutoResearchStore((state) => state.currentIteration);
   const storeMaxIterations = useAutoResearchStore((state) => state.maxIterations);
   const selectedRunContext = useAutoResearchStore(getSelectedAutoResearchRunContext);
@@ -276,6 +283,15 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
         (result.unresolvedQuestions || []).filter(Boolean).join(' ')
         || 'Bootstrap plan needs confirmation before starting AutoResearch.',
       );
+      return;
+    }
+    // AUDIT-FIX [R5-07]: Block bootstrap handoff while an AutoResearch loop/run
+    // is already active (running/paused/non-idle lock). Prevents two concurrent
+    // runs and keeps the Start/handoff UI locked with a clear error message.
+    const lifecycleState = useAutoResearchStore.getState();
+    const handoffLock = getAutoResearchLifecycleLock(lifecycleState);
+    if (handoffLock.locked) {
+      setError(buildAutoResearchRunLockMessage('start a new run', handoffLock));
       return;
     }
     if (bootstrappedAtRef.current === result.createdAt) {
@@ -766,15 +782,24 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
             className="w-16 rounded border border-emerald-300 bg-white px-2 py-1 text-xs text-emerald-900 focus:outline-none focus:ring-1 focus:ring-emerald-500"
           />
           <button
+            type="button"
+            data-testid="bootstrap-start-handoff"
+            aria-disabled={lifecycleLock.locked}
+            title={lifecycleLock.locked ? buildAutoResearchRunLockMessage('start a new run', lifecycleLock) : undefined}
             onClick={() => handleReadyResult(readyResult, iterations)}
-            className="w-full rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-1.5 text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1 font-sans sm:ml-auto sm:w-auto"
+            className={`w-full rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-1.5 text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1 font-sans sm:ml-auto sm:w-auto ${lifecycleLock.locked ? 'cursor-not-allowed opacity-60' : ''}`}
           >
             <span>🚀</span> {t('autoresearch.bootstrap.start')}
           </button>
+          {lifecycleLock.locked && (
+            <p className="w-full text-xs text-amber-800 sm:basis-full" data-testid="bootstrap-handoff-lock-hint">
+              {buildAutoResearchRunLockMessage('start a new run', lifecycleLock)}
+            </p>
+          )}
         </div>
       </div>
     );
-  }, [readyResult, iterations, handoffSummary, handleReadyResult, sshConfig]);
+  }, [readyResult, iterations, handoffSummary, handleReadyResult, sshConfig, lifecycleLock]);
 
   return (
     <div className={`min-h-0 flex-1 gap-4 p-4 w-full max-w-7xl mx-auto flex flex-col ${hasStarted ? 'lg:grid lg:grid-cols-[minmax(0,1fr)_280px]' : ''}`}>

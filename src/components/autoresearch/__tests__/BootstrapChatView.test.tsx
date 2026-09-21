@@ -6,6 +6,8 @@ import { act } from 'react-dom/test-utils';
 import { BootstrapChatView } from '../BootstrapChatView';
 import { useBootstrapPlanStore } from '@/services/autoresearch/bootstrap/bootstrapPlanStore';
 import { clearPersistedBootstrapSession } from '@/services/autoresearch/bootstrap/bootstrapSessionPersist';
+import { useAutoResearchStore } from '@/store/autoresearchStore';
+import type { AutoResearchRunRecord } from '@/services/autoresearch/history';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -71,6 +73,12 @@ describe('BootstrapChatView (Guided UI)', () => {
     });
     useBootstrapPlanStore.getState().reset();
     clearPersistedBootstrapSession();
+    useAutoResearchStore.setState({
+      id: '',
+      loopState: 'idle',
+      runHistory: [],
+      selectedRunId: null,
+    });
   });
 
   afterEach(() => {
@@ -691,4 +699,94 @@ describe('BootstrapChatView (Guided UI)', () => {
     expect(container.textContent).toContain('~/remote-experiment');
     expect(container.textContent).not.toContain('/tmp/local-temp');
   });
+
+  function seedActiveAutoResearchRun(status: AutoResearchRunRecord['status'] = 'running') {
+    const activeRun = {
+      id: 'run-active',
+      title: 'active · cv_accuracy',
+      status,
+      createdAt: '2026-05-14T00:00:00.000Z',
+      updatedAt: '2026-05-14T00:00:01.000Z',
+      config: {
+        experimentDir: '/tmp/exp',
+        workdir: '/tmp/work',
+        metric: 'cv_accuracy',
+        direction: 'higher' as const,
+        iterations: 5,
+        configSnapshot: {
+          configName: 'Primary',
+          provider: 'openai',
+          model: 'gpt-4.1',
+          keyPresent: true,
+          source: 'settings.activeConfig',
+        },
+      },
+      currentIteration: 1,
+      bestMetricValue: null,
+      bestIteration: null,
+      failureCount: 0,
+      iterations: [],
+      events: [],
+    } as AutoResearchRunRecord;
+
+    useAutoResearchStore.setState({
+      id: 'run-active',
+      loopState: status === 'paused' ? 'paused' : 'running',
+      runHistory: [activeRun],
+      selectedRunId: 'run-active',
+    });
+  }
+
+  it('blocks handoff when an AutoResearch run is already active', async () => {
+    // AUDIT-FIX [R5-07]: active run must block bootstrap Start / handoff.
+    seedActiveAutoResearchRun('running');
+
+    act(() => {
+      root.render(<BootstrapChatView />);
+    });
+
+    await act(async () => {
+      const btn = container.querySelector('[data-testid="send-task"]') as HTMLButtonElement;
+      btn.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    act(() => {
+      useBootstrapPlanStore.getState().setReadyResult({
+        status: 'ready',
+        createdAt: '2026-09-21T00:00:00.000Z',
+        warnings: [],
+        plan: {
+          researchGoal: 'Goal text',
+          successCriteria: 'Criteria text',
+          primaryMetric: 'cv_accuracy',
+          baselines: [],
+          scaffold: {
+            workDir: '/tmp/workdir',
+            files: [],
+          },
+        },
+      } as any);
+    });
+
+    const startBtn = container.querySelector('[data-testid="bootstrap-start-handoff"]') as HTMLButtonElement;
+    expect(startBtn).toBeTruthy();
+    expect(startBtn.getAttribute('aria-disabled')).toBe('true');
+
+    const lockHint = container.querySelector('[data-testid="bootstrap-handoff-lock-hint"]');
+    expect(lockHint?.textContent).toContain('AutoResearch is still running');
+    expect(lockHint?.textContent).toContain('Stop the active run before you start a new run');
+
+    await act(async () => {
+      startBtn.click();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+
+    expect(mockStartAutoResearchRun).not.toHaveBeenCalled();
+    const errorPanel = container.querySelector('[data-testid="bootstrap-error-panel"]');
+    expect(errorPanel?.textContent).toContain('AutoResearch is still running');
+    expect(errorPanel?.textContent).toContain('Stop the active run before you start a new run');
+    expect(container.textContent).not.toMatch(/autoresearch\.bootstrap\.started:/);
+  });
+
 });
