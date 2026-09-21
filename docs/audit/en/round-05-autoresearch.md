@@ -23,8 +23,8 @@ Chinese version: [../round-05-autoresearch.md](../round-05-autoresearch.md)
 | R5-09 | Low | `loopEngine.ts:1132-1134` | Pause uses 1s setTimeout without AbortSignal | Stop during pause <200ms | ✅ Fixed (code 2026-06-24; verified 2026-09-21) |
 | R5-10 | Medium | `AutoResearchPanel.tsx:322-336` | Copy uses raw `visibleLiveOutput` not redacted | Clipboard has no API key | ✅ Fixed 2026-09-21 |
 | R5-11 | Medium | `AutoResearchPanel.tsx:479-488` | Recovery button only opens modal, does not execute action | retry_iteration should call handler | ✅ Fixed 2026-09-21 |
-| R5-12 | Low | `autoresearchStore.ts:1036-1042` | `failureCount` vs `consecutiveFailures` inconsistent | Consistent consecutive failure count | Open |
-| R5-13 | Low | `autoresearchStore.ts:1256-1273` | Close flush only when timer non-null | Flush after failed persist on close | Open |
+| R5-12 | Low | `autoresearchStore.ts:1036-1042` | `failureCount` vs `consecutiveFailures` inconsistent | Consistent consecutive failure count | ✅ Fixed 2026-09-21 |
+| R5-13 | Low | `autoresearchStore.ts:1256-1273` | Close flush only when timer non-null | Flush after failed persist on close | ✅ Fixed 2026-09-21 |
 | R5-14 | Test-gap | `chatAdapter.test.ts` | No signal propagation test | See R5-01 | Partially addressed |
 | R5-15 | Test-gap | `loopEngine.integration.test.ts` | No stop/preflight/failed-continue tests | See R5-02/03/05 | Partially addressed |
 | R5-16 | Test-gap | `BootstrapChatView` | No SSH failure or double-Start tests | Partial upload + duplicate | ✅ Fixed 2026-09-21 |

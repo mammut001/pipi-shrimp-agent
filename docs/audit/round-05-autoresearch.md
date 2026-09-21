@@ -23,8 +23,8 @@
 | R5-09 | Low | `loopEngine.ts:1132-1134` | pause 用 1s setTimeout 无 AbortSignal ✅ Fixed (code 2026-06-24; verified 2026-09-21) | stop during pause <200ms |
 | R5-10 | Medium | `AutoResearchPanel.tsx:322-336` | copy 用 raw `visibleLiveOutput` 非 redacted ✅ Fixed 2026-09-21 | clipboard 无 API key |
 | R5-11 | Medium | `AutoResearchPanel.tsx:479-488` | recovery 按钮只开 modal 不执行动作 ✅ Fixed 2026-09-21 | retry_iteration 应调用 handler |
-| R5-12 | Low | `autoresearchStore.ts:1036-1042` | `failureCount` vs `consecutiveFailures` 不一致 | 连续失败计数一致 |
-| R5-13 | Low | `autoresearchStore.ts:1256-1273` | close flush 仅 timer 非 null 时 | 失败 persist 后 close 仍 flush |
+| R5-12 | Low | `autoresearchStore.ts:1036-1042` | `failureCount` vs `consecutiveFailures` 不一致 ✅ Fixed 2026-09-21 | 连续失败计数一致 |
+| R5-13 | Low | `autoresearchStore.ts:1256-1273` | close flush 仅 timer 非 null 时 ✅ Fixed 2026-09-21 | 失败 persist 后 close 仍 flush |
 | R5-14 | Test-gap | `chatAdapter.test.ts` | 无 signal 传播测试 | 见 R5-01 |
 | R5-15 | Test-gap | `loopEngine.integration.test.ts` | 无 stop/preflight/failed-continue | 见 R5-02/03/05 |
 | R5-16 | Test-gap | `BootstrapChatView` | SSH 失败、双点 Start ✅ Fixed 2026-09-21 | partial upload + duplicate |

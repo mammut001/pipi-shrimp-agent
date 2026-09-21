@@ -528,8 +528,8 @@ Items remediated per [README remediation section](./README.md#修复进展remedi
 | R5-09 | Pause 1s timeout not abortable | Low | fixed (code 2026-06-24; verified 2026-09-21) | Slow stop response | `loopEngine.ts` | AbortSignal on pause wait | waitForResumeOrAbort <200ms | Yes | No | No |
 | R5-10 | Copy leaks raw live output | Med | fixed (2026-09-21) | API keys in clipboard | `AutoResearchPanel.tsx`, DashboardView | Use redacted output | clipboard scan | No | Yes | No |
 | R5-11 | Recovery button opens modal only | Med | fixed (2026-09-21) | Broken recovery UX | `recoveryActions.ts`, Panel, DashboardView | Wire handler | retry_iteration fires | Yes | Yes | No |
-| R5-12 | `failureCount` inconsistency | Low | open | Wrong backoff / stop logic | `autoresearchStore.ts` | Unify counters | consecutive count | Yes | No | No |
-| R5-13 | Close flush on failed persist | Low | open | Lost metrics on close | `autoresearchStore.ts` | Flush regardless of timer | close after fail | Yes | No | No |
+| R5-12 | `failureCount` inconsistency | Low | fixed (2026-09-21) | Wrong backoff / stop logic | `autoresearchStore.ts` | Unify counters | consecutive count | Yes | No | No |
+| R5-13 | Close flush on failed persist | Low | fixed (2026-09-21) | Lost metrics on close | `autoresearchStore.ts` | Flush regardless of timer | close after fail | Yes | No | No |
 | R5-14 | chatAdapter signal test gap | — | test gap only | R5-01 fixed, test thin | `chatAdapter.test.ts` | Add abort test | T-04 | — | — | No |
 | R5-15 | loopEngine integration gaps | — | partially fixed | R5-03/05 fixed; preflight/stop thin | `loopEngine.integration.test.ts` | Add describe blocks | T-05, R5-02 | — | — | No |
 | R5-16 | BootstrapChatView test gap | — | fixed (tests 2026-09-21) | SSH/double-start untested | `BootstrapChatView` | New tests in BootstrapChatView.test.tsx | SSH fail + double-Start | — | — | No |
