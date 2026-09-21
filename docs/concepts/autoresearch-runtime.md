@@ -155,15 +155,17 @@ Defined in `src/services/autoresearch/history.ts`:
 | `draft` | Run record was created, no iteration has been started yet |
 | `running` | Loop engine is actively running iterations |
 | `waiting_rate_limit` | Provider reported a rate-limit; loop is backing off |
+| `paused` | User paused, or the AutoResearch page unmounted while live (`suspendExperimentLoopOnUnmount`); resumable |
 | `reflection_failed` | Reflection parsing failed for the latest iteration |
-| `stopped` | User pressed Stop; loop has drained the in-flight iteration |
+| `stopped` | User pressed Stop; in-flight AbortSignal fired and the loop exited |
 | `failed` | Loop hit a non-recoverable error (provider error, env error) |
 | `completed` | Loop reached `maxIterations` or hit the success criteria |
 | `interrupted` | Loop was interrupted (process killed, IDE reload); resumable via `resumeToken` |
 
 `isAutoResearchTerminalState` is the canonical check for "this run is
 done" — true for `reflection_failed`, `failed`, `completed`, `stopped`,
-`interrupted`.
+`interrupted`. **`paused` is not terminal** (it maps back to
+`LoopState: 'paused'` and can resume).
 
 ### 6b. `LoopState` (live UI state, on the active session)
 
@@ -248,7 +250,7 @@ Per-session (one file per session, not per iteration):
 
 | Setting | UI location | Runtime field | Hard enforced? | Prompt-only? | Tests |
 | --- | --- | --- | --- | --- | --- |
-| Execution mode (Ask/Plan/Debug/Agent/Bypass) | Chat composer dropdown | `session.executionMode` + `session.permissionMode` | ✅ | — | `src/services/executionMode/__tests__/modeConsistency.test.ts`, `src/store/chat/__tests__/chatToolExecution.test.ts` |
+| Execution mode (Ask/Plan/Danger; legacy Debug/Agent/Bypass hydrate only) | Chat composer dropdown | `session.executionMode` + `session.permissionMode` | ✅ | — | `src/services/executionMode/__tests__/modeConsistency.test.ts`, `src/store/chat/__tests__/chatToolExecution.test.ts` |
 | Project Folder | Project Folder chip | `session.workDir` | ✅ (`chatActions` uses it as `execute_command.workDir`) | — | `src/store/__tests__/setSessionWorkDirFromPath.test.ts` |
 | PiPi Output Folder | PiPi Output Folder chip | `session.pipiOutputDir` | ✅ (`init_pipi_shrimp` runs against it, plan-doc save resolves to it) | — | `src/store/__tests__/setSessionWorkDirFromPath.test.ts`, `src/services/prompt/__tests__/defaultTemplate.test.ts` |
 | AutoResearch Workspace | Manual launch Workspace field | `SshConfig.remoteWorkDir` (parent of `runs/`) | ✅ (run dir created under it) | — | `src/services/autoresearch/__tests__/runDir.test.ts`, `src/components/autoresearch/manual/__tests__/manualReadiness.test.ts` |
@@ -263,7 +265,7 @@ Per-session (one file per session, not per iteration):
 | Agent / reflection / default config id | Manual launch Advanced Fields | `autoResearchLlmSettings.{default,agent,reflection}ConfigId` | ✅ (`runConfig.resolveAutoResearchRunConfig` resolves them, agent config is asserted to support tool calls) | — | `src/services/autoresearch/__tests__/runConfig.test.ts` |
 | Preferred Python command | (computed by preflight) | `environmentSummary.preferredPythonCommand` | ✅ (preflight auto-detects `python3` vs `python`) | — | `src/services/autoresearch/__tests__/preflight.test.ts` |
 | Reflection prompt / strictness | (in `loopEngine` constants) | hard-coded in `reflection.ts` | — | ✅ (the reflection prompt is text the agent sees; the parser is hard, but the prompt is not) | `src/services/autoresearch/__tests__/reflection.test.ts` |
-| Stop / pause action | Right-side cockpit | `LoopState` | ✅ (state machine in `loopEngine`) | — | `src/services/autoresearch/__tests__/loopEngine.integration.test.ts` |
+| Stop / pause / unmount abort | Right-side cockpit + page unmount | `LoopState` + `AbortSignal` (`activeLoopAbortController`) | ✅ (see §10) | — | `loopEngine.pause.test.ts`, `loopEnginePreflightAbort.test.ts`, `loopEngine.unmountAndMetrics.test.ts`, `loopEngine.integration.test.ts` |
 | Resume token | Persisted on `interrupted` | `AutoResearchResumeToken` | ✅ (drives `ResumeAutoResearchRunResult`) | — | `src/services/autoresearch/__tests__/resumeToken.test.ts` |
 | Telegram notification | AutoResearch panel | `TelegramNotifyConfig` | ✅ for the *send* side (it fires on `IMPROVED` / `FAILED`); — for the *throttling* side (interval is a hint, not a hard limit) | partial | `src/services/autoresearch/__tests__/notifier.test.ts` |
 
@@ -282,10 +284,41 @@ Per-session (one file per session, not per iteration):
   are not interchangeable.
 - Re-running `applyBootstrap` after iterations have started: that
   would overwrite `run_experiment.py` and clobber the agent's edits.
-- Treating "Bypass" as "no safety". Bypass skips the user prompt but
-  keeps the dangerous-command and path-escape `preToolUseHooks`.
+- Treating AutoResearch's internal `executionMode: 'bypass'` runner flag
+  as a product Bypass mode, or as "no safety". Product chat exposes
+  Ask/Plan/Danger only (Danger → `auto-edits`). AR still passes `bypass`
+  so ordinary AutoresearchPhase commands skip the confirmation modal, but
+  dangerous-command / path-escape hooks remain, and network/package
+  commands stay rejected (R2-08). See [`execution-modes.md`](./execution-modes.md).
 
 ---
+
+---
+
+## 10. Abort, stop, pause, and unmount
+
+After R5-01 / R5-02 / R5-05 / R5-09, stop and unmount are AbortSignal-driven.
+The source of truth is `src/services/autoresearch/loopEngine.ts` (outer
+lifecycle) plus `chatAdapter.ts` (per-turn signal into
+`runHeadlessAgentTurn`).
+
+| Trigger | What happens | Run / loop outcome |
+| --- | --- | --- |
+| **Stop** (`stopExperimentLoop`) | Aborts `activeLoopAbortController` **first**, then sets run status `stopped` and `LoopState: 'stopped'` | In-flight LLM/tool work sees `signal.aborted`; loop exits at the next iteration boundary / abort catch |
+| **Pause** (`pauseExperimentLoop`) | Sets `LoopState: 'paused'` + run status `paused` without aborting | Loop body hits the pause branch and awaits `waitForResumeOrAbort(signal)` |
+| **Stop while paused** | Abort fires; `waitForResumeOrAbort` resolves immediately (AbortSignal listener + 250ms poll) — R5-09 | Was previously a bare `setTimeout(1000)` with no signal awareness |
+| **Resume** | Clears pause; loop continues from `currentIteration` | Same AbortController remains active for the run |
+| **Preflight failure** | Shared `try/finally` around preflight + loop always nulls `activeLoopAbortController` (R5-02) | A later Start can restart cleanly; no orphan controller |
+| **Page unmount** (`suspendExperimentLoopOnUnmount`) | Treats `running` **or** `paused` as live: sets status/`LoopState` to `paused`, patches resume token, **then aborts** the controller (R5-05) | In-flight turn cancels; run stays resumable rather than looking "still running" |
+| **External `options.signal`** | Bridged onto the loop controller (abort listener / already-aborted check) | UI unmount and setupFlow share one abort graph |
+
+**Invariants**
+
+1. Only one loop AbortController is live at a time (`activeLoopAbortController`).
+2. Preflight `!ok` / throw / normal exit all clear the handle in `finally`.
+3. Aborts are expected control flow — `AutoResearchAbortedError` / duck-typed abort errors do not surface as runtime failures when the run is already transitioning to `stopped` / `paused`.
+4. `chatAdapter` must forward `options.signal` into `runHeadlessAgentTurn` so Stop cancels mid-turn, not only between iterations (R5-01).
+
 
 ## Cross-references
 
