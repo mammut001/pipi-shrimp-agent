@@ -549,13 +549,16 @@ fn evaluate_command_policy(
         )));
     }
 
-    // Bypass mode shortcut: for AssistantToolCall source, allow normal
-    // project-scoped commands without confirmation. Dangerous commands
-    // are still rejected by `validate_command` (called by the executor)
-    // and by the frontend `dangerousCommandCheck` hook before this
-    // ever runs. Network/long-running flags only trigger
-    // require_confirmation, which the frontend now resolves locally
-    // without opening the modal.
+    // Bypass mode shortcut: for AssistantToolCall / HeadlessAgent /
+    // WorkflowAgent, allow normal project-scoped commands without
+    // confirmation. Dangerous commands are still rejected by
+    // `validate_command` (called by the executor) and by the frontend
+    // `dangerousCommandCheck` hook before this ever runs.
+    // Network/long-running flags only trigger require_confirmation,
+    // which the frontend now resolves locally without opening the modal.
+    //
+    // AutoresearchPhase is intentionally excluded (R2-08): bypass must
+    // not skip the AutoresearchPhase network reject below.
     let is_bypass = req
         .execution_mode
         .as_deref()
@@ -568,7 +571,6 @@ fn evaluate_command_policy(
         && matches!(
             req.source,
             ToolExecutionSource::AssistantToolCall
-                | ToolExecutionSource::AutoresearchPhase
                 | ToolExecutionSource::HeadlessAgent
                 | ToolExecutionSource::WorkflowAgent
         )
@@ -1446,6 +1448,49 @@ mod tests {
             Some("session-1"),
         )
         .expect("bypass execution should not require approval token");
+    }
+
+    #[test]
+    fn test_bypass_curl_rejected() {
+        // R2-08: AutoresearchPhase + bypass must still reject network cmds.
+        let mut request = make_request("execute_command");
+        request.source = ToolExecutionSource::AutoresearchPhase;
+        request.execution_mode = Some("bypass".to_string());
+        let curl_args = serde_json::json!({
+            "command": "curl https://example.com",
+            "cwd": "/tmp/project"
+        });
+        request.arguments = curl_args.to_string();
+
+        let preview = preview_request_policy(&request, &curl_args, Some("session-1"))
+            .expect("preview should succeed");
+        assert_eq!(
+            preview.decision, "rejected",
+            "bypass must not allow AutoresearchPhase network commands"
+        );
+        assert!(preview.approval_token.is_none());
+
+        let error = enforce_request_policy(&request, &curl_args, Some("session-1"))
+            .expect_err("bypass+curl under AutoresearchPhase must be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("AutoResearch phases cannot run network or package-install commands"),
+            "unexpected error: {error}"
+        );
+
+        // Benign local command still allowed under AutoresearchPhase + bypass.
+        let benign_args = serde_json::json!({
+            "command": "wc -l file",
+            "cwd": "/tmp/project"
+        });
+        request.arguments = benign_args.to_string();
+        let benign_preview =
+            preview_request_policy(&request, &benign_args, Some("session-1"))
+                .expect("preview should succeed");
+        assert_eq!(benign_preview.decision, "allowed");
+        enforce_request_policy(&request, &benign_args, Some("session-1"))
+            .expect("benign AutoresearchPhase bypass command should still be allowed");
     }
 
     #[test]
