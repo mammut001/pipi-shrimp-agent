@@ -27,13 +27,13 @@
 | ID | Summary |
 | --- | ------- |
 | R7-02 | `isWithinDir` 词法比较，无 `..` 规范化 |
-| R7-03 | artifactDetector 只匹配 Unix 路径 |
+| R7-03 | artifactDetector 只匹配 Unix 路径 — ✅ Fixed (code 2026-06-24; verified 2026-09-21) |
 | R7-05 | `addFileArtifact` 无 workDir 检查 |
-| R7-09 | `ChatImage` 接受任意 img src |
-| R7-10 | Telegram token 在 URL 中，日志泄漏风险 |
+| R7-09 | `ChatImage` 接受任意 img src — ✅ Fixed (code 2026-06-24; verified 2026-09-21) |
+| R7-10 | Telegram token 在 URL 中，日志泄漏风险 — ✅ Fixed (code 2026-06-24; verified 2026-09-21) |
 | R7-13 | `terminal_create` cwd 无 path_security ✅ Fixed (code 2026-06-24; tests 2026-09-21) |
 | R7-15 | Telegram token XOR localStorage 非 keychain |
-| R7-16 | TS `BLOCKED_PREFIXES` 缺 Windows 项 |
+| R7-16 | TS `BLOCKED_PREFIXES` 缺 Windows 项 — ✅ Fixed (code 2026-06-24; verified 2026-09-21) |
 
 ## Low / Info
 
