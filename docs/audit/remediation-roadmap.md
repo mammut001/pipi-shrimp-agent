@@ -33,7 +33,7 @@ Earlier post-audit fixes (still need regression tests): R1-01–03, R4-01–03, 
 | **High — AutoResearch** | R5-02 preflight abort controller leak ✅ |
 | **Test infra** | INFRA-01 `@testing-library/react`, TOP-15 regression suites |
 | **Architecture** | AG-02 `loopEngine.ts` (**PR2a+PR2b** shipped 2026-09-17 — loopEngine.ts & iterationPhase split modules all ≤800 LOC), AG-05 `browserAgentStore.ts`, AG-10 `web.rs` splits |
-| **Rust High (round-02)** | R2-05 typst resolve_path ✅, R2-06 backup sibling-prefix ✅, R2-07 blocked exact roots ✅, R2-08–R2-12 open |
+| **Rust High (round-02)** | R2-05 typst resolve_path ✅, R2-06 backup sibling-prefix ✅, R2-07 blocked exact roots ✅, R2-08 Autoresearch bypass network ✅, R2-09–R2-12 open |
 
 **Open P0/Critical in backlog:** 0.
 
@@ -560,7 +560,7 @@ Open **High** items (Critical covered in Lane A):
 | R2-05 | Legacy typst path no `resolve_path` | High | `chat.rs` | resolve_path **fixed** 2026-09-21 | `typst_path_sandbox` | No |
 | R2-06 | Backup sibling-prefix escape | High | `database.rs` | Use `is_within_dir` **fixed** 2026-09-21 | `backups-evil/` rejected | No |
 | R2-07 | `/sys` exact root not blocked | High | `path_security.rs` | Exact roots without trailing slash **fixed** 2026-09-21 | `test_blocked_sys_directory` | No |
-| R2-08 | Autoresearch bypass skips network | High | `execution_policy.rs` | Network check on bypass | curl needs confirm | No |
+| R2-08 | Autoresearch bypass skips network | High | `execution_policy.rs` | Drop AutoresearchPhase from early bypass **fixed** 2026-09-21 | `test_bypass_curl_rejected` | No |
 | R2-09 | SSHPASS in process list | High | `ssh_bridge.rs` | stdin/env file approach | password not in ps | No |
 | R2-10 | CDP goto no scheme allowlist | High | `navigate.rs` | Deny `file://` | scheme table test | No |
 | R2-11 | MCP stdio cwd unsandboxed | High | `mcp/stdio.rs` | validate cwd | `/etc` rejected | No |
