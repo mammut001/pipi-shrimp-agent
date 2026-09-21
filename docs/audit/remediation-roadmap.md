@@ -33,7 +33,7 @@ Earlier post-audit fixes (still need regression tests): R1-01–03, R4-01–03, 
 | **High — AutoResearch** | R5-02 preflight abort controller leak ✅ |
 | **Test infra** | INFRA-01 `@testing-library/react`, TOP-15 regression suites |
 | **Architecture** | AG-02 `loopEngine.ts` (**PR2a+PR2b** shipped 2026-09-17 — loopEngine.ts & iterationPhase split modules all ≤800 LOC), AG-05 `browserAgentStore.ts`, AG-10 `web.rs` splits |
-| **Rust High (round-02)** | R2-05–R2-12 — not yet in backlog JSON |
+| **Rust High (round-02)** | R2-05 typst resolve_path ✅, R2-06–R2-12 open |
 
 **Open P0/Critical in backlog:** 0.
 
@@ -557,7 +557,7 @@ Open **High** items (Critical covered in Lane A):
 
 | ID | Title | Sev | Key files | Smallest PR | Tests | Split? |
 | --- | ----- | --- | --------- | ----------- | ----- | ------ |
-| R2-05 | Legacy typst path no `resolve_path` | High | `chat.rs` | Add resolve_path | outside work_dir rejected | No |
+| R2-05 | Legacy typst path no `resolve_path` | High | `chat.rs` | resolve_path **fixed** 2026-09-21 | `typst_path_sandbox` | No |
 | R2-06 | Backup sibling-prefix escape | High | `database.rs` | Use `is_within_dir` | `backups-evil/` rejected | No |
 | R2-07 | `/sys` exact root not blocked | High | `path_security.rs` | Normalize roots | `validate_path("/sys")` | No |
 | R2-08 | Autoresearch bypass skips network | High | `execution_policy.rs` | Network check on bypass | curl needs confirm | No |

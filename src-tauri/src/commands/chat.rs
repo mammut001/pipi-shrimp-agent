@@ -223,6 +223,13 @@ pub async fn update_session_cwd(_app: AppHandle, session_id: String, cwd: String
     update_session_cwd_service(session_id, cwd).await
 }
 
+
+/// Resolve a typst source/destination path under the bound work_dir (R2-05).
+/// Same sandbox as write_file_for_tool / read_file_for_tool.
+fn resolve_typst_path(path: &str, work_dir: Option<&str>) -> AppResult<std::path::PathBuf> {
+    crate::commands::file::resolve_path(path, work_dir)
+}
+
 /**
  * Legacy chat-scoped tool entry point (browser, Typst, Skill).
  *
@@ -350,6 +357,7 @@ pub async fn execute_tool(
             let file_path = args.get("file_path")
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::InternalError("Missing 'file_path' argument for render_typst_to_pdf".to_string()))?;
+            let resolved_path = resolve_typst_path(file_path, work_dir.as_deref())?;
             let book = font_state.prebuilt.book.clone();
             let fonts = font_state.prebuilt.fonts.clone();
             let source_owned = source.to_string();
@@ -366,9 +374,17 @@ pub async fn execute_tool(
                 }
                 AppError::InternalError(msg)
             })?;
-            std::fs::write(file_path, pdf_bytes)
+            if let Some(parent) = resolved_path.parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent).map_err(|e| {
+                        AppError::InternalError(format!("Failed to create parent directory: {}", e))
+                    })?;
+                }
+            }
+            std::fs::write(&resolved_path, pdf_bytes)
                 .map_err(|e| AppError::InternalError(format!("Failed to write PDF: {}", e)))?;
-            serde_json::json!({ "file_path": file_path, "message": format!("PDF saved to {}", file_path) }).to_string()
+            let resolved_str = resolved_path.to_string_lossy().to_string();
+            serde_json::json!({ "file_path": resolved_str, "message": format!("PDF saved to {}", resolved_str) }).to_string()
         }
 
         "compile_typst_file" => {
@@ -379,8 +395,8 @@ pub async fn execute_tool(
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| AppError::InternalError("Missing 'output_dir' argument for compile_typst_file".to_string()))?;
 
-            let typ_path_buf = std::path::PathBuf::from(typ_path);
-            let output_dir_buf = std::path::PathBuf::from(output_dir);
+            let typ_path_buf = resolve_typst_path(typ_path, work_dir.as_deref())?;
+            let output_dir_buf = resolve_typst_path(output_dir, work_dir.as_deref())?;
             let book = font_state.prebuilt.book.clone();
             let fonts = font_state.prebuilt.fonts.clone();
 
@@ -449,6 +465,56 @@ mod tests {
     use crate::browser::dom::InteractiveElement;
     use anyhow::Result as AnyhowResult;
     use std::sync::Mutex as StdMutex;
+
+
+    #[test]
+    fn typst_path_sandbox() {
+        use std::fs;
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be monotonic enough for tests")
+            .as_nanos();
+        let work = std::env::temp_dir().join(format!("pipi-shrimp-typst-work-{}", unique));
+        let outside = std::env::temp_dir().join(format!("pipi-shrimp-typst-outside-{}", unique));
+        fs::create_dir_all(&work).expect("work dir");
+        fs::create_dir_all(&outside).expect("outside dir");
+
+        let work_s = work.to_string_lossy().to_string();
+        let outside_pdf = outside.join("escape.pdf");
+        let outside_out = outside.join("outdir");
+
+        let err = resolve_typst_path(
+            outside_pdf.to_string_lossy().as_ref(),
+            Some(work_s.as_str()),
+        )
+        .expect_err("typst PDF destination outside work_dir must be rejected");
+        let err_s = err.to_string();
+        assert!(
+            err_s.contains("outside the bound work directory") || err_s.contains("Access denied"),
+            "unexpected error: {err_s}"
+        );
+
+        let err2 = resolve_typst_path(
+            outside_out.to_string_lossy().as_ref(),
+            Some(work_s.as_str()),
+        )
+        .expect_err("typst output_dir outside work_dir must be rejected");
+        let err2_s = err2.to_string();
+        assert!(
+            err2_s.contains("outside the bound work directory") || err2_s.contains("Access denied"),
+            "unexpected error: {err2_s}"
+        );
+
+        // In-scope relative path should resolve under work_dir.
+        let ok = resolve_typst_path("nested/out.pdf", Some(work_s.as_str()))
+            .expect("in-scope typst path should resolve");
+        assert!(ok.starts_with(&work));
+
+        fs::remove_dir_all(&work).ok();
+        fs::remove_dir_all(&outside).ok();
+    }
 
     #[test]
     fn browser_target_from_args_accepts_navigation_id_aliases() {
