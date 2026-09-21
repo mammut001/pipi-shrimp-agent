@@ -252,5 +252,5 @@ Full test suite **not** run — docs/checkpoint task only.
 ## Cross-references
 
 - Concept docs updated during remediation: [execution-modes.md](../concepts/execution-modes.md) (CDP policy, observe_only, auth, surface gates)
-- [folders-and-runs.md](../concepts/folders-and-runs.md) — workDir vs pipiOutputDir (AG-16 still open)
+- [folders-and-runs.md](../concepts/folders-and-runs.md) — workDir vs pipiOutputDir (AG-16 fixed 2026-09-21)
 - [autoresearch-runtime.md](../concepts/autoresearch-runtime.md) — abort wiring (AG-18 after R5-02)

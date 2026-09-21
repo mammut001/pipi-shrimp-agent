@@ -68,10 +68,18 @@ describe('useChatStore.setSessionWorkDirFromPath', () => {
 
     const session = useChatStore.getState().sessions.find((s) => s.id === 'session-1');
     expect(session?.workDir).toBe(path);
+    // AG-16: Project Folder + legacy mirror stay on the bound path;
+    // PiPi Output Folder is provisioned separately and must not equal it.
+    expect(session?.projectDir).toBe(path);
+    expect(session?.pipiOutputDir).toBe('/default/pipi-output');
+    expect(session?.pipiOutputDir).not.toBe(path);
 
     const calls = invokeMock.mock.calls.map(([cmd]) => cmd);
     expect(calls).toContain('init_pipi_shrimp');
     expect(calls).toContain('db_save_session');
+
+    const initCall = invokeMock.mock.calls.find(([cmd]) => cmd === 'init_pipi_shrimp');
+    expect(initCall?.[1]).toEqual({ workDir: '/default/pipi-output' });
   });
 
   it('returns null and does not call invoke when path is empty / blank', async () => {

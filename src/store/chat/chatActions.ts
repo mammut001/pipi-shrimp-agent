@@ -488,7 +488,9 @@ export function createChatActionMethods({
 
         const baseSystemPrompt = useUIStore.getState().agentInstructions;
         const currentSession = get().sessions.find((session) => session.id === currentSessionId);
-        const sessionWorkDir = currentSession?.workDir;
+        // Two-folder model: Project Folder via helper (projectDir ?? workDir).
+        // Do not read `workDir` alone — that skips an explicit `projectDir`.
+        const sessionWorkDir = resolveSessionProjectDir(currentSession);
         const systemPrompt = appendBrowserResultToSystemPrompt(
           baseSystemPrompt,
           originalQuery,
@@ -790,7 +792,7 @@ export function createChatActionMethods({
         // resolution all use the **Project Folder**. Resolve through the
         // helper so pre-v7 sessions (which only have `workDir`) keep
         // working without code changes.
-        sessionWorkDir = currentSession?.projectDir ?? currentSession?.workDir;
+        sessionWorkDir = resolveSessionProjectDir(currentSession);
         // The PiPi Output Folder is where chat outputs, docs, memory,
         // and AutoResearch artifacts land. Resolve the **real on-disk
         // path** via the Rust `get_app_default_dir` command — the
