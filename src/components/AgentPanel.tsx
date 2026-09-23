@@ -12,7 +12,6 @@ import { useCdpStore } from '@/store/cdpStore';
 import { invoke } from '@tauri-apps/api/core';
 import { BrowserMiniPreview } from './BrowserMiniPreview';
 import { DocPanel } from './DocPanel';
-import { ChatImage } from './ChatImage';
 import { Section } from './ui/Section';
 import { FileIcon } from './ui/FileIcon';
 import { SessionGoalPanel } from './SessionGoalPanel';
@@ -20,14 +19,22 @@ import { useAutoResearchStore } from '@/store/autoresearchStore';
 import { t } from '@/i18n';
 import { coerceRenderableText } from '@/utils/coerceRenderableText';
 import { formatCancelInterruptLabel } from '@/store/chat/cancelInterruptVocab';
-
-type SyncedWorkspaceEntry = {
-  name: string;
-  is_directory: boolean;
-  path: string;
-  depth: number;
-  displayName: string;
-};
+import {
+  type SyncedWorkspaceEntry,
+  formatCdpHealthLabel,
+  formatCdpLaunchLabel,
+  taskStepDotClassName,
+  taskStepLabelClassName,
+  cdpStatusDotClassName,
+  skillMatchesActive,
+  formatActiveSkillBadgeLabel,
+  combineWorkingFiles,
+  workingFoldersCountBadge,
+  footerStatusLabel,
+  ArtifactRenderer,
+  ThinkingPulse,
+  CancellingPulse,
+} from './agentPanelUi';
 
 // TODO: Roadmap feature removed due to UI freeze bug (infinite re-render loop).
 // Re-implement with proper state management when ready.
@@ -60,10 +67,10 @@ export const AgentPanel: React.FC = () => {
   const sessionWorkingFiles = currentSession?.workingFiles ?? [];
 
   // Combine session files and global files (deduplicated by path) - memoized
-  const allWorkingFiles = useMemo(() => [
-    ...sessionWorkingFiles,
-    ...globalImportedFiles.filter(f => !sessionWorkingFiles.some(sf => sf.path === f.path))
-  ], [sessionWorkingFiles, globalImportedFiles]);
+  const allWorkingFiles = useMemo(
+    () => combineWorkingFiles(sessionWorkingFiles, globalImportedFiles),
+    [sessionWorkingFiles, globalImportedFiles],
+  );
 
   const [localInstructions, setLocalInstructions] = useState(agentInstructions);
   const [isSaving, setIsSaving] = useState(false);
@@ -186,15 +193,8 @@ export const AgentPanel: React.FC = () => {
     setLocalInstructions(agentInstructions);
   }, [agentInstructions]);
 
-  const cdpHealthLabel = (cdpConnectionState?.health_status ?? cdpStatus)
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (char) => char.toUpperCase());
-
-  const cdpLaunchLabel = cdpConnectionState?.launch_mode === 'launch'
-    ? 'Launched by PiPi'
-    : cdpConnectionState?.launch_mode === 'attach'
-      ? 'Attached to Existing Chrome'
-      : null;
+  const cdpHealthLabel = formatCdpHealthLabel(cdpConnectionState?.health_status ?? cdpStatus);
+  const cdpLaunchLabel = formatCdpLaunchLabel(cdpConnectionState?.launch_mode);
 
   const handleSaveSoul = async () => {
     if (isSaving) return;
@@ -353,18 +353,7 @@ export const AgentPanel: React.FC = () => {
                   {idx < taskProgress.length - 1 && (
                     <div className="absolute left-[9px] top-5 bottom-0 w-[1px] bg-gray-100" />
                   )}
-                  <div className={`mt-0.5 h-4.5 w-4.5 rounded-full flex items-center justify-center flex-shrink-0 z-10 transition-all ${step.status === 'done' ? 'bg-green-500 text-white' :
-                    step.status === 'running' ? 'bg-blue-600 text-white shadow-[0_0_8px_rgba(37,99,235,0.3)]' :
-                      step.status === 'cancelling' ? 'bg-amber-500 text-white shadow-[0_0_8px_rgba(245,158,11,0.3)]' :
-                        step.status === 'validating' ? 'bg-slate-500 text-white' :
-                          step.status === 'awaiting_confirmation' ? 'bg-amber-500 text-white' :
-                            step.status === 'approved' ? 'bg-emerald-500 text-white' :
-                              step.status === 'cancelled' ? 'bg-slate-400 text-white' :
-                                step.status === 'timed_out' ? 'bg-orange-500 text-white' :
-                                  step.status === 'rejected' ? 'bg-rose-500 text-white' :
-                                    step.status === 'failed' ? 'bg-red-500 text-white' :
-                                      'bg-white border-2 border-gray-100 text-gray-300'
-                    }`}>
+                  <div className={`mt-0.5 h-4.5 w-4.5 rounded-full flex items-center justify-center flex-shrink-0 z-10 transition-all ${taskStepDotClassName(step.status)}`}>
                     {step.status === 'done' ? (
                       <svg xmlns="http://www.w3.org/2000/svg" className="h-2.5 w-2.5" viewBox="0 0 20 20" fill="currentColor">
                         <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
@@ -375,14 +364,7 @@ export const AgentPanel: React.FC = () => {
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-start justify-between gap-2">
-                      <p className={`min-w-0 flex-1 text-[11px] font-medium leading-[1.4] transition-colors ${step.status === 'running' ? 'text-gray-900 font-bold' :
-                        step.status === 'cancelling' ? 'text-amber-800 font-bold' :
-                          step.status === 'awaiting_confirmation' ? 'text-amber-700 font-bold' :
-                            step.status === 'approved' ? 'text-emerald-700 font-bold' :
-                              step.status === 'validating' ? 'text-slate-700 font-bold' :
-                                step.status === 'cancelled' || step.status === 'timed_out' || step.status === 'rejected' || step.status === 'failed' ? 'text-red-600' :
-                                  step.status === 'done' ? 'text-gray-500' : 'text-gray-400'
-                        }`}>
+                      <p className={`min-w-0 flex-1 text-[11px] font-medium leading-[1.4] transition-colors ${taskStepLabelClassName(step.status)}`}>
                         {coerceRenderableText(step.label, step.id)}
                       </p>
                       {step.status === 'running' && step.executionId && (
@@ -394,26 +376,8 @@ export const AgentPanel: React.FC = () => {
                         </button>
                       )}
                     </div>
-                    {step.status === 'running' && (
-                      <div className="flex items-center gap-1.5 mt-1">
-                        <div className="flex gap-0.5">
-                          <div className="h-1 w-1 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                          <div className="h-1 w-1 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                          <div className="h-1 w-1 bg-blue-600 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                        </div>
-                        <span className="text-[9px] text-blue-600 font-bold uppercase tracking-tight">Thinking</span>
-                      </div>
-                    )}
-                    {step.status === 'cancelling' && (
-                      <div className="flex items-center gap-1.5 mt-1">
-                        <div className="flex gap-0.5">
-                          <div className="h-1 w-1 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                          <div className="h-1 w-1 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                          <div className="h-1 w-1 bg-amber-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                        </div>
-                        <span className="text-[9px] text-amber-600 font-bold uppercase tracking-tight">{formatCancelInterruptLabel('cancelling')}</span>
-                      </div>
-                    )}
+                    {step.status === 'running' && <ThinkingPulse />}
+                    {step.status === 'cancelling' && <CancellingPulse />}
                     {step.status === 'awaiting_confirmation' && (
                       <p className="mt-1 text-[9px] font-bold uppercase tracking-tight text-amber-600">Awaiting confirmation</p>
                     )}
@@ -449,9 +413,7 @@ export const AgentPanel: React.FC = () => {
         {/* Working Folders Section */}
         <Section
           title={t('agentPanel.workingFolders.title')}
-          count={((syncedFiles.length) + allWorkingFiles.length) > 0
-            ? ((syncedFiles.length) + allWorkingFiles.length).toString()
-            : undefined}
+          count={workingFoldersCountBadge(syncedFiles.length, allWorkingFiles.length)}
         >
           <div className="pt-1.5 space-y-0.5">
             {/* Render Disk-Synced Files */}
@@ -562,24 +524,18 @@ export const AgentPanel: React.FC = () => {
               <h4 className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-2.5">Skills</h4>
               <div className="flex flex-wrap gap-2">
                 {/* Show active skill badge if it doesn't match any core skill */}
-                {activeSkill != null && !coreSkills.some(s =>
-                  s.id === activeSkill || s.name === activeSkill ||
-                  (s.displayName ?? '').toLowerCase() === activeSkill.toLowerCase()
-                ) && (
+                {activeSkill != null && !coreSkills.some(s => skillMatchesActive(s, activeSkill)) && (
                   <div
                     className="px-2 py-1 border rounded-lg text-[10px] font-bold shadow-sm flex items-center gap-1.5 transition-all cursor-default bg-black text-white border-black scale-105 shadow-md animate-pulse"
                     title={activeSkill}
                   >
                     <div className="h-1 w-1 rounded-full bg-white animate-pulse" />
-                    {activeSkill.charAt(0).toUpperCase() + activeSkill.slice(1)}
+                    {formatActiveSkillBadgeLabel(activeSkill)}
                     <span className="ml-0.5 text-[9px] opacity-80">⚡</span>
                   </div>
                 )}
                 {coreSkills.slice(0, 8).map((skill) => {
-                  const isActive = activeSkill != null &&
-                    (skill.id === activeSkill ||
-                     skill.name === activeSkill ||
-                     (skill.displayName ?? '').toLowerCase() === activeSkill.toLowerCase());
+                  const isActive = skillMatchesActive(skill, activeSkill);
                   return (
                     <div
                       key={skill.id}
@@ -652,12 +608,7 @@ export const AgentPanel: React.FC = () => {
                       )}
                     </div>
                   </div>
-                  <div className={`h-1.5 w-1.5 rounded-full shadow-sm ${
-                    cdpStatus === 'connected' ? 'bg-green-500 shadow-[0_0_5px_rgba(34,197,94,0.5)]' :
-                    cdpStatus === 'connecting' ? 'bg-yellow-400 animate-pulse' :
-                    cdpStatus === 'error' ? 'bg-red-400' :
-                    'bg-gray-300'
-                  }`} />
+                  <div className={`h-1.5 w-1.5 rounded-full shadow-sm ${cdpStatusDotClassName(cdpStatus)}`} />
                 </button>
               </div>
             </div>
@@ -689,71 +640,12 @@ export const AgentPanel: React.FC = () => {
       <div className="px-4 py-3 border-t border-gray-200/60 bg-white/50 flex items-center justify-between text-[10px] font-bold text-gray-400 uppercase tracking-tighter cursor-default">
         <div className="flex items-center gap-2">
           <div className={`h-1.5 w-1.5 rounded-full ${taskProgress.some(s => s.status === 'running' || s.status === 'cancelling') ? 'bg-blue-500 animate-pulse' : 'bg-green-500'}`} />
-          {taskProgress.some(s => s.status === 'cancelling')
-            ? formatCancelInterruptLabel('cancelling')
-            : taskProgress.some(s => s.status === 'running')
-              ? 'Processing'
-              : 'System Ready'}
+          {footerStatusLabel(taskProgress)}
         </div>
         <div className="opacity-60">v0.1.0-alpha</div>
       </div>
     </div>
   );
 };
-
-/**
- * ArtifactRenderer - Renders specialized artifact types in the side panel
- */
-function ArtifactRenderer({ artifactId, messages }: { artifactId?: string; messages: any[] }) {
-  const artifact = useMemo(() => {
-    if (!artifactId) return null;
-    for (const msg of messages) {
-      const found = msg.artifacts?.find((a: any) => a.id === artifactId);
-      if (found) return found;
-    }
-    return null;
-  }, [artifactId, messages]);
-
-  if (!artifact) {
-    return (
-      <div className="h-full flex flex-col items-center justify-center text-gray-400 opacity-50">
-        <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
-        <span className="text-xs uppercase tracking-widest font-bold">No Artifact Selected</span>
-      </div>
-    );
-  }
-
-  if (artifact.type === 'image' || artifact.type === 'svg') {
-    return (
-      <div className="h-full flex flex-col">
-        <div className="mb-2 flex items-center justify-between">
-          <h3 className="text-xs font-bold text-gray-500 uppercase tracking-tight">{artifact.title || 'Image Artifact'}</h3>
-          <span className="text-[9px] font-mono text-gray-300">ID: {artifact.id}</span>
-        </div>
-        <div className="flex-1 overflow-auto bg-white rounded-xl border border-gray-100 p-2">
-          <ChatImage 
-            src={artifact.content} 
-            isSVG={artifact.type === 'svg' || artifact.mimeType === 'image/svg+xml'} 
-            className="w-full"
-          />
-        </div>
-      </div>
-    );
-  }
-
-  // Fallback for code/html etc.
-  return (
-    <div className="h-full flex flex-col">
-       <div className="mb-2">
-          <h3 className="text-xs font-bold text-gray-500 uppercase tracking-tight">{artifact.title || artifact.type}</h3>
-       </div>
-       <pre className="flex-1 p-3 bg-gray-900 text-gray-100 rounded-xl font-mono text-[11px] overflow-auto">
-         {artifact.content}
-       </pre>
-    </div>
-  );
-}
 
 export default AgentPanel;
