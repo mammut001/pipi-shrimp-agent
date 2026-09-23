@@ -508,7 +508,7 @@ Items remediated per [README remediation section](./README.md#修复进展remedi
 | R1-10 | Terminal CWD promise unhandled rejection | P2 | open | Console noise / crash risk | shell, `Chat.tsx` | Add `.catch()` | mock reject | Yes | Yes | No |
 | R1-12 | Terminal drag listener leak | P2 | open | Memory leak | shell | useEffect cleanup | unmount during drag | No | Yes | No |
 | R1-13 | Input enabled while background turn runs | P2 | open | User can double-send | `ChatInput.tsx` | Tie disable to generation id | post-switch input state | Yes | Yes | No |
-| R1-14 | `pages/Chat.tsx` dead code | P2 | open | Maintenance burden, drift | `pages/Chat.tsx` | Delete or archive | import graph check | No | No | Yes — delete separate PR |
+| R1-14 | `pages/Chat.tsx` dead code | P2 | fixed (2026-09-22) | Maintenance burden, drift | `pages/Chat.tsx` | Delete or archive (via AG-19) | import graph check | No | No | Yes — delete separate PR |
 | R1-15 | Questionnaire session filter (legacy Chat) | P2 | open | Cross-session questionnaire bleed | `Chat.tsx` | Align with shell filter | cross-session invisible | No | Yes | No |
 | R1-16 | Scroll-to-bottom ignores windowed history | P2 | open | UX: expand history doesn't scroll | `useChatMessageScroll.ts` | Depend on `visibleMessages` | showFullHistory case | No | Yes | No |
 | R1-17 | `addMessage` silent no-op | P2 | open | Silent failures hide bugs | `chatActions.ts` | Throw or log error | no-session path | Yes | No | No |
@@ -676,8 +676,8 @@ Per [complexity-governance.md](../architecture/complexity-governance.md) and `np
 | AG-16 | Two-folder vs three-folder drift | Med | fixed (2026-09-21) | Wrong cwd in tools/AR | [folders-and-runs.md](../concepts/folders-and-runs.md) / [ag-16 audit](./ag-16-cwd-callsite-audit.md) | Audit + browser handoff `getSessionProjectDir` fix |
 | AG-17 | Execution mode gating inconsistency | Med | fixed (2026-09-21) | Legacy bypass (R2-01) | [execution-modes.md](../concepts/execution-modes.md) | Doc aligned with registry + Rust policy after R2-01 |
 | AG-18 | AutoResearch runtime doc vs code | Med | fixed (2026-09-21) | Abort wiring, loop state | [autoresearch-runtime.md](../concepts/autoresearch-runtime.md) | Doc §10 matches loopEngine abort/pause/unmount |
-| AG-19 | `pages/Chat.tsx` parallel to shell | Low | open | Dead route (R1-14, R9-11) | folders-and-runs | Delete in dedicated PR |
-| AG-20 | PR size regression guard | Low | open | >20 file PRs slip through | complexity-governance | CI warning on large diffs |
+| AG-19 | `pages/Chat.tsx` parallel to shell | Low | fixed (2026-09-22) | Dead route (R1-14, R9-11) | folders-and-runs | Deleted `pages/Chat.tsx`, pages/index export, legacy test |
+| AG-20 | PR size regression guard | Low | fixed (2026-09-22) | >20 file PRs slip through | complexity-governance | Added `scripts/check-pr-size.mjs` + CI soft warning step |
 
 ### Split soon (500–800 LOC) — sample
 

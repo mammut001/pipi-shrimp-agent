@@ -12,7 +12,7 @@
  * - chatStoreSendMessage.test.ts — P0-2 stream-while-switch, background A≠B chrome, knife 3
  * - sessionSwitchCancellation.test.ts — cancel/switch/delete persistence matrix
  * - startSessionPermissionIsolation.test.ts — startSession must not deny other sessions
- * - Chat.permissionSessionTarget.test.tsx — legacy Chat approve/deny targets selected session
+ * - (Chat.permissionSessionTarget.test.tsx deleted with AG-19; shell has its own permission-session coverage)
  */
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 

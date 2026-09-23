@@ -1,4 +1,4 @@
-﻿# Architecture Complexity Governance
+# Architecture Complexity Governance
 
 This document sets the size and complexity thresholds for the PiPi
 Shrimp Agent codebase, and the rules that follow from them. It is the
@@ -160,6 +160,9 @@ new state, not a new boolean.
 > A PR that touches more than 20 files or adds more than 800 net LOC
 > is a sign that the change should be split.
 
+CI automatically checks PR size on pull requests via `scripts/check-pr-size.mjs`. When a PR touches more than 20 files or exceeds 800 net LOC, CI emits a soft warning (`::warning::` GitHub Actions annotation) rather than a hard gate, keeping exit code 0 to guide reviewers without blocking urgent fixes.
+
+
 ---
 
 ## 8. Required tests before extracting logic
@@ -218,3 +221,5 @@ pnpm test src/path/to/file
   the report: [`./refactor-plan.md`](./refactor-plan.md).
 - The script that produces the report:
   `scripts/complexity-report.mjs`.
+- PR size check script:
+  `scripts/check-pr-size.mjs`.

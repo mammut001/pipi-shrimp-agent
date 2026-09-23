@@ -37,7 +37,7 @@ Each round followed:
 | Route / View | Actual component |
 | ------------ | ---------------- |
 | `currentView === 'chat'` | `ChatBrowserWorkspaceShell` (`App.tsx`) |
-| `pages/Chat.tsx` | **Not wired to routing** (dead code, still maintained) |
+| `pages/Chat.tsx` | **Deleted** (AG-19 2026-09-22; was dead/unwired) |
 | Browser split | `browserDockMode === 'split'` → `BrowserWorkspacePane` + chat panel (R1-03 fixed) |
 
 ---

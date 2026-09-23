@@ -25,7 +25,7 @@ Chinese version: [../round-01-chat-messaging.md](../round-01-chat-messaging.md)
 | R1-11 | P2 | `useChatMessageScroll.ts:12-22` | Scroll debounce timer not cleared on unmount | No setState after unmount from debounce | ✅ Fixed |
 | R1-12 | P2 | shell:201-217 | Terminal drag listeners had no unmount cleanup | Unmount during drag; no listener leak |
 | R1-13 | P2 | `ChatInput.tsx:682` | After session switch `isStreaming=false` but background turn could still run | Input disable policy after session switch |
-| R1-14 | P2 | `pages/Chat.tsx` | Dead code maintained in parallel with shell | Production import graph excludes `Chat.tsx` |
+| R1-14 | P2 | `pages/Chat.tsx` | Dead code maintained in parallel with shell | Production import graph excludes `Chat.tsx` | ✅ Fixed (AG-19 2026-09-22) |
 | R1-15 | P2 | `Chat.tsx:364` vs shell:670 | Questionnaire not filtered by sessionId (shell correct) | Cross-session questionnaire not visible |
 | R1-16 | P2 | `useChatMessageScroll.ts:29-33` | Depends on `displayMessages` but renders `visibleMessages`; expanding history does not scroll to bottom | Scroll behavior after `showFullHistory` |
 | R1-17 | P2 | `chatActions.ts:1047-1051` | `addMessage` silently returns when no session | Should throw or surface explicit error |

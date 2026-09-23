@@ -18,7 +18,7 @@
 | R9-08 | Low | `useResponsiveLayout.ts` | 文档 breakpoint 与常量不一致 | 719/720/1388 边界 |
 | R9-09 | Low | `ExecutionModeDropdownErrorBoundary` | 无 recovery UI | fallback + remount |
 | R9-10 | Info | `package.json` | `grammy` 依赖未使用 | depcheck |
-| R9-11 | Info | `pages/Chat.tsx` | 死代码 ~377 行 | import graph 不含 |
+| R9-11 | Info | `pages/Chat.tsx` | 死代码 ~377 行 (fixed AG-19 2026-09-22) | import graph 不含 |
 | R9-12 | Info | `chat.ts` + `chatHelpers.ts` | 重复 `mergeReasoningParts` | 单源 |
 | R9-13 | Info | `telegram.rs:287-291` | token 在 GET URL（API 设计） | 错误路径脱敏 |
 
