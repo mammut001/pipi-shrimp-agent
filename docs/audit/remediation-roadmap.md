@@ -509,7 +509,7 @@ Items remediated per [README remediation section](./README.md#修复进展remedi
 | R1-12 | Terminal drag listener leak | P2 | open | Memory leak | shell | useEffect cleanup | unmount during drag | No | Yes | No |
 | R1-13 | Input enabled while background turn runs | P2 | open | User can double-send | `ChatInput.tsx` | Tie disable to generation id | post-switch input state | Yes | Yes | No |
 | R1-14 | `pages/Chat.tsx` dead code | P2 | fixed (2026-09-22) | Maintenance burden, drift | `pages/Chat.tsx` | Delete or archive (via AG-19) | import graph check | No | No | Yes — delete separate PR |
-| R1-15 | Questionnaire session filter (legacy Chat) | P2 | open | Cross-session questionnaire bleed | `Chat.tsx` | Align with shell filter | cross-session invisible | No | Yes | No |
+| R1-15 | Questionnaire session filter (legacy Chat) | P2 | fixed/obsolete (2026-09-22) | Cross-session questionnaire bleed | `Chat.tsx` (deleted) | N/A — shell already filters | shell `activeQuestionnaireSessionId` gate | No | Yes | No — obsolete with AG-19/#145 |
 | R1-16 | Scroll-to-bottom ignores windowed history | P2 | open | UX: expand history doesn't scroll | `useChatMessageScroll.ts` | Depend on `visibleMessages` | showFullHistory case | No | Yes | No |
 | R1-17 | `addMessage` silent no-op | P2 | open | Silent failures hide bugs | `chatActions.ts` | Throw or log error | no-session path | Yes | No | No |
 | R1-18–R1-25 | Low-priority chat polish | P3 | open | Consistency, a11y, perf | various | Batch by theme | per-item | Mixed | Mixed | Yes |
@@ -600,7 +600,7 @@ Also see **R4-04–R4-24** (store/workflow cross-cuts) in [round-04](./round-04-
 | R7-09 | `ChatImage` arbitrary src | Med | fixed (code 2026-06-24; verified 2026-09-21) | `ChatImage.tsx` | Allowlist schemes | `ChatImage.test.tsx` scheme allowlist |
 | R7-10 | Telegram token in URL logs | Med | fixed (code 2026-06-24; verified 2026-09-21) | `telegram.rs` | Redact in errors | `redact_token_*` unit tests |
 | R7-13 | `terminal_create` cwd no path_security | Med | fixed (code 2026-06-24; tests 2026-09-21) | `terminal.rs` | validate_terminal_cwd → path_security | `/etc` + relative rejected |
-| R7-15 | Telegram token in localStorage XOR | Med | open | settings | Keychain migration spike | — |
+| R7-15 | Telegram token in localStorage XOR | Med | partially fixed (spike 2026-09-22) | settings / secureStorage | Wire Tauri 2 keychain plugin | `secureStorage.test.ts`; see `r7-15-keychain-spike.md` |
 | R7-16 | TS BLOCKED_PREFIXES missing Windows | Med | fixed (code 2026-06-24; verified 2026-09-21) | `pathValidation.ts` | Add Windows roots | `pathValidation.test.ts` Windows describe |
 | R7-14, R7-17, R7-18 | Low/Info | Low | open | various | Hardening batch | per item |
 
@@ -637,7 +637,7 @@ Also see **R4-04–R4-24** (store/workflow cross-cuts) in [round-04](./round-04-
 | 8 | `chatAdapter` AbortSignal propagation | R5-01 | partially addressed |
 | 9 | `loopEngine` stop/delete/fail-continue | R5-03, R5-05 | partially addressed |
 | 10 | `App.tsx` bootstrap + routing | R10-01, R9-06 | test gap only |
-| 11 | Shell permission queue + questionnaire | R10-02, R1-15 | test gap only |
+| 11 | Shell permission queue + questionnaire | R10-02, R1-15 (product fixed/obsolete) | test gap only |
 | 12 | telegramService ↔ lib.rs parity | R9-01, R10-05, R7-12 | fixed 2026-09-17 (`tauriCommandParity.test.ts`, `check-tauri-commands.mjs`) |
 | 13 | Telegram allowedChats enforcement | R7-11 | fixed 2026-06-24 (`chatAuthorization.test.ts`, `commandRouter.test.ts`) |
 | 14 | Markdown XSS vectors | R7-07, R7-08 | test gap only |
