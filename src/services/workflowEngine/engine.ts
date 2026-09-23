@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
 import { useWorkflowStore } from '@/store/workflowStore';
 import { useUIStore } from '@/store/uiStore';
 import {
@@ -9,7 +8,6 @@ import {
 import {
   type GoalEvaluationResult,
   type WorkflowAgent,
-  type WorkflowConnection,
   type WorkflowInstance,
   type WorkflowRun,
 } from '@/types/workflow';
@@ -24,8 +22,8 @@ import {
   buildEntryAgentPrompt,
   type UpstreamOutput,
 } from '@/services/workflowPromptBuilder';
-import { evaluateGoalWithRules, evaluateWorkflowGoal } from '@/services/workflowGoalEvaluator';
-import { readAgentInbox, notifyOnComplete } from '@/services/workflowNotifier';
+import { evaluateGoalWithRules } from '@/services/workflowGoalEvaluator';
+import { readAgentInbox } from '@/services/workflowNotifier';
 import {
   getBlockingFailures,
   getPredecessorIds,
@@ -36,7 +34,6 @@ import {
   selectReentryAgents,
 } from './phases';
 import {
-  runAgentWithRetry,
   type StreamChunkCallback,
 } from './agentRunner';
 import {
@@ -45,174 +42,21 @@ import {
   renderTranscriptFile,
   type WorkflowTranscriptEntry,
 } from './transcript';
+import { extractCodeBlockArtifacts } from './codeBlockArtifacts';
+import {
+  createWorkflowRunSnapshot,
+  buildGoalEvaluationInstance,
+  type WorkflowRunSnapshot,
+} from './runSnapshot';
+import {
+  defaultDeps,
+  type WorkflowEngineDeps,
+} from './engineDeps';
 import { workflowRunFileService } from '@/services/workflow/runFileService';
 
+export { extractCodeBlockArtifacts };
+
 const MAX_TOTAL_STEPS = 50;
-
-export function extractCodeBlockArtifacts(text: string): Array<{ relativePath: string; content: string }> {
-  const artifacts: Array<{ relativePath: string; content: string }> = [];
-  const seenPaths = new Set<string>();
-
-  // Pattern 1: ```lang:filepath or ```lang filepath or ```filepath
-  // Example: ```python 02_scaffold.py or ```json:02_scaffold.json
-  const codeBlockRegex = /```[ \t]*([a-zA-Z0-9_+\-#]+)?[: \t]+([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)[ \t]*\r?\n([\s\S]*?)```/g;
-  let match: RegExpExecArray | null;
-
-  while ((match = codeBlockRegex.exec(text)) !== null) {
-    const relativePath = match[2].trim();
-    const content = match[3];
-    if (relativePath && !seenPaths.has(relativePath) && !relativePath.startsWith('http') && !relativePath.includes('://')) {
-      seenPaths.add(relativePath);
-      artifacts.push({ relativePath, content });
-    }
-  }
-
-  // Pattern 2: ```lang filename="filepath" or filename=filepath
-  const filenameAttrRegex = /```[a-zA-Z0-9_+\-#]*[ \t]+filename=["']?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)["']?[ \t]*\r?\n([\s\S]*?)```/g;
-  while ((match = filenameAttrRegex.exec(text)) !== null) {
-    const relativePath = match[1].trim();
-    const content = match[2];
-    if (relativePath && !seenPaths.has(relativePath)) {
-      seenPaths.add(relativePath);
-      artifacts.push({ relativePath, content });
-    }
-  }
-
-  // Pattern 3: Header followed by code block: ### 02_scaffold.py or **02_scaffold.py**
-  const headerBlockRegex = /(?:###|\*\*|File:)[ \t]*`?([a-zA-Z0-9_\-./]+\.[a-zA-Z0-9]+)`?[ \t]*\r?\n+```[a-zA-Z0-9_+\-#]*[ \t]*\r?\n([\s\S]*?)```/g;
-  while ((match = headerBlockRegex.exec(text)) !== null) {
-    const relativePath = match[1].trim();
-    const content = match[2];
-    if (relativePath && !seenPaths.has(relativePath)) {
-      seenPaths.add(relativePath);
-      artifacts.push({ relativePath, content });
-    }
-  }
-
-  return artifacts;
-}
-
-interface WorkflowEngineDeps {
-  createRunDirectory: (runId: string) => Promise<string>;
-  writeFile?: (path: string, content: string) => Promise<void>;
-  writeRunFile?: (runDirectory: string, relativePath: string, content: string) => Promise<string>;
-  runAgent: typeof runAgentWithRetry;
-  evaluateGoal: typeof evaluateWorkflowGoal;
-  notify: typeof notifyOnComplete;
-  now: () => number;
-}
-
-interface WorkflowRunSnapshot {
-  instanceId: string;
-  instanceName: string;
-  projectGoal: string;
-  successCriteria: string[];
-  maxGoalIterations: number;
-  goalEvaluatorAgentId: string | null;
-  agents: WorkflowAgent[];
-  executableAgents: WorkflowAgent[];
-  connections: WorkflowConnection[];
-  dirtyAgentIds: string[];
-}
-
-function defaultDeps(): WorkflowEngineDeps {
-  return {
-    createRunDirectory: (runId) => invoke<string>('create_workflow_run_directory', { runId }),
-    writeRunFile: (runDirectory, relativePath, content) => (
-      workflowRunFileService.writeRunFile(runDirectory, relativePath, content)
-    ),
-    runAgent: runAgentWithRetry,
-    evaluateGoal: evaluateWorkflowGoal,
-    notify: notifyOnComplete,
-    now: () => Date.now(),
-  };
-}
-
-function cloneWorkflowAgent(agent: WorkflowAgent): WorkflowAgent {
-  return {
-    ...agent,
-    position: { ...agent.position },
-    outputRoutes: (agent.outputRoutes ?? []).map((route) => ({ ...route })),
-    execution: { ...agent.execution },
-    model: agent.model ? { ...agent.model } : undefined,
-    retryPolicy: agent.retryPolicy
-      ? {
-          ...agent.retryPolicy,
-          fallbackConfigIds: [...(agent.retryPolicy.fallbackConfigIds ?? [])],
-        }
-      : undefined,
-    notifyOnComplete: [...(agent.notifyOnComplete ?? [])],
-  };
-}
-
-function cloneWorkflowConnection(connection: WorkflowConnection): WorkflowConnection {
-  return { ...connection };
-}
-
-function freezeWorkflowRunSnapshot(snapshot: WorkflowRunSnapshot): WorkflowRunSnapshot {
-  for (const agent of snapshot.agents) {
-    Object.freeze(agent.position);
-    Object.freeze(agent.outputRoutes);
-    Object.freeze(agent.execution);
-    if (agent.model) {
-      Object.freeze(agent.model);
-    }
-    if (agent.retryPolicy) {
-      Object.freeze(agent.retryPolicy.fallbackConfigIds ?? []);
-      Object.freeze(agent.retryPolicy);
-    }
-    Object.freeze(agent.notifyOnComplete ?? []);
-    Object.freeze(agent);
-  }
-
-  for (const connection of snapshot.connections) {
-    Object.freeze(connection);
-  }
-
-  Object.freeze(snapshot.successCriteria);
-  Object.freeze(snapshot.agents);
-  Object.freeze(snapshot.executableAgents);
-  Object.freeze(snapshot.connections);
-  Object.freeze(snapshot.dirtyAgentIds);
-
-  return Object.freeze(snapshot);
-}
-
-function createWorkflowRunSnapshot(instance: WorkflowInstance): WorkflowRunSnapshot {
-  const agents = instance.agents.map(cloneWorkflowAgent);
-  const connections = instance.connections.map(cloneWorkflowConnection);
-
-  return freezeWorkflowRunSnapshot({
-    instanceId: instance.id,
-    instanceName: instance.name,
-    projectGoal: instance.projectGoal?.trim() || '',
-    successCriteria: normalizeSuccessCriteria(instance.successCriteria),
-    maxGoalIterations: instance.maxGoalIterations ?? DEFAULT_MAX_GOAL_ITERATIONS,
-    goalEvaluatorAgentId: instance.goalEvaluatorAgentId ?? null,
-    agents,
-    executableAgents: agents.filter((agent) => agent.role !== 'goal-evaluator'),
-    connections,
-    dirtyAgentIds: [...(instance.dirtyAgentIds ?? [])],
-  });
-}
-
-function buildGoalEvaluationInstance(snapshot: WorkflowRunSnapshot): WorkflowInstance {
-  return {
-    id: snapshot.instanceId,
-    name: snapshot.instanceName,
-    projectGoal: snapshot.projectGoal,
-    successCriteria: [...snapshot.successCriteria],
-    goalEvaluatorAgentId: snapshot.goalEvaluatorAgentId,
-    maxGoalIterations: snapshot.maxGoalIterations,
-    agents: snapshot.agents,
-    connections: snapshot.connections,
-    workflowRuns: [],
-    activeRunId: null,
-    dirtyAgentIds: [...snapshot.dirtyAgentIds],
-    createdAt: 0,
-    updatedAt: 0,
-  };
-}
 
 export class WorkflowEngine {
   private readonly deps: WorkflowEngineDeps;

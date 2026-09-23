@@ -681,7 +681,7 @@ Per [complexity-governance.md](../architecture/complexity-governance.md) and `np
 
 ### Split soon (500–800 LOC) — sample
 
-`engine.ts` (~953), `BootstrapChatView.tsx` (~957), `QueryEngine.ts` (see report) — full list in complexity report output. AG-13 ChatInput (~406) and AG-15 shell (~244) cleared below watch.
+`engine.ts` (~797 after split-soon PR1: `codeBlockArtifacts` / `runSnapshot` / `engineDeps`; was ~953), `BootstrapChatView.tsx` (~957), `QueryEngine.ts` (see report) — full list in complexity report output. AG-13 ChatInput (~406) and AG-15 shell (~244) cleared below watch.
 
 ---
 
