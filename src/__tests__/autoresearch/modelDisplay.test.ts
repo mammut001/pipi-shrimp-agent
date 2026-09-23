@@ -298,6 +298,7 @@ describe('AutoResearch Model Display', () => {
     it('keeps MiniMax-M2.5 out of non-demo AutoResearch production display files', () => {
       const filesToCheck = [
         'src/components/AutoResearchPanel.tsx',
+        'src/components/autoResearchPanelUi.tsx',
         'src/components/autoresearch/AutoResearchRunChips.tsx',
         'src/components/autoresearch/AutoResearchDashboardHeader.tsx',
         'src/components/autoresearch/AutoResearchDashboardView.tsx',
