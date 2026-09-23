@@ -27,7 +27,7 @@ Each round followed:
 | Route / View | Actual component |
 | ------------ | -------------- |
 | `currentView === 'chat'` | `ChatBrowserWorkspaceShell` (`App.tsx`) |
-| `pages/Chat.tsx` | **未接入路由**（死代码，仍维护） |
+| `pages/Chat.tsx` | **已删除**（AG-19 2026-09-22；原为未接入死代码） |
 | Browser split | `browserDockMode === 'split'` → 仅 `BrowserWorkspacePane` |
 
 ---

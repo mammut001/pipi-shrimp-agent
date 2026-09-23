@@ -20,7 +20,7 @@ Chinese version: [../round-09-integration.md](../round-09-integration.md)
 | R9-08 | Low | `useResponsiveLayout.ts` | Documented breakpoint vs constants mismatch | 719/720/1388 boundaries |
 | R9-09 | Low | `ExecutionModeDropdownErrorBoundary` | No recovery UI | Fallback + remount |
 | R9-10 | Info | `package.json` | `grammy` dependency unused | depcheck |
-| R9-11 | Info | `pages/Chat.tsx` | Dead code ~377 lines | Import graph excludes it |
+| R9-11 | Info | `pages/Chat.tsx` | Dead code ~377 lines (fixed AG-19 2026-09-22) | Import graph excludes it |
 | R9-12 | Info | `chat.ts` + `chatHelpers.ts` | Duplicate `mergeReasoningParts` | Single source |
 | R9-13 | Info | `telegram.rs:287-291` | Token in GET URL (API design) | Redact on error paths |
 
