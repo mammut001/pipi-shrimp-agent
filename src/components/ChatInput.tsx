@@ -11,29 +11,25 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { safeInvoke, safeInvokeOrNull } from '@/utils/safeInvoke';
-import { fileToImageAttachment } from '@/services/vision/imageAttachments';
 import { useChatStore, useUIStore } from '@/store';
 import { resolveComposerSendStopAffordance } from '@/store/chat/chatSelectors';
-import { useSessionGoalStore } from '@/store/sessionGoalStore';
 import { useMCPStore } from '@/store/mcpStore';
 import { BrowserIntentConfirm } from './BrowserIntentConfirm';
 import { SessionFolderBar } from './chatInput/SessionFolderBar';
 import { ComposerActionToolbar } from './chatInput/ComposerActionToolbar';
 import { ImageAttachmentChips } from './chatInput/ImageAttachmentChips';
-import {
-  extractImageFilesFromClipboard,
-  extractImageFilesFromFileList,
-  extractImageFilesFromDataTransfer,
-  hasImageItems,
-} from './chatInput/imageAttachmentInput';
+import { hasImageItems } from './chatInput/imageAttachmentInput';
 import {
   DRAFT_PERSIST_DEBOUNCE_MS,
   cleanupOldDrafts,
   clearDraftPair,
-  persistBlockDraft,
   persistTextDraft,
   readTextDraft,
 } from './chatInput/draftPersistence';
+import { useBlockComposerWiring } from './chatInput/blockComposerWiring';
+import { resolveComposerDensityStyles } from './chatInput/composerDensity';
+import { useChatInputImageAttachments } from './chatInput/useChatInputImageAttachments';
+import { useSessionGoalComposerBindings } from './chatInput/useSessionGoalComposerBindings';
 import {
   decideChatInputSubmission,
   shouldClearDraftAfterBrowserWorkflow,
@@ -43,7 +39,6 @@ import { t } from '@/i18n';
 import { resolveSessionExecutionModeId, type ExecutionModeId } from '@/services/executionMode';
 import { quickCheckBrowserIntent, handleChatBrowserWorkflow } from '@/utils/chatBrowserBridge';
 import type { ImageAttachment } from '@/types/vision';
-import { type ComposerBlock } from './chatInput/blocks/types';
 import { canSendFromComposer, hasMeaningfulComposerContent, isCompiledTaskPrompt, resolveComposerSubmitMessage } from './chatInput/blocks/promptBuilder';
 
 // Check if running inside Tauri
@@ -81,37 +76,22 @@ export function ChatInput({
   const [isFocused, setIsFocused] = useState(false);
   const [browserIntentCandidate, setBrowserIntentCandidate] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [goalPopoverOpen, setGoalPopoverOpen] = useState(false);
-  const [goalInputText, setGoalInputText] = useState<string>('');
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isComposingRef = useRef(false);
   const draftStorageKey = `chat_draft_${draftKey}`;
-  // Main chat no longer exposes the block composer. Keep inert state while
-  // shared BlockComposer remains available to AutoResearch.
-  const [composerOpen, setComposerOpen] = useState(false);
-  const [composerBlocks, setComposerBlocks] = useState<ComposerBlock[]>([]);
-  const [pendingBypassBlocks, setPendingBypassBlocks] = useState<ComposerBlock[] | null>(null);
   const blockDraftStorageKey = `chat_blocks_draft_${draftKey}`;
-  const isCompact = density === 'compact';
-  const textareaMaxHeight = isCompact ? 96 : 200;
-  const textareaMinHeight = isCompact ? '36px' : '48px';
-  const rootClassName = isCompact
-    ? 'bg-white'
-    : 'border-t border-gray-200 bg-white p-4';
-  const inputShellClassName = isCompact
-    ? 'relative overflow-visible bg-gray-50 rounded-xl border transition-all px-3'
-    : 'relative overflow-visible bg-gray-50 rounded-xl border transition-all px-4';
-  const textareaClassName = isCompact
-    ? 'flex-1 bg-transparent px-0 py-2 max-h-[96px] resize-none focus:outline-none text-sm text-gray-900 placeholder-gray-400 disabled:opacity-50'
-    : 'flex-1 bg-transparent px-0 py-3 max-h-[200px] resize-none focus:outline-none text-gray-900 placeholder-gray-400 disabled:opacity-50';
-  const actionRowClassName = isCompact
-    ? 'flex items-center gap-0.5 pr-1 pb-1.5 flex-wrap'
-    : 'flex items-center gap-1 pr-2 pb-2 flex-wrap';
-  const actionButtonClassName = isCompact
-    ? 'p-1.5 rounded-md'
-    : 'p-2 rounded-lg';
-  const actionIconClassName = isCompact ? 'h-4 w-4' : 'h-5 w-5';
+  const {
+    isCompact,
+    textareaMaxHeight,
+    textareaMinHeight,
+    rootClassName,
+    inputShellClassName,
+    textareaClassName,
+    actionRowClassName,
+    actionButtonClassName,
+    actionIconClassName,
+  } = resolveComposerDensityStyles(density);
 
   // ── macOS WKWebView arrow-key tofu fix ──────────────────────────────────────
   // WKWebView forwards unhandled NSEvents back through NSTextInputClient, which
@@ -160,30 +140,18 @@ export function ChatInput({
   const { setDropdownOpen } = useMCPStore();
   const toggleTerminalPanel = useUIStore((s) => s.toggleTerminalPanel);
   const terminalPanelVisible = useUIStore((s) => s.terminalPanelVisible);
-  const hydrateGoals = useSessionGoalStore((s) => s.hydrate);
-  const bindSessionGoal = useSessionGoalStore((s) => s.bindSession);
-  const setSessionObjective = useSessionGoalStore((s) => s.setObjective);
-  const clearSessionGoal = useSessionGoalStore((s) => s.clearGoal);
-  const sessionGoal = useSessionGoalStore((s) => (
-    currentSessionId ? s.goalsBySession[currentSessionId]?.objective ?? '' : ''
-  ));
-
-  useEffect(() => {
-    hydrateGoals();
-  }, [hydrateGoals]);
-
-  useEffect(() => {
-    bindSessionGoal(currentSessionId);
-  }, [bindSessionGoal, currentSessionId]);
-
-  // Load goal draft on session switch
-  useEffect(() => {
-    if (!currentSessionId) {
-      setGoalInputText('');
-      return;
-    }
-    setGoalInputText(useSessionGoalStore.getState().goalsBySession[currentSessionId]?.objective ?? '');
-  }, [currentSessionId]);
+  const {
+    goalPopoverOpen,
+    setGoalPopoverOpen,
+    goalInputText,
+    setGoalInputText,
+    sessionGoal,
+    handleClearGoal,
+    handleSaveGoal,
+  } = useSessionGoalComposerBindings({
+    currentSessionId,
+    addNotification,
+  });
 
   // Get current session
   const currentSession = sessions.find(s => s.id === currentSessionId);
@@ -207,90 +175,25 @@ export function ChatInput({
     [currentSessionId, updateSessionExecutionMode],
   );
 
+  // Main chat no longer exposes BlockComposer UI; keep inert wiring (legacy draft
+  // clear + mode sync / bypass helpers) for shared AutoResearch surfaces.
+  const {
+    composerOpen,
+    composerBlocks,
+    resetComposer,
+  } = useBlockComposerWiring({
+    blockDraftStorageKey,
+    selectedExecutionModeId,
+    currentSessionId,
+    updateSessionExecutionMode,
+  });
+
   // Restore draft from localStorage on mount
   useEffect(() => {
     const saved = readTextDraft(draftStorageKey);
     if (saved) setInput(saved);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftStorageKey]);
-
-  // Main-chat block composer was removed. Clear any legacy hidden draft so a
-  // stale composer payload can never affect a normal send after the UI is gone.
-  useEffect(() => {
-    clearDraftPair(blockDraftStorageKey);
-    setComposerBlocks([]);
-    setComposerOpen(false);
-    setPendingBypassBlocks(null);
-  }, [blockDraftStorageKey]);
-
-  // Persist block draft
-  useEffect(() => {
-    const handle = window.setTimeout(() => {
-      const isDirty = composerBlocks.length > 0;
-      if (composerOpen && isDirty) {
-        persistBlockDraft(blockDraftStorageKey, JSON.stringify(composerBlocks));
-      } else {
-        persistBlockDraft(blockDraftStorageKey, null);
-      }
-    }, DRAFT_PERSIST_DEBOUNCE_MS);
-    return () => window.clearTimeout(handle);
-  }, [composerBlocks, composerOpen, blockDraftStorageKey]);
-
-  // Bidirectional execution mode synchronization
-  // 1. Sync from store/dropdown to composer
-  useEffect(() => {
-    if (!selectedExecutionModeId) return;
-    setComposerBlocks((prev) => {
-      const modeBlockIdx = prev.findIndex((b) => b.type === 'mode');
-      if (modeBlockIdx === -1) {
-        return prev;
-      }
-      const modeBlock = prev[modeBlockIdx];
-      if (modeBlock.type !== 'mode' || modeBlock.executionMode === selectedExecutionModeId) {
-        return prev;
-      }
-      const nextBlocks = [...prev];
-      nextBlocks[modeBlockIdx] = {
-        ...modeBlock,
-        executionMode: selectedExecutionModeId,
-      };
-      return nextBlocks;
-    });
-  }, [selectedExecutionModeId]);
-
-  // 2. Sync from composer to store
-  const handleComposerBlocksChange = useCallback((newBlocks: ComposerBlock[]) => {
-    const modeBlock = newBlocks.find((b) => b.type === 'mode') as any;
-    if (modeBlock && (modeBlock.executionMode === 'danger' || modeBlock.executionMode === 'bypass') && selectedExecutionModeId !== 'danger') {
-      setPendingBypassBlocks(newBlocks);
-    } else {
-      setComposerBlocks(newBlocks);
-      if (modeBlock && modeBlock.executionMode !== selectedExecutionModeId && currentSessionId) {
-        void updateSessionExecutionMode(currentSessionId, modeBlock.executionMode);
-      }
-    }
-  }, [selectedExecutionModeId, currentSessionId, updateSessionExecutionMode]);
-
-  const handleConfirmBypass = useCallback(() => {
-    if (!pendingBypassBlocks) return;
-    setComposerBlocks(pendingBypassBlocks);
-    if (currentSessionId) {
-      void updateSessionExecutionMode(currentSessionId, 'danger');
-    }
-    setPendingBypassBlocks(null);
-  }, [pendingBypassBlocks, currentSessionId, updateSessionExecutionMode]);
-
-  const handleCancelBypass = useCallback(() => {
-    if (!pendingBypassBlocks) return;
-    const nextBlocks = pendingBypassBlocks.map((b) => {
-      if (b.type === 'mode') {
-        return { ...b, executionMode: selectedExecutionModeId };
-      }
-      return b;
-    });
-    setComposerBlocks(nextBlocks);
-    setPendingBypassBlocks(null);
-  }, [pendingBypassBlocks, selectedExecutionModeId]);
 
   // AUDIT-FIX [audit-1#6] — Persist the draft with a short debounce via
   // persistTextDraft (timestamp + silent full/disabled degrade).
@@ -355,26 +258,17 @@ export function ChatInput({
     setBrowserIntentCandidate(null);
     clearDraftPair(draftStorageKey);
     clearDraftPair(blockDraftStorageKey);
-    setComposerBlocks([]);
-    setComposerOpen(false);
-  }, [draftStorageKey, blockDraftStorageKey]);
+    resetComposer();
+  }, [draftStorageKey, blockDraftStorageKey, resetComposer]);
 
-  const appendImageAttachments = useCallback(async (
-    files: File[],
-    source: ImageAttachment['source'],
-  ) => {
-    if (files.length === 0) {
-      return;
-    }
-
-    try {
-      const nextAttachments = await Promise.all(files.map((file) => fileToImageAttachment(file, source)));
-      setAttachments((current) => [...current, ...nextAttachments]);
-      addNotification('success', `${t('chat.imagesAdded')}: ${nextAttachments.length}`);
-    } catch (error) {
-      addNotification('error', `${t('chat.imagesAddFailed')}: ${error instanceof Error ? error.message : String(error)}`);
-    }
-  }, [addNotification]);
+  const {
+    handlePaste,
+    handleFileSelection,
+    handleDrop,
+  } = useChatInputImageAttachments({
+    setAttachments,
+    addNotification,
+  });
 
   const sendAsRegularChat = useCallback(async (message: string, messageAttachments: ImageAttachment[], rawInput?: string) => {
     setIsSubmitting(true);
@@ -539,49 +433,6 @@ export function ChatInput({
   /**
    * Handle paste events — convert pasted screenshots into image attachments.
    */
-  const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const imageFiles = extractImageFilesFromClipboard(e.clipboardData);
-    if (imageFiles.length === 0) return; // plain text paste — let browser handle it normally
-
-    e.preventDefault(); // stop the tofu characters from being inserted
-    void appendImageAttachments(imageFiles, 'paste');
-  }, [appendImageAttachments]);
-
-  const handleFileSelection = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = extractImageFilesFromFileList(e.target.files);
-    await appendImageAttachments(files, 'upload');
-    e.target.value = '';
-  }, [appendImageAttachments]);
-
-  const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    const files = extractImageFilesFromDataTransfer(e.dataTransfer);
-    if (files.length === 0) {
-      return;
-    }
-    e.preventDefault();
-    void appendImageAttachments(files, 'upload');
-  }, [appendImageAttachments]);
-
-  const handleClearGoal = useCallback(() => {
-    if (!currentSessionId) return;
-    clearSessionGoal(currentSessionId);
-    setGoalInputText('');
-    setGoalPopoverOpen(false);
-    addNotification('success', t('goal.clearSuccess'));
-  }, [addNotification, clearSessionGoal, currentSessionId]);
-
-  const handleSaveGoal = useCallback((trimmed: string) => {
-    if (!currentSessionId) return;
-    if (trimmed) {
-      setSessionObjective(currentSessionId, trimmed);
-    } else {
-      clearSessionGoal(currentSessionId);
-    }
-    setGoalPopoverOpen(false);
-    addNotification('success', trimmed ? t('goal.saveSuccess') : t('goal.clearSuccess'));
-  }, [addNotification, clearSessionGoal, currentSessionId, setSessionObjective]);
-
-
   const isDisabled = showStopControl || isSubmitting;
 
   return (

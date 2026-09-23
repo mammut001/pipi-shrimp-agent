@@ -1502,14 +1502,14 @@
     "status": "partially fixed",
     "whyItMatters": "Component exceeds 500 LOC threshold",
     "files": ["src/components/ChatInput.tsx"],
-    "smallestPrScope": "Extract BlockComposer wiring",
+    "smallestPrScope": "Extract remaining ChatInput submit/browser shell toward <500",
     "tests": ["ChatInputFlow.test.ts"],
     "dependencies": [],
     "runtimeBehavior": false,
     "uiBehavior": true,
     "splitPrs": true,
     "recommendedPr": null,
-    "fixNote": "2026-09-22: AG-13 PR1 extracted draftPersistence, SessionGoalPopover, ImageAttachmentChips (~1081 → ~868 LOC). PR2 extracted SessionFolderBar, ComposerActionToolbar, and imageAttachmentInput helpers (~868 → ~754 LOC), clearing the >800 refactor-plan hard ceiling into split-soon (500–800 LOC). Status stays partially fixed pending BlockComposer wiring extract to reach <500 component safe threshold."
+    "fixNote": "2026-09-22: AG-13 PR1 extracted draftPersistence, SessionGoalPopover, ImageAttachmentChips (~1081 → ~868 LOC). PR2 extracted SessionFolderBar, ComposerActionToolbar, and imageAttachmentInput helpers (~868 → ~754 LOC). PR3 extracted blockComposerWiring (+ useBlockComposerWiring), composerDensity, useChatInputImageAttachments, and useSessionGoalComposerBindings (~754 → ~605 LOC). Status stays partially fixed pending further extracts to reach <500 component safe threshold."
   },
   {
     "id": "AG-14",
