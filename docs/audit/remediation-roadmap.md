@@ -665,7 +665,7 @@ Per [complexity-governance.md](../architecture/complexity-governance.md) and `np
 | AG-10 | `src-tauri/src/commands/web.rs` | 1219 | Extract CDP + policy (R3-06) | Yes | Yes |
 | AG-11 | `src/store/workflowStore.ts` | 1211 | Extract run history, engine bridge | Yes | Yes |
 | AG-12 | `src/services/autoresearch/chatAdapter.ts` | 1117 | Extract headless bridge | Yes | Yes |
-| AG-13 | `src/components/ChatInput.tsx` | ~868 | Extract BlockComposer wiring — **PR1** `draftPersistence` + `SessionGoalPopover` + `ImageAttachmentChips` (2026-09-22); still >800 | Yes | Yes — Partial |
+| AG-13 | `src/components/ChatInput.tsx` | ~754 | Extract BlockComposer wiring — **PR1** `draftPersistence` + `SessionGoalPopover` + `ImageAttachmentChips`; **PR2** `SessionFolderBar` + `ComposerActionToolbar` + `imageAttachmentInput` (2026-09-22); now <800 (cleared hard limit, in split soon 500–800) | Watch | Partial — PR1+PR2 landed |
 | AG-14 | `src/pages/Settings.tsx` | 1131 | Extract provider panels | Yes | Yes |
 | AG-15 | `src/components/ChatBrowserWorkspaceShell.tsx` | ~244 | **Fixed** — PR1 dock/split/swarm (#147) + PR2 `ChatWorkspacePanel`/`PreviewWorkspaceShell` (#148); shell layout/orchestration only; under `<300` safe | No | Done |
 
@@ -681,7 +681,7 @@ Per [complexity-governance.md](../architecture/complexity-governance.md) and `np
 
 ### Split soon (500–800 LOC) — sample
 
-`engine.ts` (~953), `BootstrapChatView.tsx` (~957), `ChatInput.tsx` (~868 after AG-13 PR1), `QueryEngine.ts` (see report) — full list in complexity report output. AG-15 shell (~244) cleared below watch.
+`engine.ts` (~953), `BootstrapChatView.tsx` (~957), `ChatInput.tsx` (~754 after AG-13 PR2), `QueryEngine.ts` (see report) — full list in complexity report output. AG-15 shell (~244) cleared below watch.
 
 ---
 

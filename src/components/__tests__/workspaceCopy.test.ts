@@ -34,13 +34,15 @@ function readSource(relativePath: string): string {
 
 describe('ChatInput two-folder copy', () => {
   const source = readSource('src/components/ChatInput.tsx');
+  const barSource = readSource('src/components/chatInput/SessionFolderBar.tsx');
   const chipSource = readSource('src/components/chatInput/SessionFolderChip.tsx');
 
   it('labels the Project Folder chip with the new "project folder" terminology', () => {
     // Project Folder is the user's repo. Its bound, set, and tooltip
     // keys must all reference the new copy. The labels themselves live
     // on the SessionFolderChip component (selected by `kind`).
-    expect(source).toMatch(/SessionFolderChip/);
+    expect(source).toMatch(/SessionFolderBar/);
+    expect(barSource).toMatch(/SessionFolderChip/);
     expect(chipSource).toMatch(/chat\.projectFolder/);
     expect(chipSource).toMatch(/chat\.setProjectFolder/);
     expect(chipSource).toMatch(/chat\.projectFolderTooltip/);
@@ -59,18 +61,19 @@ describe('ChatInput two-folder copy', () => {
     // PiPi Output Folder is the app-owned output root. It must be
     // addressable independently of the Project Folder. The labels
     // live on the SessionFolderChip component.
-    expect(source).toMatch(/SessionFolderChip/);
+    expect(source).toMatch(/SessionFolderBar/);
+    expect(barSource).toMatch(/SessionFolderChip/);
     expect(chipSource).toMatch(/chat\.pipiOutputFolder/);
     expect(chipSource).toMatch(/chat\.setPipiOutputFolder/);
     expect(chipSource).toMatch(/chat\.pipiOutputFolderTooltip/);
   });
 
-  it('mounts both chip kinds in the chat input', () => {
-    // Two-folder model: ChatInput renders BOTH a `kind="project"` chip
+  it('mounts both chip kinds in the chat input folder bar', () => {
+    // Two-folder model: SessionFolderBar renders BOTH a `kind="project"` chip
     // and a `kind="output"` chip. Removing one must not remove the
     // other.
-    expect(source).toMatch(/kind="project"/);
-    expect(source).toMatch(/kind="output"/);
+    expect(barSource).toMatch(/kind="project"/);
+    expect(barSource).toMatch(/kind="output"/);
   });
 
   it('shows folder chips as soon as a session exists (not gated on messages)', () => {
