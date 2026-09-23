@@ -667,7 +667,7 @@ Per [complexity-governance.md](../architecture/complexity-governance.md) and `np
 | AG-12 | `src/services/autoresearch/chatAdapter.ts` | 1117 | Extract headless bridge | Yes | Yes |
 | AG-13 | `src/components/ChatInput.tsx` | 1125 | Extract BlockComposer wiring | Yes | Yes |
 | AG-14 | `src/pages/Settings.tsx` | 1131 | Extract provider panels | Yes | Yes |
-| AG-15 | `src/components/ChatBrowserWorkspaceShell.tsx` | ~520 | Split soon — **PR1** extracted `ChatTerminalDock` + `BrowserChatSplitLayout` + `SwarmPanelDraggable` (2026-09-22); remaining: chat panel / preview helpers | Watch | Partial — PR1 landed |
+| AG-15 | `src/components/ChatBrowserWorkspaceShell.tsx` | ~250 | Split soon — **PR1** dock/split/swarm (2026-09-22); **PR2** extracted `ChatWorkspacePanel` + `PreviewWorkspaceShell` (2026-09-22); shell now layout/orchestration only | Watch | Partial — PR1+PR2 landed |
 
 ### Concept doc alignment (governance)
 
@@ -681,7 +681,7 @@ Per [complexity-governance.md](../architecture/complexity-governance.md) and `np
 
 ### Split soon (500–800 LOC) — sample
 
-`engine.ts` (~953), `BootstrapChatView.tsx` (~957), `ChatBrowserWorkspaceShell.tsx` (~520 after AG-15 PR1), `QueryEngine.ts` (535) — full list in complexity report output.
+`engine.ts` (~953), `BootstrapChatView.tsx` (~957), `ChatBrowserWorkspaceShell.tsx` (~250 after AG-15 PR2), `QueryEngine.ts` (535) — full list in complexity report output.
 
 ---
 
