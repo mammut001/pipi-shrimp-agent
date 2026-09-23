@@ -368,7 +368,9 @@ describe('AgentPanel', () => {
   });
 
   it('wires Working folders title/empty copy through i18n keys (source guard)', () => {
-    const source = readFileSync(join(process.cwd(), 'src/components/AgentPanel.tsx'), 'utf8');
+    const source = readFileSync(join(process.cwd(), 'src/components/agentPanelSections.tsx'), 'utf8');
+    const panelSource = readFileSync(join(process.cwd(), 'src/components/AgentPanel.tsx'), 'utf8');
+    expect(panelSource).toMatch(/AgentPanelWorkingFoldersSection/);
     expect(source).toMatch(/agentPanel\.workingFolders\.title/);
     expect(source).toMatch(/agentPanel\.workingFolders\.emptyTitle/);
     expect(source).toMatch(/agentPanel\.workingFolders\.emptyHint/);

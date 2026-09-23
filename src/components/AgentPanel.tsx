@@ -10,31 +10,22 @@ import { usePolling } from '@/hooks/usePolling';
 import { useBrowserAgentStore } from '@/store/browserAgentStore';
 import { useCdpStore } from '@/store/cdpStore';
 import { invoke } from '@tauri-apps/api/core';
-import { BrowserMiniPreview } from './BrowserMiniPreview';
 import { DocPanel } from './DocPanel';
-import { Section } from './ui/Section';
-import { FileIcon } from './ui/FileIcon';
 import { SessionGoalPanel } from './SessionGoalPanel';
 import { useAutoResearchStore } from '@/store/autoresearchStore';
-import { t } from '@/i18n';
-import { coerceRenderableText } from '@/utils/coerceRenderableText';
-import { formatCancelInterruptLabel } from '@/store/chat/cancelInterruptVocab';
 import {
   type SyncedWorkspaceEntry,
-  formatCdpHealthLabel,
-  formatCdpLaunchLabel,
-  taskStepDotClassName,
-  taskStepLabelClassName,
-  cdpStatusDotClassName,
-  skillMatchesActive,
-  formatActiveSkillBadgeLabel,
   combineWorkingFiles,
-  workingFoldersCountBadge,
-  footerStatusLabel,
-  ArtifactRenderer,
-  ThinkingPulse,
-  CancellingPulse,
 } from './agentPanelUi';
+import {
+  AgentPanelTabBar,
+  AgentPanelBrowserTab,
+  AgentPanelArtifactTab,
+  AgentPanelProgressSection,
+  AgentPanelWorkingFoldersSection,
+  AgentPanelContextSection,
+  AgentPanelFooter,
+} from './agentPanelSections';
 
 // TODO: Roadmap feature removed due to UI freeze bug (infinite re-render loop).
 // Re-implement with proper state management when ready.
@@ -57,13 +48,13 @@ export const AgentPanel: React.FC = () => {
   const { importedFiles: globalImportedFiles, removeImportedFile, clearImportedFiles } = useSettingsStore();
   const { currentMessages, currentSessionId, sessions, removeSessionWorkingFile } = useChatStore();
   const { status: browserStatus } = useBrowserAgentStore();
-  const cdpStatus = useCdpStore(s => s.status);
-  const cdpConnectionState = useCdpStore(s => s.connectionState);
-  const setupCdpConnectionMonitor = useCdpStore(s => s.setupConnectionMonitor);
-  const openConnectorModal = useCdpStore(s => s.openConnectorModal);
+  const cdpStatus = useCdpStore((s) => s.status);
+  const cdpConnectionState = useCdpStore((s) => s.connectionState);
+  const setupCdpConnectionMonitor = useCdpStore((s) => s.setupConnectionMonitor);
+  const openConnectorModal = useCdpStore((s) => s.openConnectorModal);
 
   // Get session-level working files for current session
-  const currentSession = sessions.find(s => s.id === currentSessionId);
+  const currentSession = sessions.find((s) => s.id === currentSessionId);
   const sessionWorkingFiles = currentSession?.workingFiles ?? [];
 
   // Combine session files and global files (deduplicated by path) - memoized
@@ -112,8 +103,10 @@ export const AgentPanel: React.FC = () => {
 
     if (targetPath) {
       try {
-        const files = await invoke<{name: string, is_directory: boolean, path: string}[]>('list_files', { path: targetPath });
-        const visibleFiles = files.filter(f => !f.name.startsWith('.'));
+        const files = await invoke<{ name: string; is_directory: boolean; path: string }[]>('list_files', {
+          path: targetPath,
+        });
+        const visibleFiles = files.filter((f) => !f.name.startsWith('.'));
         const flattened: SyncedWorkspaceEntry[] = [];
 
         for (const file of visibleFiles) {
@@ -122,7 +115,9 @@ export const AgentPanel: React.FC = () => {
           if (!file.is_directory) continue;
 
           try {
-            const children = await invoke<{name: string, is_directory: boolean, path: string}[]>('list_files', { path: file.path });
+            const children = await invoke<{ name: string; is_directory: boolean; path: string }[]>('list_files', {
+              path: file.path,
+            });
             const visibleChildren = children.filter((child) => !child.name.startsWith('.'));
             for (const child of visibleChildren) {
               flattened.push({
@@ -193,457 +188,131 @@ export const AgentPanel: React.FC = () => {
     setLocalInstructions(agentInstructions);
   }, [agentInstructions]);
 
-  const cdpHealthLabel = formatCdpHealthLabel(cdpConnectionState?.health_status ?? cdpStatus);
-  const cdpLaunchLabel = formatCdpLaunchLabel(cdpConnectionState?.launch_mode);
-
   const handleSaveSoul = async () => {
     if (isSaving) return;
     setIsSaving(true);
     try {
-      await new Promise(resolve => setTimeout(resolve, 800));
+      await new Promise((resolve) => setTimeout(resolve, 800));
       setAgentInstructions(localInstructions);
       addNotification('success', 'Agent Soul saved successfully');
-    } catch (error) {
+    } catch {
       addNotification('error', 'Failed to save Agent Soul');
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleCancelToolExecution = useCallback(async (stepId: string, executionId: string) => {
-    updateTaskStep(stepId, 'cancelling');
-    try {
-      const result = await invoke<{
-        executionId: string;
-        cancelled: boolean;
-        status: string;
-        message: string;
-      }>('cancel_tool_execution', {
-        executionId,
-      });
+  const handleCancelToolExecution = useCallback(
+    async (stepId: string, executionId: string) => {
+      updateTaskStep(stepId, 'cancelling');
+      try {
+        const result = await invoke<{
+          executionId: string;
+          cancelled: boolean;
+          status: string;
+          message: string;
+        }>('cancel_tool_execution', {
+          executionId,
+        });
 
-      if (result.cancelled) {
-        updateTaskStep(stepId, 'cancelled');
-        addNotification('success', 'Command cancellation requested.', currentSessionId ?? undefined);
-        return;
+        if (result.cancelled) {
+          updateTaskStep(stepId, 'cancelled');
+          addNotification('success', 'Command cancellation requested.', currentSessionId ?? undefined);
+          return;
+        }
+
+        if (result.status === 'not_found' || result.status === 'already_finished') {
+          // Neutral finished — not a user Cancelled outcome (vocab: done).
+          updateTaskStep(stepId, 'done');
+          addNotification('info', result.message, currentSessionId ?? undefined);
+          return;
+        }
+
+        updateTaskStep(stepId, 'running');
+        addNotification('warning', result.message, currentSessionId ?? undefined);
+      } catch (error) {
+        updateTaskStep(stepId, 'running');
+        addNotification(
+          'error',
+          `Failed to cancel command: ${error instanceof Error ? error.message : String(error)}`,
+          currentSessionId ?? undefined,
+        );
       }
-
-      if (result.status === 'not_found' || result.status === 'already_finished') {
-        // Neutral finished — not a user Cancelled outcome (vocab: done).
-        updateTaskStep(stepId, 'done');
-        addNotification('info', result.message, currentSessionId ?? undefined);
-        return;
-      }
-
-      updateTaskStep(stepId, 'running');
-      addNotification('warning', result.message, currentSessionId ?? undefined);
-    } catch (error) {
-      updateTaskStep(stepId, 'running');
-      addNotification(
-        'error',
-        `Failed to cancel command: ${error instanceof Error ? error.message : String(error)}`,
-        currentSessionId ?? undefined,
-      );
-    }
-  }, [addNotification, currentSessionId, updateTaskStep]);
-
-  // Calculate completed steps
-  const completedSteps = taskProgress.filter(s => s.status === 'done').length;
-  const totalSteps = taskProgress.length;
+    },
+    [addNotification, currentSessionId, updateTaskStep],
+  );
 
   return (
     <div className="flex flex-col h-full bg-[#fbfbfd] text-gray-800 border-l border-gray-200/60 transition-all duration-300">
       {/* Top Tab Bar */}
-      <div className="flex items-center gap-1 px-3 pt-3 pb-2 border-b border-gray-200/60 bg-white/70">
-        {/* Main tab */}
-        <button
-          onClick={() => setActiveTab('main')}
-          className={`px-2.5 py-1 text-[10px] font-bold rounded-lg uppercase tracking-tight transition-all ${
-            activeTab === 'main'
-              ? 'bg-gray-900 text-white'
-              : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
-          }`}
-        >
-          Main
-        </button>
-
-        {/* Browser tab */}
-        <button
-          onClick={() => setActiveTab('browser')}
-          className={`p-1.5 rounded-lg transition-all ${
-            activeTab === 'browser'
-              ? 'bg-gray-100 text-gray-900'
-              : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
-          }`}
-          title="Browser"
-        >
-          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2}
-              d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9" />
-          </svg>
-        </button>
-
-        {/* Artifact Preview tab (only if artifact exists) */}
-        {currentArtifactId && (
-          <button
-            onClick={() => setActiveTab('artifact-preview')}
-            className={`p-1.5 rounded-lg transition-all ${
-              activeTab === 'artifact-preview'
-                ? 'bg-gray-100 text-gray-900'
-                : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
-            }`}
-            title="Artifact Preview"
-          >
-            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-            </svg>
-          </button>
-        )}
-        
-        {/* Goal tab */}
-        <button
-          onClick={() => setActiveTab('goal')}
-          className={`p-1.5 rounded-lg transition-all ${
-            activeTab === 'goal'
-              ? 'bg-emerald-100 text-emerald-800'
-              : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
-          }`}
-          title={t('goal.panelTitle')}
-        >
-          <svg className="w-3.5 h-3.5" viewBox="0 0 20 20" fill="currentColor">
-            <path d="M10 2a8 8 0 100 16 8 8 0 000-16zm0 2a6 6 0 016 6h-2a4 4 0 00-4-4V4z" />
-          </svg>
-        </button>
-      </div>
+      <AgentPanelTabBar
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        currentArtifactId={currentArtifactId}
+      />
 
       {/* Tab content: Browser - Always show mini browser + task + logs */}
-      {activeTab === 'browser' && (
-        <div className="flex-1 min-h-0 overflow-hidden">
-          <BrowserMiniPreview />
-        </div>
-      )}
+      {activeTab === 'browser' && <AgentPanelBrowserTab />}
 
       {/* Tab content: Artifact Preview */}
       {activeTab === 'artifact-preview' && (
-        <div className="flex-1 overflow-hidden p-3">
-          <ArtifactRenderer artifactId={currentArtifactId} messages={messages} />
-        </div>
+        <AgentPanelArtifactTab artifactId={currentArtifactId} messages={messages} />
       )}
 
       {/* Tab content: Goal */}
-      {activeTab === 'goal' && (
-        <SessionGoalPanel />
-      )}
+      {activeTab === 'goal' && <SessionGoalPanel />}
 
       {/* Tab content: Main (original AgentPanel) */}
       {activeTab === 'main' && (
-        <>
-      <div className="flex-1 overflow-y-auto pb-6 scrollbar-hide hover:scrollbar-default transition-all pt-4">
+        <div className="flex-1 overflow-y-auto pb-6 scrollbar-hide hover:scrollbar-default transition-all pt-4">
+          {/* Progress Section */}
+          <AgentPanelProgressSection
+            taskProgress={taskProgress}
+            onCancelToolExecution={handleCancelToolExecution}
+          />
 
-        {/* Progress Section */}
-        <Section
-          title="Progress"
-          count={totalSteps > 0 ? `${completedSteps} of ${totalSteps}` : undefined}
-          defaultExpanded={totalSteps > 0}
-        >
-          {taskProgress.length > 0 ? (
-            <div className="space-y-3 pt-2">
-              {taskProgress.map((step, idx) => (
-                <div key={step.id} className="flex gap-3 items-start relative group">
-                  {idx < taskProgress.length - 1 && (
-                    <div className="absolute left-[9px] top-5 bottom-0 w-[1px] bg-gray-100" />
-                  )}
-                  <div className={`mt-0.5 h-4.5 w-4.5 rounded-full flex items-center justify-center flex-shrink-0 z-10 transition-all ${taskStepDotClassName(step.status)}`}>
-                    {step.status === 'done' ? (
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-2.5 w-2.5" viewBox="0 0 20 20" fill="currentColor">
-                        <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                      </svg>
-                    ) : (
-                      <span className="text-[9px] font-bold">{idx + 1}</span>
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-start justify-between gap-2">
-                      <p className={`min-w-0 flex-1 text-[11px] font-medium leading-[1.4] transition-colors ${taskStepLabelClassName(step.status)}`}>
-                        {coerceRenderableText(step.label, step.id)}
-                      </p>
-                      {step.status === 'running' && step.executionId && (
-                        <button
-                          onClick={() => handleCancelToolExecution(step.id, step.executionId!)}
-                          className="rounded-md border border-slate-200 px-2 py-0.5 text-[9px] font-bold uppercase tracking-tight text-slate-600 transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"
-                        >
-                          Cancel
-                        </button>
-                      )}
-                    </div>
-                    {step.status === 'running' && <ThinkingPulse />}
-                    {step.status === 'cancelling' && <CancellingPulse />}
-                    {step.status === 'awaiting_confirmation' && (
-                      <p className="mt-1 text-[9px] font-bold uppercase tracking-tight text-amber-600">Awaiting confirmation</p>
-                    )}
-                    {step.status === 'validating' && (
-                      <p className="mt-1 text-[9px] font-bold uppercase tracking-tight text-slate-600">Validating</p>
-                    )}
-                    {step.status === 'approved' && (
-                      <p className="mt-1 text-[9px] font-bold uppercase tracking-tight text-emerald-600">Approved</p>
-                    )}
-                    {step.status === 'cancelled' && (
-                      <p className="mt-1 text-[9px] font-bold uppercase tracking-tight text-slate-500">{formatCancelInterruptLabel('cancelled')}</p>
-                    )}
-                    {step.status === 'timed_out' && (
-                      <p className="mt-1 text-[9px] font-bold uppercase tracking-tight text-orange-600">Timed out</p>
-                    )}
-                    {step.status === 'rejected' && (
-                      <p className="mt-1 text-[9px] font-bold uppercase tracking-tight text-rose-600">Rejected</p>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="py-8 flex flex-col items-center justify-center opacity-25">
-              <svg xmlns="http://www.w3.org/2000/svg" className="h-10 w-10 mb-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
-              </svg>
-              <span className="text-[10px] font-bold uppercase tracking-widest">No Active Task</span>
-            </div>
+          {/* Working Folders Section */}
+          <AgentPanelWorkingFoldersSection
+            syncedFiles={syncedFiles}
+            allWorkingFiles={allWorkingFiles}
+            sessionWorkingFiles={sessionWorkingFiles}
+            globalImportedFiles={globalImportedFiles}
+            currentSessionId={currentSessionId}
+            onRemoveSessionWorkingFile={removeSessionWorkingFile}
+            onRemoveImportedFile={removeImportedFile}
+            onClearImportedFiles={clearImportedFiles}
+          />
+
+          {/* Docs Section */}
+          {/* Two-folder model: docs land under the PiPi Output Folder,
+              not the Project Folder. We pass `pipiOutputDir` so the
+              panel reads from the correct location. The panel itself
+              doesn't care which folder it points at — the `list_docs`
+              Rust helper just appends `.pipi-shrimp/docs/` to whatever
+              root the caller passes. */}
+          {currentSession?.pipiOutputDir && (
+            <DocPanel workDir={currentSession.pipiOutputDir} />
           )}
-        </Section>
 
-        {/* Working Folders Section */}
-        <Section
-          title={t('agentPanel.workingFolders.title')}
-          count={workingFoldersCountBadge(syncedFiles.length, allWorkingFiles.length)}
-        >
-          <div className="pt-1.5 space-y-0.5">
-            {/* Render Disk-Synced Files */}
-            {syncedFiles.length > 0 && syncedFiles.map((file) => (
-              <div 
-                key={file.path} 
-                className="group flex items-center gap-2 px-2 py-1.5 hover:bg-gray-100/50 rounded-lg transition-all cursor-pointer"
-                onClick={() => {
-                   invoke('reveal_in_finder', { path: file.path }).catch(console.error);
-                }}
-                style={{ paddingLeft: `${0.5 + file.depth * 1}rem` }}
-              >
-                {file.is_directory ? (
-                  <div className="text-blue-400">
-                    <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 20 20">
-                       <path d="M2 6a2 2 0 012-2h4l2 2h4a2 2 0 012 2v1H8a3 3 0 00-3 3v6H4a2 2 0 01-2-2V6z" />
-                    </svg>
-                  </div>
-                ) : (
-                  <FileIcon filename={file.name} />
-                )}
-                <span className="flex-1 text-[11px] text-gray-700 truncate font-medium" title={file.path}>
-                  {file.displayName}
-                </span>
-                <span className="text-[8px] text-green-500 font-bold">disk</span>
-              </div>
-            ))}
-
-            {allWorkingFiles.length > 0 ? (
-              allWorkingFiles.map((file) => {
-                // Check if file is from session or global
-                const isSessionFile = sessionWorkingFiles.some(sf => sf.id === file.id);
-                const handleRemove = () => {
-                  if (isSessionFile && currentSessionId) {
-                    removeSessionWorkingFile(currentSessionId, file.id);
-                  } else {
-                    removeImportedFile(file.id);
-                  }
-                };
-                return (
-                  <div key={file.id} className="group flex items-center gap-2 px-2 py-1.5 hover:bg-gray-100/50 rounded-lg transition-all">
-                    <FileIcon filename={file.name} />
-                    <span className="flex-1 text-[11px] text-gray-700 truncate font-medium" title={file.path}>
-                      {file.name}
-                    </span>
-                    {isSessionFile ? (
-                      <span className="text-[8px] text-blue-400 font-bold">session</span>
-                    ) : (
-                      <span className="text-[8px] text-orange-400 font-bold">global</span>
-                    )}
-                    <button
-                      onClick={handleRemove}
-                      className="opacity-0 group-hover:opacity-100 p-1 hover:bg-red-50 text-red-400 hover:text-red-500 rounded-lg transition-all"
-                    >
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
-                        <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                      </svg>
-                    </button>
-                  </div>
-                );
-              })
-            ) : (
-              syncedFiles.length === 0 && (
-                <div
-                  data-testid="working-folders-empty"
-                  className="mt-0.5 rounded-lg border border-dashed border-gray-200 bg-gray-50/60 px-3 py-3 flex flex-col items-center justify-center text-center"
-                >
-                  <p className="text-[11px] font-semibold text-gray-500 leading-snug">
-                    {t('agentPanel.workingFolders.emptyTitle')}
-                  </p>
-                  <p className="mt-1 text-[10px] text-gray-400 leading-relaxed max-w-[220px]">
-                    {t('agentPanel.workingFolders.emptyHint')}
-                  </p>
-                </div>
-              )
-            )}
-            {globalImportedFiles.length > 0 && (
-              <div className="mt-1.5 pt-1.5 border-t border-gray-100 flex items-center justify-between">
-                <span className="text-[9px] text-gray-400 font-medium">
-                  {globalImportedFiles.length} global file{globalImportedFiles.length !== 1 ? 's' : ''} (all sessions)
-                </span>
-                <button
-                  onClick={clearImportedFiles}
-                  className="text-[9px] text-orange-500 hover:text-orange-700 font-bold uppercase tracking-tight hover:underline transition-colors"
-                >
-                  Clear global
-                </button>
-              </div>
-            )}
-          </div>
-        </Section>
-
-        {/* Docs Section */}
-        {/* Two-folder model: docs land under the PiPi Output Folder,
-            not the Project Folder. We pass `pipiOutputDir` so the
-            panel reads from the correct location. The panel itself
-            doesn't care which folder it points at — the `list_docs`
-            Rust helper just appends `.pipi-shrimp/docs/` to whatever
-            root the caller passes. */}
-        {currentSession?.pipiOutputDir && (
-          <DocPanel workDir={currentSession.pipiOutputDir} />
-        )}
-
-        {/* Context / Skills Section */}
-        <Section title="Context">
-          <div className="pt-2 space-y-4">
-            <div>
-              <h4 className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-2.5">Skills</h4>
-              <div className="flex flex-wrap gap-2">
-                {/* Show active skill badge if it doesn't match any core skill */}
-                {activeSkill != null && !coreSkills.some(s => skillMatchesActive(s, activeSkill)) && (
-                  <div
-                    className="px-2 py-1 border rounded-lg text-[10px] font-bold shadow-sm flex items-center gap-1.5 transition-all cursor-default bg-black text-white border-black scale-105 shadow-md animate-pulse"
-                    title={activeSkill}
-                  >
-                    <div className="h-1 w-1 rounded-full bg-white animate-pulse" />
-                    {formatActiveSkillBadgeLabel(activeSkill)}
-                    <span className="ml-0.5 text-[9px] opacity-80">⚡</span>
-                  </div>
-                )}
-                {coreSkills.slice(0, 8).map((skill) => {
-                  const isActive = skillMatchesActive(skill, activeSkill);
-                  return (
-                    <div
-                      key={skill.id}
-                      className={`px-2 py-1 border rounded-lg text-[10px] font-bold shadow-sm flex items-center gap-1.5 transition-all cursor-default ${
-                        isActive
-                          ? 'bg-black text-white border-black scale-105 shadow-md'
-                          : 'bg-white text-gray-600 border-gray-200 hover:border-blue-200'
-                      }`}
-                      title={skill.description || skill.name}
-                    >
-                      <div className={`h-1 w-1 rounded-full ${isActive ? 'bg-white animate-pulse' : 'bg-blue-500'}`} />
-                      {skill.displayName}
-                      {isActive && <span className="ml-0.5 text-[9px] opacity-80">⚡</span>}
-                    </div>
-                  );
-                })}
-                {remainingCount > 0 && (
-                  <div className="px-2 py-1 bg-gray-50 border border-dashed border-gray-200 rounded-lg text-[10px] font-medium text-gray-400">
-                    + {remainingCount} more
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div>
-              <h4 className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-2.5">Connectors</h4>
-              <div className="space-y-2">
-                <button
-                  onClick={() => {
-                    if (cdpStatus !== 'connected') {
-                      openConnectorModal();
-                    }
-                  }}
-                  className="w-full flex items-center justify-between p-2.5 bg-white border border-gray-200 rounded-xl shadow-sm hover:border-blue-200 transition-all group text-left"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="p-1.5 bg-blue-50 rounded-lg text-blue-600">
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                      </svg>
-                    </div>
-                    <div>
-                      <p className="text-[11px] font-bold text-gray-800">
-                        {cdpStatus === 'connected' ? 'Pipi Shrimp in Chrome' : 'Chrome Browser'}
-                      </p>
-                      <p className="text-[9px] text-gray-400 font-medium uppercase tracking-tight">
-                        {cdpStatus === 'connected' && cdpHealthLabel}
-                        {cdpStatus === 'connecting' && 'Connecting...'}
-                        {cdpStatus === 'disconnected' && 'Click to Connect'}
-                        {cdpStatus === 'error' && 'Connection Failed — Retry'}
-                      </p>
-                      {cdpConnectionState && (
-                        <div className="mt-1 space-y-0.5">
-                          {cdpLaunchLabel && (
-                            <p className="text-[9px] text-gray-500 truncate">
-                              {cdpLaunchLabel}
-                            </p>
-                          )}
-                          {cdpConnectionState.current_url && (
-                            <p className="max-w-[180px] truncate text-[9px] text-gray-500">
-                              {cdpConnectionState.current_url}
-                            </p>
-                          )}
-                          {cdpConnectionState.health_failures > 0 && (
-                            <p className="text-[9px] text-amber-600">
-                              {cdpConnectionState.health_failures} recent health failures
-                            </p>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                  <div className={`h-1.5 w-1.5 rounded-full shadow-sm ${cdpStatusDotClassName(cdpStatus)}`} />
-                </button>
-              </div>
-            </div>
-
-            <div>
-              <div className="flex items-center justify-between mb-2.5">
-                <h4 className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Agent Soul (Default)</h4>
-                {localInstructions !== agentInstructions && (
-                  <button onClick={handleSaveSoul} className="text-[9px] font-bold text-blue-600 uppercase tracking-tight hover:underline">
-                    {isSaving ? 'Saving...' : 'Save Changes'}
-                  </button>
-                )}
-              </div>
-              <textarea
-                value={localInstructions}
-                onChange={(e) => setLocalInstructions(e.target.value)}
-                className="w-full text-[11px] text-gray-600 leading-relaxed bg-gray-100/50 p-3 rounded-xl border border-transparent focus:border-blue-200 focus:bg-white focus:outline-none transition-all resize-none min-h-[80px]"
-                placeholder="Agent identity and background..."
-              />
-            </div>
-          </div>
-        </Section>
-
-      </div>
-        </>
+          {/* Context / Skills Section */}
+          <AgentPanelContextSection
+            activeSkill={activeSkill}
+            coreSkills={coreSkills}
+            remainingCount={remainingCount}
+            cdpStatus={cdpStatus}
+            cdpConnectionState={cdpConnectionState}
+            onOpenConnectorModal={openConnectorModal}
+            agentInstructions={agentInstructions}
+            localInstructions={localInstructions}
+            onChangeLocalInstructions={setLocalInstructions}
+            onSaveSoul={handleSaveSoul}
+            isSavingSoul={isSaving}
+          />
+        </div>
       )}
 
       {/* Footer / Status Area */}
-      <div className="px-4 py-3 border-t border-gray-200/60 bg-white/50 flex items-center justify-between text-[10px] font-bold text-gray-400 uppercase tracking-tighter cursor-default">
-        <div className="flex items-center gap-2">
-          <div className={`h-1.5 w-1.5 rounded-full ${taskProgress.some(s => s.status === 'running' || s.status === 'cancelling') ? 'bg-blue-500 animate-pulse' : 'bg-green-500'}`} />
-          {footerStatusLabel(taskProgress)}
-        </div>
-        <div className="opacity-60">v0.1.0-alpha</div>
-      </div>
+      <AgentPanelFooter taskProgress={taskProgress} />
     </div>
   );
 };

@@ -142,24 +142,29 @@ describe('FileDropOverlay context files copy', () => {
 
 describe('AgentPanel Working folders empty copy', () => {
   const source = readSource('src/components/AgentPanel.tsx');
+  const sectionsSource = readSource('src/components/agentPanelSections.tsx');
   const uiSource = readSource('src/components/agentPanelUi.tsx');
 
   it('uses i18n empty-state keys instead of hardcoded Drop-files copy', () => {
     // Soak/debug glance: empty Working Folders should read clearly in
     // both locales, not a faint "Drop files here…" stub.
-    expect(source).toMatch(/agentPanel\.workingFolders\.title/);
-    expect(source).toMatch(/agentPanel\.workingFolders\.emptyTitle/);
-    expect(source).toMatch(/agentPanel\.workingFolders\.emptyHint/);
-    expect(source).toMatch(/data-testid="working-folders-empty"/);
-    expect(source).not.toMatch(/Drop files here to add to context/);
+    expect(source).toMatch(/AgentPanelWorkingFoldersSection/);
+    expect(sectionsSource).toMatch(/agentPanel\.workingFolders\.title/);
+    expect(sectionsSource).toMatch(/agentPanel\.workingFolders\.emptyTitle/);
+    expect(sectionsSource).toMatch(/agentPanel\.workingFolders\.emptyHint/);
+    expect(sectionsSource).toMatch(/data-testid="working-folders-empty"/);
+    expect(sectionsSource).not.toMatch(/Drop files here to add to context/);
   });
 
   it('hides the Working folders count badge when the list is empty', () => {
     // Progress already omits count at 0; Working folders should match
     // so a "0" chip does not clutter the empty glance.
     // split-soon PR1 extracted the badge into workingFoldersCountBadge;
-    // AgentPanel must still wire it, and the helper must return undefined at 0.
-    expect(source).toMatch(
+    // split-soon PR2 extracted the section into agentPanelSections.tsx.
+    // AgentPanel must wire the section, sectionsSource must wire the badge,
+    // and the helper must return undefined at 0.
+    expect(source).toMatch(/AgentPanelWorkingFoldersSection/);
+    expect(sectionsSource).toMatch(
       /count=\{workingFoldersCountBadge\(syncedFiles\.length, allWorkingFiles\.length\)\}/,
     );
     expect(uiSource).toMatch(/export function workingFoldersCountBadge/);
