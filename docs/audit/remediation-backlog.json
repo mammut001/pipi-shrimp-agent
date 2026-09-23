@@ -997,7 +997,7 @@
     "lane": "G. Security Hardening",
     "severity": "Medium",
     "status": "partially fixed",
-    "fixNote": "2026-09-22: Spike landed (588dd9f / 122131e / 90566a3): pluggable SecureStorageProvider in secureStorage.ts (LocalStorageProvider XOR + KeychainProvider dynamic-import stub for `@tauri-apps/plugin-secure-store`), saveSecret/loadSecret/migrateLegacySecret route via getSecureStorage(), settingsStore telegram-token load/migrate, secureStorage.test.ts. Still open: no official `@tauri-apps/plugin-secure-store` for Tauri 2; KeychainProvider throws/falls back until a real plugin is added to Cargo.toml/package.json + capabilities. See docs/audit/r7-15-keychain-spike.md.",
+    "fixNote": "2026-09-22: Spike landed (588dd9f / 122131e / 90566a3): pluggable SecureStorageProvider in secureStorage.ts (LocalStorageProvider XOR + KeychainProvider dynamic-import stub for `@tauri-apps/plugin-secure-store`), saveSecret/loadSecret/migrateLegacySecret route via getSecureStorage(), settingsStore telegram-token load/migrate, secureStorage.test.ts. Fail-safe migrate: legacy localStorage key is removed only after new-store save+load verify; keychain-missing save throws (no silent XOR fallback). Still open: wire a real Tauri 2 keychain plugin (Cargo/npm/capabilities). See docs/audit/r7-15-keychain-spike.md.",
     "whyItMatters": "Token recoverable from local storage",
     "files": [
       "src/utils/secureStorage.ts",

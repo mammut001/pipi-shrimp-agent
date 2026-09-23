@@ -17,10 +17,12 @@
  *     by simply calling atob() on the stored value
  *
  * Future upgrade path:
- *   - @tauri-apps/plugin-secure-store (OS keychain backed)
+ *   - A maintained Tauri 2 desktop keychain plugin (see docs/audit/r7-15-keychain-spike.md)
  *   - tauri-plugin-stronghold integration
- *   - When available, migrate saveSecret/loadSecret to use native
- *     secure storage with localStorage as fallback only.
+ *   - When a real keychain backend is wired, migrate saveSecret/loadSecret
+ *     to it. Do NOT assume a silent localStorage fallback when the plugin
+ *     is missing — migrateLegacySecret is fail-safe (keeps the old key
+ *     until the new store verifies the write).
  */
 
 const SECRET_PREFIX = 'pipi_secret_v2_';
@@ -189,32 +191,56 @@ export async function deleteSecret(key: string): Promise<void> {
  * Migrate a legacy obfuscated value from an old storage key to the new
  * secureSecrets namespace. Returns the decoded value.
  *
+ * Fail-safe: the legacy localStorage key is removed only after the
+ * active SecureStorageProvider save+load round-trip verifies the new
+ * value. If the new store fails (e.g. keychain plugin missing), the
+ * legacy key is left intact and the decoded value is still returned
+ * when available so the caller can hydrate this session.
+ *
  * @param legacyKey - The old localStorage key (e.g. 'ai-agent-telegram-token')
  * @param newKey - The new secureSecrets key (e.g. 'telegram-token')
- * @returns The migrated value, or null if no legacy value exists
+ * @returns The decoded value, or null if no legacy value exists
  */
 export async function migrateLegacySecret(legacyKey: string, newKey: string): Promise<string | null> {
+  // Hold decoded outside try so a mid-migrate throw can still hydrate
+  // the caller while leaving the legacy key untouched for retry.
+  let decoded: string | null = null;
   try {
     const raw = localStorage.getItem(legacyKey);
     if (raw === null) return null;
 
     // Decode the legacy value (may be v1 btoa or plaintext)
-    const decoded = deobfuscate(raw);
-
-    // Save under new key via the active secure storage provider
-    // (localStorage XOR or OS keychain — see AUDIT-FIX [R7-15]).
-    if (decoded) {
-      await saveSecret(newKey, decoded);
+    decoded = deobfuscate(raw) || null;
+    if (!decoded) {
+      // Empty / undecodable legacy entry — safe to drop.
+      localStorage.removeItem(legacyKey);
+      return null;
     }
 
-    // Remove legacy key from localStorage regardless of which provider
-    // the new value lands in.
-    localStorage.removeItem(legacyKey);
+    // Fail-safe (AUDIT-FIX [R7-15]): only delete the legacy key AFTER the
+    // active provider confirms it retained the value. Calling storage
+    // directly (not saveSecret) so a thrown keychain/plugin error cannot
+    // be swallowed while we still wipe the old token.
+    const { getSecureStorage } = await import('@/utils/secureStorage');
+    const storage = getSecureStorage();
+    await storage.save(newKey, decoded);
+    const verified = await storage.load(newKey);
+    if (verified !== decoded) {
+      console.error(
+        `Failed to migrate legacy secret "${legacyKey}": new store did not retain value; leaving legacy key in place.`,
+      );
+      // Keep legacy so the token remains readable on next boot / retry.
+      return decoded;
+    }
 
-    return decoded || null;
+    localStorage.removeItem(legacyKey);
+    return decoded;
   } catch (error) {
+    // Do NOT remove legacyKey — new store failed (e.g. keychain plugin
+    // missing). Return decoded when available so this session can hydrate;
+    // next boot will re-attempt migrate against the intact legacy key.
     console.error(`Failed to migrate legacy secret "${legacyKey}":`, error);
-    return null;
+    return decoded;
   }
 }
 

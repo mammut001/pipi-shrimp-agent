@@ -6,6 +6,7 @@ import {
   resolveSecureStorage,
   type SecureStorageProvider,
 } from '../secureStorage';
+import { migrateLegacySecret, deobfuscateInline } from '../secureSecrets';
 
 declare global {
   // eslint-disable-next-line no-var
@@ -137,7 +138,7 @@ describe('secureStorage (R7-15)', () => {
     });
   });
 
-  describe('KeychainProvider fallback (no plugin installed)', () => {
+  describe('KeychainProvider when plugin is missing', () => {
     beforeEach(() => {
       (globalThis as { __secureStorageForceKeychain?: boolean }).__secureStorageForceKeychain = true;
       __resetSecureStorageCache();
@@ -153,9 +154,53 @@ describe('secureStorage (R7-15)', () => {
       // The dynamic import of @tauri-apps/plugin-secure-store will
       // fail (the dep isn't in package.json) and ensurePlugin()
       // leaves the plugin reference null. load() then returns null
-      // instead of throwing.
+      // instead of throwing — this is NOT a silent XOR fallback.
       const v = await storage.load('telegram-token');
       expect(v).toBeNull();
+    });
+
+    it('save throws when the plugin module is not installed (no silent fallback)', async () => {
+      const storage = resolveSecureStorage();
+      await expect(storage.save('telegram-token', '123456:abc')).rejects.toThrow(
+        /secure-store plugin is not installed/i,
+      );
+    });
+  });
+
+
+  describe('migrateLegacySecret fail-safe (R7-15)', () => {
+    const LEGACY_KEY = 'ai-agent-telegram-token';
+    const NEW_KEY = 'telegram-token';
+    const TOKEN = '123456:FAKE_BOT_TOKEN_for_migrate_test';
+
+    it('removes legacy key only after localStorage provider verifies the write', async () => {
+      localStorage.setItem(LEGACY_KEY, TOKEN); // legacy plaintext path
+      const result = await migrateLegacySecret(LEGACY_KEY, NEW_KEY);
+      expect(result).toBe(TOKEN);
+      expect(localStorage.getItem(LEGACY_KEY)).toBeNull();
+      // New store holds the value under pipi_secret_v2_*
+      const storage = resolveSecureStorage();
+      expect(await storage.load(NEW_KEY)).toBe(TOKEN);
+    });
+
+    it('keeps legacy token readable when new (keychain) store fails', async () => {
+      localStorage.setItem(LEGACY_KEY, TOKEN);
+      (globalThis as { __secureStorageForceKeychain?: boolean }).__secureStorageForceKeychain = true;
+      __resetSecureStorageCache();
+
+      const result = await migrateLegacySecret(LEGACY_KEY, NEW_KEY);
+
+      // Hydrate-friendly: decoded value returned for this session
+      expect(result).toBe(TOKEN);
+      // Fail-safe: legacy key NOT deleted when keychain save cannot succeed
+      expect(localStorage.getItem(LEGACY_KEY)).toBe(TOKEN);
+      // And the legacy value is still readable / decodable
+      expect(deobfuscateInline(localStorage.getItem(LEGACY_KEY)!)).toBe(TOKEN);
+
+      // Keychain load still empty — prove we did not invent a silent XOR write
+      const storage = resolveSecureStorage();
+      expect(storage.name).toBe('keychain');
+      expect(await storage.load(NEW_KEY)).toBeNull();
     });
   });
 

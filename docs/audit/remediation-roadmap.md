@@ -600,7 +600,7 @@ Also see **R4-04–R4-24** (store/workflow cross-cuts) in [round-04](./round-04-
 | R7-09 | `ChatImage` arbitrary src | Med | fixed (code 2026-06-24; verified 2026-09-21) | `ChatImage.tsx` | Allowlist schemes | `ChatImage.test.tsx` scheme allowlist |
 | R7-10 | Telegram token in URL logs | Med | fixed (code 2026-06-24; verified 2026-09-21) | `telegram.rs` | Redact in errors | `redact_token_*` unit tests |
 | R7-13 | `terminal_create` cwd no path_security | Med | fixed (code 2026-06-24; tests 2026-09-21) | `terminal.rs` | validate_terminal_cwd → path_security | `/etc` + relative rejected |
-| R7-15 | Telegram token in localStorage XOR | Med | partially fixed (spike 2026-09-22) | settings / secureStorage | Wire Tauri 2 keychain plugin | `secureStorage.test.ts`; see `r7-15-keychain-spike.md` |
+| R7-15 | Telegram token in localStorage XOR | Med | partially fixed (spike + fail-safe migrate 2026-09-22) | settings / secureStorage | Wire Tauri 2 keychain plugin | `secureStorage.test.ts` fail-safe migrate; see `r7-15-keychain-spike.md` |
 | R7-16 | TS BLOCKED_PREFIXES missing Windows | Med | fixed (code 2026-06-24; verified 2026-09-21) | `pathValidation.ts` | Add Windows roots | `pathValidation.test.ts` Windows describe |
 | R7-14, R7-17, R7-18 | Low/Info | Low | open | various | Hardening batch | per item |
 
