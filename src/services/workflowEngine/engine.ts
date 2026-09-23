@@ -18,17 +18,6 @@ import {
   validateWorkflowForRun,
 } from '@/services/workflow/validation';
 import {
-  buildDownstreamAgentPrompt,
-  buildEntryAgentPrompt,
-  type UpstreamOutput,
-} from '@/services/workflowPromptBuilder';
-import { evaluateGoalWithRules } from '@/services/workflowGoalEvaluator';
-import { readAgentInbox } from '@/services/workflowNotifier';
-import {
-  getBlockingFailures,
-  getPredecessorIds,
-} from '@/services/workflowDependencies';
-import {
   buildExecutionPlan,
   evaluateNextAgent,
   selectReentryAgents,
@@ -38,25 +27,27 @@ import {
 } from './agentRunner';
 import {
   WorkflowTranscriptManager,
-  buildAgentArtifactBaseName,
-  renderTranscriptFile,
   type WorkflowTranscriptEntry,
 } from './transcript';
 import { extractCodeBlockArtifacts } from './codeBlockArtifacts';
 import {
   createWorkflowRunSnapshot,
-  buildGoalEvaluationInstance,
-  type WorkflowRunSnapshot,
 } from './runSnapshot';
 import {
   defaultDeps,
   type WorkflowEngineDeps,
 } from './engineDeps';
-import { workflowRunFileService } from '@/services/workflow/runFileService';
+import {
+  deriveWorkflowGoal,
+  evaluateGoalStep,
+  type GoalStepHost,
+} from './goalStep';
+import {
+  runPlannedAgent,
+  type PlannedAgentRunHost,
+} from './plannedAgentRun';
 
 export { extractCodeBlockArtifacts };
-
-const MAX_TOTAL_STEPS = 50;
 
 export class WorkflowEngine {
   private readonly deps: WorkflowEngineDeps;
@@ -154,363 +145,24 @@ export class WorkflowEngine {
     return !this.stopRequested && this.currentRunId === runId;
   }
 
-  private deriveWorkflowGoal(agents: WorkflowAgent[], explicitGoal?: string): string {
-    if (explicitGoal?.trim()) {
-      return explicitGoal.trim();
-    }
-
-    const entryAgents = agents.filter((agent) => !agent.inputFrom);
-    const preferredAgents = entryAgents.length > 0 ? entryAgents : agents;
-    const derivedLines = preferredAgents
-      .map((agent) => {
-        const parts = [agent.taskPrompt?.trim(), agent.task?.trim()].filter(Boolean);
-        return parts.length > 0 ? `${agent.name}: ${parts.join(' | ')}` : null;
-      })
-      .filter((line): line is string => Boolean(line));
-
-    return derivedLines.length > 0
-      ? derivedLines.join('\n')
-      : '请按照当前工作流中各个 Agent 的职责与配置依次完成任务。';
-  }
-
-  private async executeAgent(
-    agent: WorkflowAgent,
-    prompt: string,
-    options?: { systemPromptOverride?: string; disableStreaming?: boolean; signal?: AbortSignal; noTools?: boolean; allowedTools?: string[] },
-  ): Promise<string> {
-    const runId = this.currentRunId;
-
-    let effectiveSignal = this.abortController?.signal;
-    if (options?.signal) {
-      if (!effectiveSignal) {
-        effectiveSignal = options.signal;
-      } else if (typeof AbortSignal.any === 'function') {
-        effectiveSignal = AbortSignal.any([effectiveSignal, options.signal]);
-      } else {
-        const composite = new AbortController();
-        const onAbort = () => composite.abort();
-        if (effectiveSignal.aborted || options.signal.aborted) {
-          composite.abort();
-        } else {
-          effectiveSignal.addEventListener('abort', onAbort, { once: true });
-          options.signal.addEventListener('abort', onAbort, { once: true });
-        }
-        effectiveSignal = composite.signal;
-      }
-    }
-
-    return this.deps.runAgent(
-      agent,
-      prompt,
-      {
-        runId,
-        workDir: this.workingDirectory,
-        signal: effectiveSignal,
-        noTools: options?.noTools,
-        allowedTools: options?.allowedTools,
-        onStreamChunk: options?.disableStreaming ? undefined : ((agentId, chunk, fullContent) => {
-          if (!this.shouldAcceptRunMutation(runId)) return;
-          this.onStreamChunk?.(agentId, chunk, fullContent);
-        }),
-        transcript: this.transcripts,
+  /** Shared host view for extracted run helpers (persistence / goal / planned agent). */
+  private asRunHost(): PlannedAgentRunHost & GoalStepHost {
+    const self = this;
+    return {
+      get currentRunId() { return self.currentRunId; },
+      get workingDirectory() { return self.workingDirectory; },
+      get abortController() { return self.abortController; },
+      get deps() { return self.deps; },
+      get transcripts() { return self.transcripts; },
+      get agentOutputs() { return self.agentOutputs; },
+      get onStreamChunk() { return self.onStreamChunk; },
+      shouldAcceptRunMutation: (runId: string) => self.shouldAcceptRunMutation(runId),
+      getTranscriptEntries: (agentId: string) => self.transcripts.get(agentId),
+      bumpTotalSteps: () => {
+        self.totalSteps += 1;
+        return self.totalSteps;
       },
-      { systemPromptOverride: options?.systemPromptOverride },
-    );
-  }
-
-  private async writeRunFile(relativePath: string, content: string): Promise<string | null> {
-    if (!this.workingDirectory) return null;
-    if (this.deps.writeRunFile) {
-      return this.deps.writeRunFile(this.workingDirectory, relativePath, content);
-    }
-
-    if (this.deps.writeFile) {
-      const absolutePath = workflowRunFileService.resolvePath(this.workingDirectory, relativePath);
-      await this.deps.writeFile(absolutePath, content);
-      return absolutePath;
-    }
-
-    return null;
-  }
-
-  private async persistOutputCodeArtifacts(output: string): Promise<void> {
-    if (!this.workingDirectory) return;
-    const artifacts = extractCodeBlockArtifacts(output);
-    for (const artifact of artifacts) {
-      try {
-        const savedPath = await this.writeRunFile(artifact.relativePath, artifact.content);
-        // eslint-disable-next-line no-console
-        console.info(`[workflow] Persisted code artifact: ${artifact.relativePath} -> ${savedPath ?? 'none'}`);
-      } catch (err) {
-        // eslint-disable-next-line no-console
-        console.warn(`Failed to persist output code artifact ${artifact.relativePath}:`, err);
-      }
-    }
-  }
-
-  private async saveOutputToFile(agent: WorkflowAgent, artifactBaseName: string, output: string, runId: string): Promise<string | null> {
-    if (!this.shouldAcceptRunMutation(runId)) return null;
-    const content = `<!--
-Agent: ${agent.name}
-Executed: ${new Date(this.deps.now()).toLocaleString()}
-Run ID: ${runId}
--->
-
-${output}
-`;
-    const savedPath = await this.writeRunFile(`${artifactBaseName}-output.md`, content);
-    // eslint-disable-next-line no-console
-    console.info(`[workflow] Saved output file for agent "${agent.name}" (${agent.id}): ${savedPath ?? 'none'}`);
-    return savedPath;
-  }
-
-  private async saveTranscriptToFile(agent: WorkflowAgent, artifactBaseName: string, runId: string): Promise<string | null> {
-    if (!this.shouldAcceptRunMutation(runId)) return null;
-    const entries = this.transcripts.get(agent.id);
-    if (entries.length === 0) return null;
-    const content = renderTranscriptFile(agent.id, runId, entries);
-    const savedPath = await this.writeRunFile(`${artifactBaseName}-transcript.md`, content);
-    // eslint-disable-next-line no-console
-    console.info(`[workflow] Saved transcript file for agent "${agent.name}" (${agent.id}): ${savedPath ?? 'none'}`);
-    return savedPath;
-  }
-
-  private async updateGoalEvaluatorStatus(
-    instanceId: string,
-    evaluatorAgentId: string | null | undefined,
-    status: WorkflowAgent['status'],
-    runId: string,
-  ): Promise<void> {
-    if (!evaluatorAgentId) return;
-    if (!this.shouldAcceptRunMutation(runId)) return;
-    const store = useWorkflowStore.getState();
-    const instance = store.instances.find((item) => item.id === instanceId);
-    const evaluatorAgent = instance?.agents.find((agent) => agent.id === evaluatorAgentId);
-    if (evaluatorAgent && evaluatorAgent.role !== 'goal-evaluator') {
-      return;
-    }
-    store.setAgentStatusInInstance(instanceId, evaluatorAgentId, status);
-    store.updateRunAgent(runId, evaluatorAgentId, {
-      status: status === 'completed' ? 'completed' : status === 'running' ? 'running' : 'error',
-      endTime: status === 'running' ? undefined : this.deps.now(),
-    });
-  }
-
-  private async evaluateGoalStep(
-    snapshot: WorkflowRunSnapshot,
-    iteration: number,
-  ): Promise<GoalEvaluationResult> {
-    const runId = this.currentRunId;
-    const evaluationInstance = buildGoalEvaluationInstance(snapshot);
-
-    // eslint-disable-next-line no-console
-    console.info(`[workflow] Entering evaluateGoalStep (iter ${iteration}), runId=${runId}, evaluator=${snapshot.goalEvaluatorAgentId ?? 'builtin'}`);
-    const store = useWorkflowStore.getState();
-    store.setRunning(true, snapshot.goalEvaluatorAgentId ?? null);
-    await this.updateGoalEvaluatorStatus(snapshot.instanceId, snapshot.goalEvaluatorAgentId, 'running', runId);
-
-    try {
-      const evaluateGoalWithTimeout = async (): Promise<GoalEvaluationResult> => {
-        const GOAL_EVAL_TIMEOUT_MS = 300_000;
-        const evalAbortController = new AbortController();
-        const mainSignal = this.abortController?.signal;
-
-        const onMainAbort = () => evalAbortController.abort();
-        if (mainSignal) {
-          if (mainSignal.aborted) {
-            evalAbortController.abort();
-          } else {
-            mainSignal.addEventListener('abort', onMainAbort, { once: true });
-          }
-        }
-
-        const timer = setTimeout(() => {
-          evalAbortController.abort();
-        }, GOAL_EVAL_TIMEOUT_MS);
-        if (typeof timer === 'object' && timer !== null && 'unref' in timer) {
-          (timer as unknown as { unref: () => void }).unref();
-        }
-
-        try {
-          const result = await this.deps.evaluateGoal(
-            {
-              instance: evaluationInstance,
-              agents: snapshot.agents,
-              agentOutputs: this.agentOutputs,
-              iteration,
-            },
-            {
-              runAgent: (agent, prompt, options) => this.executeAgent(agent, prompt, {
-                disableStreaming: true,
-                systemPromptOverride: options?.systemPromptOverride,
-                signal: evalAbortController.signal,
-                noTools: true,
-                allowedTools: [],
-              }),
-            },
-          );
-          return result;
-        } catch (err) {
-          if (mainSignal?.aborted) {
-            throw err;
-          }
-          const ruleResult = evaluateGoalWithRules({
-            instance: evaluationInstance,
-            agents: snapshot.agents,
-            agentOutputs: this.agentOutputs,
-            iteration,
-          });
-          // eslint-disable-next-line no-console
-          console.warn(`[workflow] Goal evaluation failed or timed out (${err instanceof Error ? err.message : String(err)}). Falling back to rule evaluation.`, ruleResult);
-          return {
-            ...ruleResult,
-            reasoning: `${ruleResult.reasoning}（LLM evaluator 超时/异常，已回退到规则判定。）`,
-          };
-        } finally {
-          clearTimeout(timer);
-          if (mainSignal) {
-            mainSignal.removeEventListener('abort', onMainAbort);
-          }
-        }
-      };
-
-      const result = await evaluateGoalWithTimeout();
-      // eslint-disable-next-line no-console
-      console.info(`[workflow] Exiting evaluateGoalStep (iter ${iteration}): reached=${result.reached}, hint=${result.nextAgentIdHint ?? 'none'}, reasoning="${result.reasoning.slice(0, 100)}"`);
-
-      await this.updateGoalEvaluatorStatus(snapshot.instanceId, snapshot.goalEvaluatorAgentId, 'completed', runId);
-      return result;
-    } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error(`[workflow] Exiting evaluateGoalStep (iter ${iteration}) with error:`, error);
-      await this.updateGoalEvaluatorStatus(snapshot.instanceId, snapshot.goalEvaluatorAgentId, 'error', runId);
-      throw error;
-    }
-  }
-
-  private async runPlannedAgent(
-    agent: WorkflowAgent,
-    snapshot: WorkflowRunSnapshot,
-    iteration: number,
-    previousEvaluation: GoalEvaluationResult | null,
-    failedAgents: Set<string>,
-  ): Promise<void> {
-    const store = useWorkflowStore.getState();
-    const runId = this.currentRunId;
-    const blockingFailures = getBlockingFailures(agent, snapshot.executableAgents, snapshot.connections, failedAgents);
-    if (blockingFailures.length > 0) {
-      store.setAgentStatusInInstance(snapshot.instanceId, agent.id, 'error');
-      store.updateRunAgent(runId, agent.id, { status: 'skipped', endTime: this.deps.now() });
-      return;
-    }
-
-    this.totalSteps += 1;
-    if (this.totalSteps > MAX_TOTAL_STEPS) {
-      throw new Error(`已达最大步数限制（${MAX_TOTAL_STEPS}步），工作流已停止`);
-    }
-
-    const predecessorIds = getPredecessorIds(agent.id, snapshot.executableAgents, snapshot.connections);
-    const upstreams: UpstreamOutput[] = predecessorIds
-      .filter((id) => this.agentOutputs.has(id))
-      .map((id) => ({
-        agent: snapshot.executableAgents.find((item) => item.id === id)!,
-        output: this.agentOutputs.get(id)!,
-      }));
-    const inboxMessages = readAgentInbox(agent.id, this.currentRunId, snapshot.agents);
-    const prompt = predecessorIds.length === 0 && inboxMessages.length === 0
-      ? buildEntryAgentPrompt({
-          projectGoal: snapshot.projectGoal,
-          successCriteria: [...snapshot.successCriteria],
-          agent,
-          iteration,
-          previousEvaluation,
-          inboxMessages,
-        })
-      : buildDownstreamAgentPrompt(
-          {
-            projectGoal: snapshot.projectGoal,
-            successCriteria: [...snapshot.successCriteria],
-            agent,
-            upstreams,
-            iteration,
-            previousEvaluation,
-            inboxMessages,
-          },
-        );
-
-    store.setRunning(true, agent.id);
-      store.setAgentStatusInInstance(snapshot.instanceId, agent.id, 'running');
-    store.updateRunAgent(runId, agent.id, {
-      status: 'running',
-      startTime: this.deps.now(),
-      iteration,
-    });
-
-    try {
-      const agentStart = this.deps.now();
-      const output = await this.executeAgent(agent, prompt);
-      const agentDuration = this.deps.now() - agentStart;
-      if (agentDuration > 30_000) {
-        // eslint-disable-next-line no-console
-        console.warn(`[workflow] Agent "${agent.name}" (${agent.id}) took ${agentDuration}ms`);
-      }
-      if (!this.shouldAcceptRunMutation(runId)) {
-        return;
-      }
-
-      await this.persistOutputCodeArtifacts(output);
-      const artifactBaseName = buildAgentArtifactBaseName(agent);
-      this.agentOutputs.set(agent.id, output);
-      const outputFilePath = await this.saveOutputToFile(agent, artifactBaseName, output, runId);
-      if (!this.shouldAcceptRunMutation(runId)) {
-        return;
-      }
-      this.transcripts.record(agent.id, {
-        timestamp: this.deps.now(),
-        type: 'agent_completed',
-        content: output,
-      });
-      const transcriptFilePath = await this.saveTranscriptToFile(agent, artifactBaseName, runId);
-      if (!this.shouldAcceptRunMutation(runId)) {
-        return;
-      }
-      store.setAgentStatusInInstance(snapshot.instanceId, agent.id, 'completed');
-      store.clearAgentDirtyInInstance(snapshot.instanceId, agent.id);
-      store.updateRunAgent(runId, agent.id, {
-        status: 'completed',
-        endTime: this.deps.now(),
-        output: output.slice(0, 2000),
-        iteration,
-        outputFilePath: outputFilePath ?? undefined,
-        transcriptFilePath: transcriptFilePath ?? undefined,
-        artifactBaseName,
-      });
-      failedAgents.delete(agent.id);
-      await this.deps.notify(agent, snapshot.agents, output, runId);
-    } catch (error) {
-      if (!this.shouldAcceptRunMutation(runId)) {
-        return;
-      }
-      const errorMessage = error instanceof Error ? error.message : '未知错误';
-      this.agentOutputs.set(agent.id, `[[WORKFLOW:GOAL_NOT_REACHED]]\n${errorMessage}`);
-      this.transcripts.record(agent.id, {
-        timestamp: this.deps.now(),
-        type: 'agent_error',
-        content: errorMessage,
-      });
-      const artifactBaseName = buildAgentArtifactBaseName(agent);
-      const transcriptFilePath = await this.saveTranscriptToFile(agent, artifactBaseName, runId);
-      store.setAgentStatusInInstance(snapshot.instanceId, agent.id, 'error');
-      store.updateRunAgent(runId, agent.id, {
-        status: 'error',
-        endTime: this.deps.now(),
-        output: errorMessage.slice(0, 2000),
-        iteration,
-        transcriptFilePath: transcriptFilePath ?? undefined,
-        artifactBaseName,
-      });
-      failedAgents.add(agent.id);
-    }
+    };
   }
 
   async start(userPrompt?: string): Promise<void> {
@@ -540,7 +192,7 @@ ${output}
       return;
     }
 
-    const projectGoal = this.deriveWorkflowGoal(instance.agents, configuredGoal);
+    const projectGoal = deriveWorkflowGoal(instance.agents, configuredGoal);
     const snapshot = createWorkflowRunSnapshot({
       ...instance,
       projectGoal,
@@ -655,6 +307,7 @@ ${output}
     let dirtyAgentIds = [...snapshot.dirtyAgentIds];
     const failedAgents = new Set<string>();
     const executableAgents = snapshot.executableAgents;
+    const host = this.asRunHost();
 
     try {
       const maxIterations = snapshot.maxGoalIterations ?? DEFAULT_MAX_GOAL_ITERATIONS;
@@ -676,7 +329,8 @@ ${output}
           if (this.stopRequested) break;
           // eslint-disable-next-line no-console
           console.info(`[workflow] Starting execution of agent "${agent.name}" (${agent.id}) in iter ${iteration}`);
-          await this.runPlannedAgent(
+          await runPlannedAgent(
+            host,
             agent,
             snapshot,
             iteration,
@@ -693,7 +347,7 @@ ${output}
           break;
         }
 
-        lastEvaluation = await this.evaluateGoalStep(snapshot, iteration);
+        lastEvaluation = await evaluateGoalStep(host, snapshot, iteration);
         if (!this.shouldAcceptRunMutation(localRunId)) {
           // eslint-disable-next-line no-console
           console.info(`[workflow] Run mutation no longer accepted for runId=${localRunId} after evaluateGoalStep`);
