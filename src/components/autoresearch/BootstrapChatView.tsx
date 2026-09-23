@@ -1,39 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { t } from '@/i18n';
-import { runHeadlessAgentTurn } from '@/services/headless/agentRunner';
-import { AUTORESEARCH_BOOTSTRAP_TEMPLATE } from '@/services/agents/templates/autoresearchBootstrap';
-import { AutoResearchBootstrapResultSchema } from '@/services/autoresearch/bootstrap/schema';
 import {
   ConversationalTemplateOption,
 } from '@/services/autoresearch/bootstrap/conversationalTemplates';
 import type { AutoResearchBootstrapResult } from '@/services/autoresearch/bootstrap/types';
 import { useBootstrapPlanStore } from '@/services/autoresearch/bootstrap/bootstrapPlanStore';
-import {
-  BOOTSTRAP_FINALIZE_NUDGE_ALLOWED_TOOLS,
-  buildBootstrapFinalizeNudgeUserMessage,
-  buildBootstrapSystemPromptWithFinalizeRequirement,
-  shouldRunBootstrapFinalizeNudge,
-} from '@/services/autoresearch/bootstrap/finalizeNudge';
-import {
-  HOST_SYNTHESIZED_BOOTSTRAP_FINALIZE_WARNING,
-  synthesizeBootstrapFinalizeFromRecipe,
-} from '@/services/autoresearch/bootstrap/synthesizeFinalize';
-import { startAutoResearchRun, logAutoResearchSetupFailure } from '@/services/autoresearch/setupFlow';
-import {
-  buildAutoResearchRunLockMessage,
-  getAutoResearchLifecycleLock,
-  useAutoResearchLifecycleLock,
-} from '@/services/autoresearch/runLock';
+import { useAutoResearchLifecycleLock } from '@/services/autoresearch/runLock';
 import { getAutoResearchDefaultConfig } from '@/services/autoresearch/defaultConfig';
-import { normalizeSuccessCriteria } from '@/services/goal';
 import type { SshConfig } from '@/store/autoresearchStore';
 import { useAutoResearchStore, getSelectedAutoResearchRunContext } from '@/store/autoresearchStore';
-import { useWorkflowStore } from '@/store/workflowStore';
-import { BootstrapQuickStartCards } from './BootstrapQuickStartCards';
 import { BootstrapProgressRail } from './BootstrapProgressRail';
 import { AutoResearchRunProgressRail } from './AutoResearchRunProgressRail';
-import { uploadBootstrapScaffoldWithRollback } from '@/services/autoresearch/bootstrap/uploadBootstrapScaffold';
-import { shouldAutoOpenAutoResearchTerminal } from '@/utils/windowsShellProfile';
 import { useSettingsStore } from '@/store';
 import { BootstrapRecipeBuilder } from './BootstrapRecipeBuilder';
 import { RecipeTemplateChooser } from './recipe/RecipeTemplateChooser';
@@ -41,16 +18,19 @@ import { type Recipe } from './bootstrapRecipePrompt';
 import {
   BOOTSTRAP_MISSING_FINALIZE_MESSAGE,
   createDefaultRecipe,
-  resolveBaselineValue,
   resolveBootstrapMetricDirection,
-  resolveBootstrapRemoteWorkDir,
 } from './bootstrapChatHelpers';
-import { AutoResearchSetupPhaseChip } from './AutoResearchSetupPhaseChip';
 import {
   clearPersistedBootstrapSession,
   loadPersistedBootstrapSession,
   persistBootstrapSession,
 } from '@/services/autoresearch/bootstrap/bootstrapSessionPersist';
+import { performBootstrapHandoff } from './bootstrapChatHandoff';
+import {
+  applyQuickStartTemplateToRecipe,
+  runBootstrapStart,
+} from './bootstrapChatStart';
+import { BootstrapChatStartedPanels } from './BootstrapChatStartedPanels';
 
 // Re-export pure helpers for existing test / consumer import paths.
 export {
@@ -208,156 +188,16 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
   }, [agentLogs]);
 
   const handleReadyResult = useCallback(async (result: AutoResearchBootstrapResult, runIterations: number) => {
-    if (result.status !== 'ready') {
-      setError(
-        (result.unresolvedQuestions || []).filter(Boolean).join(' ')
-        || 'Bootstrap plan needs confirmation before starting AutoResearch.',
-      );
-      return;
-    }
-    // AUDIT-FIX [R5-07]: Block bootstrap handoff while an AutoResearch loop/run
-    // is already active (running/paused/non-idle lock). Prevents two concurrent
-    // runs and keeps the Start/handoff UI locked with a clear error message.
-    const lifecycleState = useAutoResearchStore.getState();
-    const handoffLock = getAutoResearchLifecycleLock(lifecycleState);
-    if (handoffLock.locked) {
-      setError(buildAutoResearchRunLockMessage('start a new run', handoffLock));
-      return;
-    }
-    if (bootstrappedAtRef.current === result.createdAt) {
-      return;
-    }
-    bootstrappedAtRef.current = result.createdAt;
-
-    const workDir = result.plan.scaffold.workDir;
-    const isSshMode = sshConfig && sshConfig.mode === 'ssh';
-    const remoteWorkDir = isSshMode
-      ? resolveBootstrapRemoteWorkDir(sshConfig, workDir)
-      : workDir;
-
-    const targetConfig: SshConfig = isSshMode
-      ? {
-          ...sshConfig,
-          remoteWorkDir,
-        }
-      : {
-          mode: 'local',
-          host: '',
-          user: 'root',
-          keyPath: '',
-          port: 22,
-          remoteWorkDir: workDir,
-          authMode: 'agent',
-          password: '',
-        };
-
-    const baseline = resolveBaselineValue(result.plan.baselines, result.plan.primaryMetric);
-    // AUDIT-FIX [R5-08]: plan.direction wins; recipe next; guess only if both omit.
-    const direction = resolveBootstrapMetricDirection({
-      planDirection: result.plan.direction,
+    await performBootstrapHandoff(result, runIterations, {
+      setError,
+      setHandoffSummary,
+      bootstrappedAtRef,
+      sshConfig,
       recipeDirection: recipe.baselineAndMetric.direction,
-      primaryMetric: result.plan.primaryMetric,
+      windowsShellProfile,
+      onReady,
     });
-    const autoResearchState = useAutoResearchStore.getState();
-
-    try {
-      // AUDIT-FIX [R5-06]: SSH scaffold upload tracks newly written paths and
-      // rolls them back on Nth-file / bootstrap.json / git-init failure so a
-      // partial handoff cannot corrupt remote experiment state.
-      if (isSshMode) {
-        await uploadBootstrapScaffoldWithRollback({
-          sshConfig,
-          localWorkDir: workDir,
-          remoteWorkDir,
-          files: result.plan.scaffold.files,
-          bootstrapResultJson: JSON.stringify(result, null, 2),
-        });
-      }
-
-      const started = await startAutoResearchRun({
-        sshConfig: targetConfig,
-        experimentDir: remoteWorkDir,
-        metric: result.plan.primaryMetric,
-        direction,
-        iterations: runIterations,
-        baseline,
-      }, {
-        setSshConfig: autoResearchState.setSshConfig,
-        setLastUsedConfig: autoResearchState.setLastUsedConfig,
-        initSession: autoResearchState.initSession,
-      });
-
-      (autoResearchState as typeof autoResearchState & {
-        setSuccessCriteria?: (value: string) => void;
-        setPrimaryMetric?: (value: string) => void;
-      }).setSuccessCriteria?.(result.plan.successCriteria);
-      (autoResearchState as typeof autoResearchState & {
-        setSuccessCriteria?: (value: string) => void;
-        setPrimaryMetric?: (value: string) => void;
-      }).setPrimaryMetric?.(result.plan.primaryMetric);
-
-      if (shouldAutoOpenAutoResearchTerminal({
-        selection: windowsShellProfile,
-        mode: started.resolvedConfig.mode,
-        workDir: started.resolvedConfig.remoteWorkDir,
-      })) {
-        autoResearchState.openTerminalPanel(
-          `autoresearch-terminal-${Date.now()}`,
-          started.resolvedConfig.mode === 'local' ? started.resolvedConfig.remoteWorkDir : '',
-        );
-      }
-
-      const workflowState = useWorkflowStore.getState();
-      if (!workflowState.getCurrentInstance()) {
-        workflowState.createInstance('AutoResearch Bootstrap');
-      }
-      workflowState.addWorkflowRun({
-        id: crypto.randomUUID(),
-        title: result.plan.researchGoal,
-        projectGoal: result.plan.researchGoal,
-        successCriteria: normalizeSuccessCriteria(result.plan.successCriteria),
-        bootstrapKind: 'conversational',
-        status: 'running',
-        startTime: Date.now(),
-        agents: [],
-        runDirectory: isSshMode ? remoteWorkDir : workDir,
-        currentIteration: 0,
-        goalEvaluations: [],
-        reachedGoal: false,
-      });
-
-      setHandoffSummary(`${result.plan.primaryMetric} · ${isSshMode ? remoteWorkDir : workDir}`);
-      onReady?.();
-    } catch (handoffError) {
-      bootstrappedAtRef.current = null;
-      setError(logAutoResearchSetupFailure('bootstrap-handoff', handoffError, {
-        workDir: isSshMode ? remoteWorkDir : workDir,
-        metric: result.plan.primaryMetric,
-      }));
-    }
   }, [onReady, recipe.baselineAndMetric.direction, sshConfig, windowsShellProfile]);
-
-  const handleToolResult = useCallback(async (name: string, result: string) => {
-    if (name === 'baseline_extract') {
-      markMetricsStep();
-      return;
-    }
-
-    if (name !== 'bootstrap_finalize') {
-      return;
-    }
-
-    try {
-      const parsed = AutoResearchBootstrapResultSchema.safeParse(JSON.parse(result));
-      if (!parsed.success) {
-        return;
-      }
-      setWarnings(parsed.data.warnings);
-      setReadyResult(parsed.data);
-    } catch {
-      // Ignore malformed tool content and let the agent continue.
-    }
-  }, [markMetricsStep, setReadyResult, setWarnings]);
 
   const handleStopBootstrap = useCallback(() => {
     bootstrapAbortRef.current?.abort();
@@ -380,160 +220,27 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
   }, [setReadyResult]);
 
   const handleStartBootstrap = useCallback(async (compiledPrompt: string) => {
-    if (isStreaming) {
-      return;
-    }
-
-    useBootstrapPlanStore.getState().reset();
-    setReadyResult(null);
-    lastCompiledPromptRef.current = compiledPrompt;
-    setError(null);
-    setMissingFinalize(false);
-    setStoppedByUser(false);
-    setHandoffSummary(null);
-    bootstrappedAtRef.current = null;
-    setHasStarted(true);
-    setIsStreaming(true);
-    setAgentLogs(`[SYSTEM] Initializing AutoResearch Bootstrap Setup...\n`);
-
-    bootstrapAbortRef.current = new AbortController();
-
-    const workingFilesList = importedFiles.length > 0
-      ? importedFiles.map((file) => `- ${file.name}: ${file.path}`).join('\n')
-      : '';
-
-    const contextFilesSection = workingFilesList
-      ? `\n\n## Context Files / Literature & Reference Documents\n\nThe user has attached the following files as references:\n${workingFilesList}\n\nRules:\n- Use these files as references for the research target, code design, baseline, or paper details.\n- Read a file by its exact path using 'pdf_read' (for PDFs) or 'read_file' (for code/text files) before discussing its contents. Do not assume you know its contents. Do not invent details.`
-      : '';
-
-    const systemPrompt = buildBootstrapSystemPromptWithFinalizeRequirement(
-      [
-        AUTORESEARCH_BOOTSTRAP_TEMPLATE.soulPrompt,
-        AUTORESEARCH_BOOTSTRAP_TEMPLATE.taskInstruction,
-      ].filter(Boolean).join('\n\n') + contextFilesSection,
-    );
-
-    const initialMessages = [
-      {
-        role: 'user' as const,
-        content: compiledPrompt,
-      },
-    ];
-
-    const bootstrapWorkDir = recipe.workspace.workDir.trim()
-      || sshConfig?.remoteWorkDir?.trim()
-      || '/tmp';
-
-    const runBootstrapTurn = async (
-      messages: typeof initialMessages,
-      label: string,
-      allowedTools: string[] = AUTORESEARCH_BOOTSTRAP_TEMPLATE.allowedTools ?? [],
-    ) => {
-      setAgentLogs((prev) => prev + `[SYSTEM] ${label}\n\n`);
-      await runHeadlessAgentTurn({
-        sessionId: `autoresearch-bootstrap-${Date.now()}`,
-        initialMessages: messages,
-        systemPrompt,
-        workDir: bootstrapWorkDir,
-        allowedTools,
-        toolExecutionSource: 'autoresearch_phase',
-        permissionMode: 'bypass',
-        executionMode: 'bypass',
-        maxToolRounds: AUTORESEARCH_BOOTSTRAP_TEMPLATE.execution?.maxRounds,
-        signal: bootstrapAbortRef.current!.signal,
-        onTextDelta: (chunk) => {
-          setAgentLogs((prev) => prev + chunk);
-        },
-        onStatus: (message) => {
-          setAgentLogs((prev) => prev + `\n[STATUS] ${message}\n`);
-        },
-        onToolCall: async ({ name }) => {
-          setAgentLogs((prev) => prev + `\n[TOOL CALL] Executing: ${name}\n`);
-          noteTool(name);
-        },
-        onToolResult: async ({ name, result, durationMs }) => {
-          setAgentLogs((prev) => prev + `[TOOL RESULT] Completed ${name} in ${durationMs}ms.\n`);
-          await handleToolResult(name, result);
-        },
-      });
-    };
-
-    try {
-      await runBootstrapTurn(
-        initialMessages,
-        'Spawning Headless Research Agent with custom prompt blocks...',
-      );
-      if (bootstrapAbortRef.current.signal.aborted) {
-        return;
-      }
-
-      let ready = useBootstrapPlanStore.getState().readyResult;
-      // Prefer a deterministic host finalize over a second LLM turn.
-      // Oral "Ready" without bootstrap_finalize is a failure; synthesizing
-      // from the recipe produces a real readyResult. Keep the nudge only
-      // when the recipe has no usable workDir.
-      if (shouldRunBootstrapFinalizeNudge(ready)) {
-        const synthesized = synthesizeBootstrapFinalizeFromRecipe(
-          recipe,
-          recipe.workspace.workDir.trim() || sshConfig?.remoteWorkDir,
-        );
-        if (synthesized?.status === 'ready') {
-          setWarnings(synthesized.warnings);
-          setReadyResult(synthesized);
-          noteTool('bootstrap_finalize');
-          setAgentLogs(
-            (prev) =>
-              prev
-              + `\n[SYSTEM] ${HOST_SYNTHESIZED_BOOTSTRAP_FINALIZE_WARNING}\n`,
-          );
-          ready = synthesized;
-        } else {
-          setAgentLogs(
-            (prev) =>
-              prev
-              + '\n[SYSTEM] bootstrap_finalize missing after first turn — running finalize nudge turn...\n',
-          );
-          await runBootstrapTurn(
-            [{ role: 'user', content: buildBootstrapFinalizeNudgeUserMessage(bootstrapWorkDir) }],
-            'Finalize-nudge headless turn (must call bootstrap_finalize)...',
-            [...BOOTSTRAP_FINALIZE_NUDGE_ALLOWED_TOOLS],
-          );
-          if (bootstrapAbortRef.current.signal.aborted) {
-            return;
-          }
-          ready = useBootstrapPlanStore.getState().readyResult;
-        }
-      }
-
-      if (shouldRunBootstrapFinalizeNudge(ready)) {
-        const warnMsg = BOOTSTRAP_MISSING_FINALIZE_MESSAGE;
-        setMissingFinalize(true);
-        setError(
-          `${warnMsg} Use “Retry bootstrap” to run again with the same recipe, `
-          + 'or “Back to Recipe” to adjust goals/workspace, then start again.',
-        );
-        setAgentLogs(
-          (prev) =>
-            prev
-            + `\n[WARNING] ${warnMsg}\n`
-            + '[RECOVERY] Next steps: Retry bootstrap (same prompt) or Back to Recipe to edit setup.\n',
-        );
-      } else {
-        setMissingFinalize(false);
-        setAgentLogs((prev) => prev + `\n[SYSTEM] Headless Research Agent completed successfully.\n`);
-      }
-    } catch (runnerError) {
-      if (bootstrapAbortRef.current?.signal.aborted) {
-        return;
-      }
-      const errMsg = runnerError instanceof Error ? runnerError.message : String(runnerError);
-      setMissingFinalize(false);
-      setError(errMsg);
-      setAgentLogs((prev) => prev + `\n[ERROR] Bootstrap execution error: ${errMsg}\n`);
-    } finally {
-      setIsStreaming(false);
-    }
-  }, [handleToolResult, importedFiles, isStreaming, noteTool, recipe, setReadyResult, setWarnings, sshConfig]);
+    await runBootstrapStart(compiledPrompt, {
+      isStreaming,
+      recipe,
+      sshConfig,
+      importedFiles,
+      setReadyResult,
+      lastCompiledPromptRef,
+      setError,
+      setMissingFinalize,
+      setStoppedByUser,
+      setHandoffSummary,
+      bootstrappedAtRef,
+      setHasStarted,
+      setIsStreaming,
+      setAgentLogs,
+      bootstrapAbortRef,
+      noteTool,
+      setWarnings,
+      markMetricsStep,
+    });
+  }, [importedFiles, isStreaming, markMetricsStep, noteTool, recipe, setReadyResult, setWarnings, sshConfig]);
 
   const handleRetryBootstrap = useCallback(() => {
     const prompt = lastCompiledPromptRef.current;
@@ -564,57 +271,9 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
     setMissingFinalize(false);
     setStoppedByUser(false);
 
-    let taskType: Recipe['researchGoal']['taskType'] = 'reproduce_paper';
-    let goalText = '';
-    let folderName = 'bootstrap-project';
-    let verifyCommands: string[] = ['pytest'];
-    let baselineValue = '0.85';
-    let successCriteria = 'Match or exceed the target baseline metric.';
-
-    if (templateId === 'reproduce-paper') {
-      taskType = 'reproduce_paper';
-      goalText = 'I want to fully reproduce a paper. Please help me identify the paper claims, lock baselines, target primary metric, and construct scaffold files.';
-      folderName = 'reproduce-project';
-    } else if (templateId === 'beat-baseline') {
-      taskType = 'beat_baseline';
-      goalText = 'I want to exceed an existing baseline on a known task. Please propose improvements, keep evaluations fair, and setup experiment workspace.';
-      folderName = 'baseline-project';
-    } else if (templateId === 'ablation') {
-      taskType = 'ablation';
-      goalText = 'I want to conduct ablation studies on an existing model or method. Please help me isolate ablation parameters, verify metrics, and bootstrap scaffolding.';
-      folderName = 'ablation-project';
-      baselineValue = '';
-      successCriteria = '';
-    } else if (templateId === 'from-scratch') {
-      taskType = 'from_scratch';
-      goalText = 'I want to start a brand new AutoResearch project from scratch. Please propose a concrete research objective and scaffold the project workspace.';
-      folderName = 'scratch-project';
-      baselineValue = '';
-      successCriteria = '';
-    }
-
-    setRecipe((prev) => ({
-      ...prev,
-      researchGoal: {
-        taskType,
-        goalText,
-        source: 'template',
-      },
-      workspace: {
-        ...prev.workspace,
-        folderName,
-      },
-      verification: {
-        commands: verifyCommands,
-      },
-      baselineAndMetric: {
-        ...prev.baselineAndMetric,
-        baselineValue,
-        successCriteria,
-      },
-    }));
+    setRecipe((prev) => applyQuickStartTemplateToRecipe(prev, templateId));
     setRecipeDirty(false);
-  }, [recipeDirty]);
+  }, [recipeDirty, setReadyResult]);
 
   const handleRecipeChange = useCallback((newRecipe: Recipe) => {
     setRecipe(newRecipe);
@@ -628,53 +287,6 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
     startingRun: false,
     error,
   }), [isStreaming, readyResult, error]);
-
-  const summaryCard = useMemo(() => {
-    if (!readyResult || readyResult.status !== 'ready' || handoffSummary) {
-      return null;
-    }
-
-    const isSshMode = sshConfig && sshConfig.mode === 'ssh';
-    const displayedWorkDir = isSshMode
-      ? resolveBootstrapRemoteWorkDir(sshConfig, readyResult.plan.scaffold.workDir)
-      : readyResult.plan.scaffold.workDir;
-
-    return (
-      <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900 shadow-sm animate-fadeIn flex flex-col gap-2 font-sans">
-        <div>
-          <p className="font-semibold">{t('autoresearch.bootstrap.readyTitle')}</p>
-          <p className="mt-1">{readyResult.plan.primaryMetric} · {displayedWorkDir}</p>
-          <p className="mt-1 text-xs text-emerald-800">{readyResult.plan.successCriteria}</p>
-        </div>
-        <div className="flex flex-col gap-2 border-t border-emerald-200/50 pt-2 sm:flex-row sm:flex-wrap sm:items-center">
-          <label className="text-xs font-semibold text-emerald-800">{t('autoresearch.bootstrap.iterations')}</label>
-          <input
-            type="number"
-            min={1}
-            max={1000}
-            value={iterations}
-            onChange={(e) => setIterations(parseInt(e.target.value, 10) || 1)}
-            className="w-16 rounded border border-emerald-300 bg-white px-2 py-1 text-xs text-emerald-900 focus:outline-none focus:ring-1 focus:ring-emerald-500"
-          />
-          <button
-            type="button"
-            data-testid="bootstrap-start-handoff"
-            aria-disabled={lifecycleLock.locked}
-            title={lifecycleLock.locked ? buildAutoResearchRunLockMessage('start a new run', lifecycleLock) : undefined}
-            onClick={() => handleReadyResult(readyResult, iterations)}
-            className={`w-full rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-1.5 text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1 font-sans sm:ml-auto sm:w-auto ${lifecycleLock.locked ? 'cursor-not-allowed opacity-60' : ''}`}
-          >
-            <span>🚀</span> {t('autoresearch.bootstrap.start')}
-          </button>
-          {lifecycleLock.locked && (
-            <p className="w-full text-xs text-amber-800 sm:basis-full" data-testid="bootstrap-handoff-lock-hint">
-              {buildAutoResearchRunLockMessage('start a new run', lifecycleLock)}
-            </p>
-          )}
-        </div>
-      </div>
-    );
-  }, [readyResult, iterations, handoffSummary, handleReadyResult, sshConfig, lifecycleLock]);
 
   return (
     <div className={`min-h-0 flex-1 gap-4 p-4 w-full max-w-7xl mx-auto flex flex-col ${hasStarted ? 'lg:grid lg:grid-cols-[minmax(0,1fr)_280px]' : ''}`}>
@@ -711,141 +323,25 @@ export function BootstrapChatView({ onReady, sshConfig }: BootstrapChatViewProps
               </div>
             </div>
           ) : (
-            <div className="flex-1 flex flex-col gap-4 min-h-0 animate-fadeIn">
-              {/* Status information */}
-              {summaryCard}
-              {readyResult?.status === 'needs_user_confirmation' && !handoffSummary && (
-                <div
-                  className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-sm font-sans flex flex-col gap-2"
-                  data-testid="bootstrap-confirmation-panel"
-                >
-                  <p className="font-semibold">{t('autoresearch.bootstrap.needsConfirmationTitle')}</p>
-                  <p className="text-xs text-amber-800">
-                    {readyResult.unresolvedQuestions.filter(Boolean).join(' ') || 'The bootstrap plan needs user confirmation before starting AutoResearch.'}
-                  </p>
-                  <div className="flex gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={handleResetToRecipe}
-                      className="rounded-lg border border-amber-300 bg-white hover:bg-amber-100 text-amber-900 px-3 py-1 text-xs font-semibold transition-all"
-                    >
-                      {t('autoresearch.bootstrap.backToRecipe')}
-                    </button>
-                  </div>
-                </div>
-              )}
-              {handoffSummary && (
-                <div className="rounded-2xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-900 shadow-sm font-sans">
-                  {t('autoresearch.bootstrap.started')}: {handoffSummary}
-                </div>
-              )}
-              {error && (
-                <div
-                  className="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 shadow-sm font-sans"
-                  data-testid="bootstrap-error-panel"
-                >
-                  <p>{error}</p>
-                  {(missingFinalize || error.includes(BOOTSTRAP_MISSING_FINALIZE_MESSAGE)) && !isStreaming && (
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        data-testid="retry-bootstrap"
-                        onClick={handleRetryBootstrap}
-                        className="rounded-lg bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 text-xs font-bold transition-all shadow-sm"
-                      >
-                        {t('autoresearch.bootstrap.retry')}
-                      </button>
-                      <button
-                        type="button"
-                        data-testid="back-to-recipe-from-error"
-                        onClick={handleResetToRecipe}
-                        className="rounded-lg border border-red-300 bg-white hover:bg-red-50 text-red-800 px-3 py-1.5 text-xs font-bold transition-all"
-                      >
-                        {t('autoresearch.bootstrap.backToRecipe')}
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {/* Live console terminal */}
-              <div className="flex-1 flex flex-col min-h-0 bg-neutral-950 text-neutral-200 font-mono text-xs rounded-2xl overflow-hidden border border-neutral-800 shadow-xl">
-                <div className="flex items-center justify-between px-4 py-2 bg-neutral-900 border-b border-neutral-800">
-                  <div className="flex items-center gap-2">
-                    <div className="flex gap-1.5">
-                      <span className="w-3 h-3 rounded-full bg-red-500/80"></span>
-                      <span className="w-3 h-3 rounded-full bg-yellow-500/80"></span>
-                      <span className="w-3 h-3 rounded-full bg-green-500/80"></span>
-                    </div>
-                    <span className="text-[11px] font-bold text-neutral-400 uppercase tracking-wider ml-2">{t('autoresearch.bootstrap.developerConsole')}</span>
-                    <AutoResearchSetupPhaseChip
-                      input={setupPhaseInput}
-                      className="ml-1 border-neutral-700 bg-neutral-800/80 text-neutral-300"
-                    />
-                  </div>
-                  <div className="flex items-center gap-2">
-                    {isStreaming ? (
-                      <>
-                        <button
-                          type="button"
-                          onClick={handleStopBootstrap}
-                          className="px-2.5 py-1 text-[10px] font-bold rounded-lg border border-red-700 bg-red-900/40 hover:bg-red-800/60 hover:text-white transition-all text-red-200 font-sans"
-                        >
-                          {t('autoresearch.bootstrap.stop')}
-                        </button>
-                        <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                        <span className="text-[10px] text-neutral-400">{t('autoresearch.bootstrap.inProgress')}</span>
-                      </>
-                    ) : (
-                      <>
-                        <button
-                          type="button"
-                          onClick={handleResetToRecipe}
-                          className="px-2.5 py-1 text-[10px] font-bold rounded-lg border border-neutral-700 bg-neutral-800 hover:bg-neutral-700 hover:text-white transition-all text-neutral-300 font-sans"
-                        >
-                          ← {t('autoresearch.bootstrap.backToRecipe')}
-                        </button>
-                        {stoppedByUser ? (
-                          <>
-                            <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                            <span className="text-[10px] text-amber-400 font-bold">{t('autoresearch.bootstrap.statusStopped')}</span>
-                          </>
-                        ) : error ? (
-                          <>
-                            <span className="w-2 h-2 rounded-full bg-red-500"></span>
-                            <span className="text-[10px] text-red-400 font-bold">{t('autoresearch.bootstrap.statusFailed')}</span>
-                          </>
-                        ) : readyResult?.status === 'ready' ? (
-                          <>
-                            <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                            <span className="text-[10px] text-emerald-400 font-bold">{t('autoresearch.bootstrap.statusFinished')}</span>
-                          </>
-                        ) : readyResult?.status === 'needs_user_confirmation' ? (
-                          <>
-                            <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                            <span className="text-[10px] text-amber-400 font-bold">{t('autoresearch.bootstrap.statusNeedsConfirmation')}</span>
-                          </>
-                        ) : (
-                          <>
-                            <span className="w-2 h-2 rounded-full bg-amber-500"></span>
-                            <span className="text-[10px] text-amber-400 font-bold">{t('autoresearch.bootstrap.statusIncomplete')}</span>
-                          </>
-                        )}
-                      </>
-                    )}
-                  </div>
-                </div>
-                <div className="flex-1 overflow-y-auto p-4 space-y-1.5 selection:bg-neutral-800" ref={consoleScrollRef}>
-                  <pre className="whitespace-pre-wrap leading-relaxed">{agentLogs || t('autoresearch.bootstrap.initializing')}</pre>
-                  {isStreaming && (
-                    <div className="inline-flex items-center gap-1 text-[10px] text-neutral-500 animate-pulse font-sans">
-                      <span>▋</span>
-                      <span>{t('autoresearch.bootstrap.streamingLogs')}</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
+            <BootstrapChatStartedPanels
+              readyResult={readyResult}
+              handoffSummary={handoffSummary}
+              sshConfig={sshConfig}
+              iterations={iterations}
+              onChangeIterations={setIterations}
+              lifecycleLock={lifecycleLock}
+              onStartHandoff={handleReadyResult}
+              onBackToRecipe={handleResetToRecipe}
+              error={error}
+              missingFinalize={missingFinalize}
+              isStreaming={isStreaming}
+              onRetryBootstrap={handleRetryBootstrap}
+              stoppedByUser={stoppedByUser}
+              agentLogs={agentLogs}
+              consoleScrollRef={consoleScrollRef}
+              setupPhaseInput={setupPhaseInput}
+              onStopBootstrap={handleStopBootstrap}
+            />
           )}
         </div>
       </div>
