@@ -14,7 +14,7 @@ import {
 
 export interface UseChatInputImageAttachmentsParams {
   setAttachments: Dispatch<SetStateAction<ImageAttachment[]>>;
-  addNotification: (type: string, message: string) => void;
+  addNotification: (type: any, message: string) => void;
 }
 
 export function useChatInputImageAttachments({
