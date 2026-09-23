@@ -2,8 +2,8 @@
  * ChatBrowserWorkspaceShell - Chat workspace with optional browser split layout
  *
  * This component wraps the chat experience and manages the browser dock layout.
- * Terminal dock, browser split layout, and swarm float panel live in sibling
- * modules (AG-15). See browser-docked-layout-design.md for design details.
+ * Terminal dock, browser split, swarm float, chat panel, and preview shell live
+ * in sibling modules (AG-15). See browser-docked-layout-design.md for design details.
  *
  * Layout modes:
  * - hidden/panel: Chat takes full width
@@ -11,36 +11,25 @@
  * - external: Browser in separate window, Chat takes full width
  */
 
-import { useMemo, useEffect, useState, lazy, Suspense } from 'react';
-import { useChatStore, useUIStore, useSettingsStore } from '@/store';
+import { useEffect, useState, lazy, Suspense } from 'react';
+import { useChatStore, useUIStore } from '@/store';
 import { useBrowserAgentStore } from '@/store';
 import { MainLayout } from '@/layout';
-import { MAIN_LAYOUT_EDGE_TOGGLE_GUTTER_CLASS } from '@/layout/edgeToggleGutter';
-import { ChatMessage, ChatInput } from '@/components';
-import { SessionGoalTraceBar } from './SessionGoalTraceBar';
-import { ChatWorkspaceModeToggle } from './ChatWorkspaceModeToggle';
-import { BrowserWorkspacePane } from './BrowserWorkspacePane';
 import {
   SessionWorkspaceFileManagerPane,
-  SessionWorkspacePreviewPane,
   useSessionWorkspacePreview,
-  workspacePreviewChrome,
 } from './SessionWorkspacePreview';
 import { SwarmPanelDraggable } from './SwarmPanelDraggable';
-import { ChatTerminalDock } from './ChatTerminalDock';
 import { BrowserChatSplitLayout } from './BrowserChatSplitLayout';
+import { BrowserWorkspacePane } from './BrowserWorkspacePane';
+import { ChatWorkspacePanel } from './ChatWorkspacePanel';
+import { PreviewWorkspaceShell } from './PreviewWorkspaceShell';
 
 // Lazy-loaded modal/overlay components (rarely visible on first render)
 const PermissionModal = lazy(() => import('./PermissionModal'));
 const QuestionnaireCard = lazy(() => import('./QuestionnaireCard'));
 import { t } from '@/i18n';
-import { calculateRequestCost, formatCostCompact } from '@/utils/pricing';
-import { getSessionTokenUsage, formatTokenCount, mergeReasoningParts, isRenderableMessage } from '@/utils/chat';
-import { getHiddenMessageCount, getVisibleMessageWindow } from './chat/messageWindowing';
-import { ScrollToBottomButton } from './chat/ScrollToBottomButton';
-import { useChatMessageScroll } from '@/hooks/useChatMessageScroll';
 import { resolveFallbackTerminalCwd } from '@/utils/terminalCwd';
-
 
 /**
  * ChatBrowserWorkspaceShell component
@@ -60,6 +49,7 @@ export function ChatBrowserWorkspaceShell() {
       cleanup?.();
     };
   }, []);
+
   // Browser dock state
   const { browserDockMode, browserSplitFocus } = useUIStore();
   const [workspaceMode, setWorkspaceMode] = useState<'chat' | 'preview'>('chat');
@@ -83,7 +73,6 @@ export function ChatBrowserWorkspaceShell() {
   // Needed for fallback cwd resolve when the terminal dock opens without a session dir.
   const terminalPanelVisible = useUIStore((s) => s.terminalPanelVisible);
   const [fallbackTerminalCwd, setFallbackTerminalCwd] = useState<string | undefined>();
-  const setAgentPanelTab = useUIStore((s) => s.setAgentPanelTab);
 
   const handleApprovePermission = async () => {
     if (!pendingPermission) return;
@@ -96,23 +85,18 @@ export function ChatBrowserWorkspaceShell() {
     resolvePermissionRequest(false, pendingPermission.id);
   };
 
-  // Chat store
   const {
-    currentMessages,
     currentSession,
     currentSessionId,
-    isStreaming,
-    error,
-    clearError,
-    retryLastMessage,
     ensureSessionWorkDir,
   } = useChatStore();
 
-  // Memoized token usage
   const currentSessionData = currentSession();
-  const terminalCwd = currentSessionData?.projectDir || currentSessionData?.workDir || fallbackTerminalCwd;
-  const canPreviewWorkspace = Boolean(currentSessionData?.projectDir || currentSessionData?.workDir);
-  const sessionTokenUsage = useMemo(() => getSessionTokenUsage(currentSessionData), [currentSessionData?.messages]);
+  const terminalCwd =
+    currentSessionData?.projectDir || currentSessionData?.workDir || fallbackTerminalCwd;
+  const canPreviewWorkspace = Boolean(
+    currentSessionData?.projectDir || currentSessionData?.workDir,
+  );
   const isSplitMode = browserDockMode === 'split';
   const previewWorkspaceActive = !isSplitMode && workspaceMode === 'preview';
   const {
@@ -126,10 +110,18 @@ export function ChatBrowserWorkspaceShell() {
     isTruncated: workspaceTruncated,
     refreshEntries: refreshWorkspaceEntries,
     revealInFinder: revealWorkspacePath,
-  } = useSessionWorkspacePreview(currentSessionData?.projectDir ?? currentSessionData?.workDir ?? null, previewWorkspaceActive);
+  } = useSessionWorkspacePreview(
+    currentSessionData?.projectDir ?? currentSessionData?.workDir ?? null,
+    previewWorkspaceActive,
+  );
 
   useEffect(() => {
-    if (!terminalPanelVisible || currentSessionData?.projectDir || currentSessionData?.workDir || fallbackTerminalCwd) {
+    if (
+      !terminalPanelVisible ||
+      currentSessionData?.projectDir ||
+      currentSessionData?.workDir ||
+      fallbackTerminalCwd
+    ) {
       return;
     }
 
@@ -147,101 +139,17 @@ export function ChatBrowserWorkspaceShell() {
     return () => {
       cancelled = true;
     };
-  }, [currentSessionData?.projectDir, currentSessionData?.workDir, currentSessionId, ensureSessionWorkDir, fallbackTerminalCwd, terminalPanelVisible]);
-
-  // Get pricing from settings store
-  const getModelPricing = useSettingsStore((s) => s.getModelPricing);
-  const activeConfigId = useSettingsStore((s) => s.activeConfigId);
-  const apiConfigs = useSettingsStore((s) => s.apiConfigs);
-
-  // Calculate session cost
-  const sessionCost = useMemo(() => {
-    const activeConfig = apiConfigs.find(c => c.id === activeConfigId);
-    if (!activeConfig || sessionTokenUsage.total === 0) return 0;
-
-    const pricing = getModelPricing(activeConfig.model, activeConfig.provider);
-    if (!pricing) return 0;
-
-    return calculateRequestCost(
-      sessionTokenUsage.input,
-      sessionTokenUsage.output,
-      pricing
-    );
-  }, [currentSessionData?.messages, activeConfigId, apiConfigs, getModelPricing, sessionTokenUsage]);
-
-  // Memoized: filter out internal tool-result messages and hidden context messages
-  const rawMessages = currentMessages();
-  const messages = useMemo(() =>
-    rawMessages.filter(
-      (m) => !(m.role === 'user' && m.content.startsWith('__TOOL_RESULT__:'))
-            && !(m.metadata?.hidden === true)
-    ),
-    [rawMessages]
-  );
-  const displayMessages = useMemo(() => {
-    const reasoningByIndex = new Map<number, string>();
-    let assistantGroupIndices: number[] = [];
-    let assistantReasoningParts: Array<string | undefined> = [];
-
-    const finalizeAssistantGroup = () => {
-      if (assistantGroupIndices.length === 0) return;
-
-      const combinedReasoning = mergeReasoningParts(...assistantReasoningParts);
-      if (combinedReasoning) {
-        const visibleIndex =
-          [...assistantGroupIndices]
-            .reverse()
-            .find((idx) => isRenderableMessage(messages[idx], idx, messages)) ??
-          assistantGroupIndices[assistantGroupIndices.length - 1];
-
-        reasoningByIndex.set(visibleIndex, combinedReasoning);
-      }
-
-      assistantGroupIndices = [];
-      assistantReasoningParts = [];
-    };
-
-    messages.forEach((message, index) => {
-      if (message.role === 'assistant') {
-        assistantGroupIndices.push(index);
-        if (message.reasoning) {
-          assistantReasoningParts.push(message.reasoning);
-        }
-        return;
-      }
-
-      finalizeAssistantGroup();
-    });
-
-    finalizeAssistantGroup();
-
-    return messages
-      .map((message, index) => ({ message, index }))
-      .filter(({ message, index }) => isRenderableMessage(message, index, messages))
-      .map(({ message, index }) =>
-        message.role === 'assistant'
-          ? { ...message, reasoning: reasoningByIndex.get(index) }
-          : message
-      );
-  }, [messages]);
-  const [showFullHistory, setShowFullHistory] = useState(false);
-  const visibleMessages = useMemo(
-    () => showFullHistory ? displayMessages : getVisibleMessageWindow(displayMessages),
-    [displayMessages, showFullHistory],
-  );
-  const hiddenMessageCount = getHiddenMessageCount(displayMessages, visibleMessages);
-  const hasMessages = displayMessages.length > 0;
-  const {
-    scrollContainerRef,
-    messagesEndRef,
-    userScrolledUp,
-    handleScroll,
-    scrollToBottom,
-  } = useChatMessageScroll(displayMessages);
+  }, [
+    currentSessionData?.projectDir,
+    currentSessionData?.workDir,
+    currentSessionId,
+    ensureSessionWorkDir,
+    fallbackTerminalCwd,
+    terminalPanelVisible,
+  ]);
 
   useEffect(() => {
     setWorkspaceMode('chat');
-    setShowFullHistory(false);
   }, [currentSessionId]);
 
   useEffect(() => {
@@ -252,213 +160,14 @@ export function ChatBrowserWorkspaceShell() {
 
   const showChatPageModeToggle = !isSplitMode && !previewWorkspaceActive;
 
-  const renderWorkspaceModeToolbar = () => (
-    <div className={`${workspacePreviewChrome.toolbar} pl-4 ${MAIN_LAYOUT_EDGE_TOGGLE_GUTTER_CLASS} py-3`}>
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <p className={workspacePreviewChrome.eyebrow}>{t('chat.workspaceView')}</p>
-          <p className={workspacePreviewChrome.secondaryText}>
-            {t('chat.workspaceViewDescription')}
-          </p>
-        </div>
-
-        <ChatWorkspaceModeToggle
-          mode={workspaceMode}
-          canPreview={canPreviewWorkspace}
-          onChange={setWorkspaceMode}
-        />
-      </div>
-    </div>
-  );
-
-  const renderPreviewWorkspaceShell = () => (
-    <div className={`flex h-full min-h-0 min-w-0 flex-col ${workspacePreviewChrome.shellBg}`}>
-      {renderWorkspaceModeToolbar()}
-      <div className="flex flex-1 min-h-0 min-w-0 overflow-hidden">
-        <div className="flex w-[420px] min-w-[360px] max-w-[460px] flex-col border-r border-[#e9e9e7] bg-[#fbfbfa] shadow-[inset_-1px_0_0_rgba(255,255,255,0.6)]">
-          <div className="border-b border-[#e9e9e7] bg-[#fbfbfa]/92 px-4 py-3 shadow-[0_1px_0_rgba(255,255,255,0.72)]">
-            <p className={workspacePreviewChrome.eyebrow}>{t('chat.conversationPanel')}</p>
-            <p className={workspacePreviewChrome.secondaryText}>
-              {t('chat.conversationPanelDescription')}
-            </p>
-          </div>
-          <div className="flex-1 min-h-0 min-w-0">
-            {renderChatPanel()}
-          </div>
-        </div>
-
-        <div className={`flex-1 min-w-0 ${workspacePreviewChrome.shellBg}`}>
-          <SessionWorkspacePreviewPane
-            workDir={currentSessionData?.projectDir ?? currentSessionData?.workDir ?? null}
-            selectedFilePath={selectedFilePath}
-            selectedContent={selectedContent}
-            fileLoading={fileLoading}
-            fileError={fileError}
-            onRevealPath={revealWorkspacePath}
-          />
-        </div>
-      </div>
-    </div>
-  );
-
-  // Render the chat panel content
-  const renderChatPanel = () => (
-    <div className="flex flex-col min-h-0 w-full min-w-0 flex-1">
-      {showChatPageModeToggle && (
-        <div
-          data-testid="chat-page-workspace-mode-bar"
-          className={`${workspacePreviewChrome.toolbar} flex shrink-0 items-center pl-4 ${MAIN_LAYOUT_EDGE_TOGGLE_GUTTER_CLASS} py-2`}
-        >
-          <ChatWorkspaceModeToggle
-            mode={workspaceMode}
-            canPreview={canPreviewWorkspace}
-            onChange={setWorkspaceMode}
-          />
-        </div>
-      )}
-      <SessionGoalTraceBar
-        onEdit={() => {
-          const goalButton = document.querySelector<HTMLButtonElement>('[data-goal-trigger="true"]');
-          goalButton?.click();
-        }}
-        onExpandPanel={() => setAgentPanelTab('goal')}
-      />
-      {/* Messages List — min-h-0 allows this to shrink when terminal panel is open */}
-      <div className="relative flex-1 min-h-0 w-full">
-        <div
-          ref={scrollContainerRef}
-          onScroll={handleScroll}
-          className="h-full overflow-y-auto w-full"
-        >
-        {hasMessages ? (
-          <div className="divide-y divide-gray-100 w-full">
-            {hiddenMessageCount > 0 && (
-              <div className="flex justify-center bg-gray-50 px-4 py-3">
-                <button
-                  type="button"
-                  onClick={() => setShowFullHistory(true)}
-                  className="rounded-md border border-gray-200 bg-white px-3 py-1.5 text-xs font-medium text-gray-600 shadow-sm hover:bg-gray-50"
-                >
-                  {t('chat.showEarlierMessages').replace('{count}', String(hiddenMessageCount))}
-                </button>
-              </div>
-            )}
-            {visibleMessages.map((message, index, filtered) => (
-              <ChatMessage
-                key={message.id}
-                message={message}
-                isLatest={index === filtered.length - 1}
-                isStreaming={isStreaming && index === filtered.length - 1}
-              />
-            ))}
-            <div ref={messagesEndRef} />
-          </div>
-        ) : (
-          /* Empty State */
-          <div className="flex-1 flex items-center justify-center pb-32 select-none pointer-events-none">
-            <div className="text-center">
-              <div className="mb-6">
-                <img
-                  src="/shrimp-avatar.png"
-                  alt="PiPi Shrimp"
-                  className="h-32 w-32 mx-auto rounded-full shadow-lg object-cover"
-                />
-              </div>
-              <h2 className="text-2xl font-bold text-gray-800 mb-2">
-                PiPi Shrimp Agent
-              </h2>
-              <p className="text-gray-500 text-sm">
-                {t('chat.emptyStatePrompt')}
-              </p>
-            </div>
-          </div>
-        )}
-        </div>
-        <ScrollToBottomButton
-          visible={userScrolledUp && hasMessages}
-          onClick={scrollToBottom}
-        />
-      </div>
-
-      {/* Error Banner */}
-      {error && (
-        <div className="px-3 py-2 error-banner border-t">
-          <div className="mx-auto max-w-3xl flex flex-col sm:flex-row sm:items-center gap-2">
-            <div className="flex items-start gap-2 error-banner-text min-w-0 flex-1">
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                className="h-5 w-5 flex-shrink-0 mt-0.5"
-                viewBox="0 0 20 20"
-                fill="currentColor"
-              >
-                <path
-                  fillRule="evenodd"
-                  d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z"
-                  clipRule="evenodd"
-                />
-              </svg>
-              <span className="text-sm font-medium break-words overflow-hidden" style={{ wordBreak: 'break-word' }}>{error}</span>
-            </div>
-            <div className="flex items-center gap-2 flex-shrink-0 self-end sm:self-auto">
-              <button
-                onClick={() => retryLastMessage()}
-                className="px-3 py-1 text-sm error-button-primary rounded transition-colors whitespace-nowrap"
-              >
-                {t('common.retry')}
-              </button>
-              <button
-                onClick={() => clearError()}
-                className="p-1 error-button-secondary rounded"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
-                </svg>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-
-      {/* Session Token Stats */}
-      {hasMessages && sessionTokenUsage.total > 0 && (
-        <div className={`${workspacePreviewChrome.statusStrip} px-4 py-2.5`}>
-          <div className="mx-auto flex max-w-3xl flex-wrap items-center justify-center gap-2">
-            {sessionCost > 0 && (
-              <span className={workspacePreviewChrome.statusBadge}>
-                <svg className="h-3 w-3 text-[#8a867f]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
-                <span>{t('token.cost')}</span>
-                <span className={workspacePreviewChrome.statusValue}>{formatCostCompact(sessionCost)}</span>
-                </span>
-            )}
-            <span className={workspacePreviewChrome.statusBadge}>
-              <svg className="h-3 w-3 text-[#8a867f]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-              </svg>
-              <span>{t('chat.sessionTokenUsage')}</span>
-              <span className={workspacePreviewChrome.statusValue}>{formatTokenCount(sessionTokenUsage.total)}</span>
-              <span>{t('token.tokens')}</span>
-            </span>
-
-            <span className={workspacePreviewChrome.statusBadge}>
-              <span>{t('chat.input')}</span>
-              <span className={workspacePreviewChrome.statusValue}>{formatTokenCount(sessionTokenUsage.input)}</span>
-            </span>
-
-            <span className={workspacePreviewChrome.statusBadge}>
-              <span>{t('chat.output')}</span>
-              <span className={workspacePreviewChrome.statusValue}>{formatTokenCount(sessionTokenUsage.output)}</span>
-            </span>
-          </div>
-        </div>
-      )}
-
-      <ChatInput />
-
-      <ChatTerminalDock cwd={terminalCwd} />
-    </div>
+  const chatPanel = (
+    <ChatWorkspacePanel
+      showModeToggle={showChatPageModeToggle}
+      workspaceMode={workspaceMode}
+      canPreviewWorkspace={canPreviewWorkspace}
+      onWorkspaceModeChange={setWorkspaceMode}
+      terminalCwd={terminalCwd}
+    />
   );
 
   return (
@@ -485,11 +194,23 @@ export function ChatBrowserWorkspaceShell() {
         <BrowserChatSplitLayout
           browserSplitFocus={browserSplitFocus}
           browser={<BrowserWorkspacePane />}
-          chat={renderChatPanel()}
+          chat={chatPanel}
+        />
+      ) : previewWorkspaceActive ? (
+        <PreviewWorkspaceShell
+          workspaceMode={workspaceMode}
+          canPreview={canPreviewWorkspace}
+          onWorkspaceModeChange={setWorkspaceMode}
+          workDir={currentSessionData?.projectDir ?? currentSessionData?.workDir ?? null}
+          selectedFilePath={selectedFilePath}
+          selectedContent={selectedContent}
+          fileLoading={fileLoading}
+          fileError={fileError}
+          onRevealPath={revealWorkspacePath}
+          chat={chatPanel}
         />
       ) : (
-        /* Normal Mode: Chat takes full width */
-        previewWorkspaceActive ? renderPreviewWorkspaceShell() : renderChatPanel()
+        chatPanel
       )}
 
       {/* Swarm Runtime Panel — floating overlay for swarm observability, draggable */}
