@@ -66,6 +66,31 @@
     "recommendedPr": 9
   },
   {
+    "id": "R1-15",
+    "title": "Questionnaire session filter (legacy Chat)",
+    "lane": "B. Chat Reliability",
+    "severity": "P2",
+    "status": "fixed",
+    "fixNote": "2026-09-22: Obsolete after AG-19/#145 deleted src/pages/Chat.tsx. Production ChatBrowserWorkspaceShell already gates the questionnaire UI with activeQuestionnaire && activeQuestionnaireSessionId === currentSessionId. No product bug remains; TOP-15-11/T-11 stay as shell regression test gap only.",
+    "whyItMatters": "Cross-session questionnaire bleed in legacy Chat.tsx",
+    "files": [
+      "src/pages/Chat.tsx",
+      "src/components/ChatBrowserWorkspaceShell.tsx"
+    ],
+    "smallestPrScope": "N/A — legacy Chat deleted; shell already filters",
+    "tests": [
+      "TOP-15-11",
+      "T-11"
+    ],
+    "dependencies": [
+      "AG-19"
+    ],
+    "runtimeBehavior": false,
+    "uiBehavior": true,
+    "splitPrs": false,
+    "recommendedPr": null
+  },
+  {
     "id": "R2-01",
     "title": "Legacy execute_tool bypasses registry and execution_policy",
     "lane": "A. P0 / Safety / Data Loss",
@@ -971,11 +996,17 @@
     "title": "Telegram token stored XOR in localStorage not keychain",
     "lane": "G. Security Hardening",
     "severity": "Medium",
-    "status": "open",
+    "status": "partially fixed",
+    "fixNote": "2026-09-22: Spike landed (588dd9f / 122131e / 90566a3): pluggable SecureStorageProvider in secureStorage.ts (LocalStorageProvider XOR + KeychainProvider dynamic-import stub for `@tauri-apps/plugin-secure-store`), saveSecret/loadSecret/migrateLegacySecret route via getSecureStorage(), settingsStore telegram-token load/migrate, secureStorage.test.ts. Fail-safe migrate: legacy localStorage key is removed only after new-store save+load verify; keychain-missing save throws (no silent XOR fallback). Still open: wire a real Tauri 2 keychain plugin (Cargo/npm/capabilities). See docs/audit/r7-15-keychain-spike.md.",
     "whyItMatters": "Token recoverable from local storage",
-    "files": ["src/store/settingsStore.ts"],
-    "smallestPrScope": "Keychain migration spike",
-    "tests": ["token not in localStorage plaintext"],
+    "files": [
+      "src/utils/secureStorage.ts",
+      "src/utils/secureSecrets.ts",
+      "src/utils/__tests__/secureStorage.test.ts",
+      "src/store/settingsStore.ts"
+    ],
+    "smallestPrScope": "Wire chosen Tauri 2 keychain plugin (spike done)",
+    "tests": ["token not in localStorage plaintext", "src/utils/__tests__/secureStorage.test.ts"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,

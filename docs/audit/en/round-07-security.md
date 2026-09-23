@@ -28,7 +28,7 @@ Chinese version: [../round-07-security.md](../round-07-security.md)
 | R7-09 | `ChatImage` accepts arbitrary img src — ✅ Fixed (code 2026-06-24; verified 2026-09-21) |
 | R7-10 | Telegram token in URL — log leakage risk — ✅ Fixed (code 2026-06-24; verified 2026-09-21) |
 | R7-13 | `terminal_create` cwd has no path_security ✅ Fixed (code 2026-06-24; tests 2026-09-21) |
-| R7-15 | Telegram token XOR localStorage, not keychain |
+| R7-15 | Telegram token XOR localStorage, not keychain — 🟨 partially fixed (spike 2026-09-22; see `r7-15-keychain-spike.md`) |
 | R7-16 | TS `BLOCKED_PREFIXES` missing Windows entries — ✅ Fixed (code 2026-06-24; verified 2026-09-21) |
 
 ## Low / Info

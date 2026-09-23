@@ -16,13 +16,16 @@
  *   3. A `KeychainProvider` that wraps the Tauri secure-store
  *      plugin. The plugin module is loaded dynamically so the
  *      bundle doesn't break when the plugin isn't installed.
- *   4. A `getSecureStorage()` factory that returns the keychain
- *      provider when the runtime is Tauri AND the plugin module
- *      is reachable, otherwise the localStorage provider.
+ *   4. A `getSecureStorage()` factory that returns KeychainProvider
+ *      when the runtime is Tauri (or a test force-flag), otherwise
+ *      LocalStorageProvider. The factory does not probe whether the
+ *      plugin module is installed — KeychainProvider surfaces missing
+ *      plugin as save-throw / load-null (no silent XOR fallback).
  *
- * When the keychain provider is in use, secrets never touch
- * localStorage at all — no XOR key to leak. When localStorage is
- * the active backend, the existing behaviour is preserved.
+ * When a working keychain backend is actually available, secrets
+ * never touch localStorage. Until then, prefer the localStorage
+ * provider (default outside Tauri) and treat keychain selection
+ * without a plugin as a hard failure for writes.
  *
  * The factory is a function (not a module-level constant) so tests
  * can override the detection.
@@ -75,9 +78,11 @@ class LocalStorageProvider implements SecureStorageProvider {
  *
  * The plugin isn't a dependency of this repo yet, so we use a
  * dynamic import that resolves to `null` if the module isn't
- * installed. The first call that needs the keychain will throw
- * an explicit "keychain plugin not available" error if the
- * platform isn't Tauri or the plugin isn't installed.
+ * installed. There is NO silent localStorage fallback inside this
+ * provider: `save` throws when the plugin is missing; `load`
+ * returns `null`. Callers (especially migrateLegacySecret) must
+ * treat that as failure and keep any prior secret until a verified
+ * write succeeds.
  */
 class KeychainProvider implements SecureStorageProvider {
   readonly name = 'keychain';
@@ -96,11 +101,12 @@ class KeychainProvider implements SecureStorageProvider {
     try {
       // The plugin is provided as `@tauri-apps/plugin-secure-store`
       // by tauri-plugin-secure-store. Until the project adds the
-      // dep, this dynamic import will fail and we'll fall back to
-      // localStorage in the factory. The `@vite-ignore` directive
-      // tells Rollup not to bundle the dep (it may not be
-      // installed); the module path is split into a const so the
-      // tsc + Rollup analyzers don't try to resolve it.
+      // dep, this dynamic import will fail and `this.plugin` stays
+      // null — save() then throws; there is no silent fallback to
+      // localStorage here. The `@vite-ignore` directive tells
+      // Rollup not to bundle the dep (it may not be installed); the
+      // module path is split into a const so the tsc + Rollup
+      // analyzers don't try to resolve it.
       const moduleName = '@tauri-apps/plugin-secure-store';
       const mod = (await import(/* @vite-ignore */ moduleName)) as unknown as typeof this.plugin;
       this.plugin = mod;
@@ -168,11 +174,12 @@ export function isTauriRuntime(): boolean {
  * Resolution order:
  *   1. Test overrides
  *   2. If running outside Tauri, return LocalStorageProvider
- *   3. Otherwise return KeychainProvider (it will fall back to
- *      localStorage internally if the plugin module isn't present,
- *      so the public surface stays "keychain" but writes go to
- *      localStorage when the plugin is missing — see migration
- *      notes in the module doc comment).
+ *   3. Otherwise return KeychainProvider by name. IMPORTANT: this
+ *      does NOT mean writes silently land in localStorage when the
+ *      plugin is missing — KeychainProvider.save throws and
+ *      .load returns null. Prefer LocalStorageProvider (or a force
+ *      override) until a real plugin is wired; migrateLegacySecret
+ *      keeps the legacy key until a verified write succeeds.
  */
 export function resolveSecureStorage(): SecureStorageProvider {
   const w = (typeof window !== 'undefined' ? window : ({} as unknown)) as Record<string, unknown>;

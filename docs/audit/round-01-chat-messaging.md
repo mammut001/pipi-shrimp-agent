@@ -24,7 +24,7 @@
 | R1-12 | P2 | shell:201-217 | terminal 拖拽 listener 无 unmount cleanup | 拖拽中 unmount 不泄漏 listener |
 | R1-13 | P2 | `ChatInput.tsx:682` | 切 session 后 `isStreaming=false` 但后台 turn 可能仍在 | 切 session 后 input 禁用策略 |
 | R1-14 | P2 | `pages/Chat.tsx` | 死代码与 shell 并行维护 (fixed AG-19 2026-09-22) | 生产 import 图不含 Chat.tsx |
-| R1-15 | P2 | `Chat.tsx:364` vs shell:670 | 问卷未按 sessionId 过滤（shell 正确） | 跨 session 问卷不可见 |
+| R1-15 | P2 | `Chat.tsx` (deleted) vs shell | 问卷未按 sessionId 过滤（shell 正确） | ✅ Obsolete/fixed (AG-19/#145 2026-09-22；shell 已按 `activeQuestionnaireSessionId` 过滤) |
 | R1-16 | P2 | `useChatMessageScroll.ts:29-33` | 依赖 `displayMessages` 但渲染 `visibleMessages`；展开历史不滚底 | showFullHistory 后滚动策略 |
 | R1-17 | P2 | `chatActions.ts:1047-1051` | `addMessage` 无 session 时静默 return | 应 throw 或显式错误 |
 | R1-18 | P3 | `chat.ts` + `chatHelpers.ts` | `mergeReasoningParts` 重复实现 | 单源 + re-export |
