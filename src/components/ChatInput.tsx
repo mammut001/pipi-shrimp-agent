@@ -10,7 +10,6 @@
  */
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { safeInvoke, safeInvokeOrNull } from '@/utils/safeInvoke';
 import { useChatStore, useUIStore } from '@/store';
 import { resolveComposerSendStopAffordance } from '@/store/chat/chatSelectors';
 import { useMCPStore } from '@/store/mcpStore';
@@ -22,7 +21,6 @@ import { hasImageItems } from './chatInput/imageAttachmentInput';
 import {
   DRAFT_PERSIST_DEBOUNCE_MS,
   cleanupOldDrafts,
-  clearDraftPair,
   persistTextDraft,
   readTextDraft,
 } from './chatInput/draftPersistence';
@@ -30,16 +28,13 @@ import { useBlockComposerWiring } from './chatInput/blockComposerWiring';
 import { resolveComposerDensityStyles } from './chatInput/composerDensity';
 import { useChatInputImageAttachments } from './chatInput/useChatInputImageAttachments';
 import { useSessionGoalComposerBindings } from './chatInput/useSessionGoalComposerBindings';
-import {
-  decideChatInputSubmission,
-  shouldClearDraftAfterBrowserWorkflow,
-  shouldDismissBrowserIntentConfirm,
-} from './chatInputFlow';
+import { useSessionFolderBindings } from './chatInput/useSessionFolderBindings';
+import { useChatInputSubmission } from './chatInput/useChatInputSubmission';
 import { t } from '@/i18n';
 import { resolveSessionExecutionModeId, type ExecutionModeId } from '@/services/executionMode';
-import { quickCheckBrowserIntent, handleChatBrowserWorkflow } from '@/utils/chatBrowserBridge';
 import type { ImageAttachment } from '@/types/vision';
-import { canSendFromComposer, hasMeaningfulComposerContent, isCompiledTaskPrompt, resolveComposerSubmitMessage } from './chatInput/blocks/promptBuilder';
+import type { ComposerBlock } from './chatInput/blocks/types';
+import { canSendFromComposer } from './chatInput/blocks/promptBuilder';
 
 // Check if running inside Tauri
 const isTauri = !!(window as any).__TAURI__;
@@ -72,10 +67,7 @@ export function ChatInput({
 }: ChatInputProps) {
   const [input, setInput] = useState('');
   const [attachments, setAttachments] = useState<ImageAttachment[]>([]);
-  const [isBindingFolder, setIsBindingFolder] = useState<'project' | 'output' | null>(null);
   const [isFocused, setIsFocused] = useState(false);
-  const [browserIntentCandidate, setBrowserIntentCandidate] = useState<string | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isComposingRef = useRef(false);
@@ -123,11 +115,6 @@ export function ChatInput({
     stopGeneration,
     currentSessionId,
     sessions,
-    // Two-folder model: each folder has its own bind/clear action.
-    setSessionProjectDir,
-    setSessionPipiOutputDir,
-    clearSessionProjectDir,
-    clearSessionPipiOutputDir,
     updateSessionExecutionMode,
   } = useChatStore();
   const sendStopAffordance = resolveComposerSendStopAffordance({
@@ -188,6 +175,18 @@ export function ChatInput({
     updateSessionExecutionMode,
   });
 
+  const {
+    isBindingFolder,
+    handleBindProject,
+    handleClearProject,
+    handleBindOutput,
+    handleClearOutput,
+    handleOpenFolder,
+  } = useSessionFolderBindings({
+    currentSession,
+    projectDir,
+  });
+
   // Restore draft from localStorage on mount
   useEffect(() => {
     const saved = readTextDraft(draftStorageKey);
@@ -203,12 +202,6 @@ export function ChatInput({
     }, DRAFT_PERSIST_DEBOUNCE_MS);
     return () => window.clearTimeout(handle);
   }, [input, draftStorageKey]);
-
-  useEffect(() => {
-    if (shouldDismissBrowserIntentConfirm(browserIntentCandidate, input)) {
-      setBrowserIntentCandidate(null);
-    }
-  }, [browserIntentCandidate, input]);
 
   // Auto-resize textarea
   useEffect(() => {
@@ -230,37 +223,6 @@ export function ChatInput({
     cleanupOldDrafts();
   }, []);
 
-  /**
-   * Handle opening the current Project Folder in Finder
-   */
-  const handleOpenFolder = useCallback(async () => {
-    try {
-      // Two-folder model: the "Open folder" button targets the
-      // Project Folder (the user's repo), not the PiPi Output
-      // Folder. Falling back to the app-managed PiPi Output Folder
-      // is still useful so the user has *some* folder to land in
-      // when no Project Folder is bound.
-      let targetPath: string | undefined = projectDir;
-      if (!targetPath && currentSessionId) {
-        targetPath = await safeInvokeOrNull<string>('get_app_default_dir', { sessionId: currentSessionId }, { source: 'ChatInput.getDefaultDir' }) ?? undefined;
-      }
-      if (targetPath) {
-        await safeInvoke('reveal_in_finder', { path: targetPath }, { source: 'ChatInput.openFolder' });
-      }
-    } catch (err) {
-      console.error('Failed to open folder:', err);
-    }
-  }, [projectDir, currentSessionId]);
-
-  const clearInputDraft = useCallback(() => {
-    setInput('');
-    setAttachments([]);
-    setBrowserIntentCandidate(null);
-    clearDraftPair(draftStorageKey);
-    clearDraftPair(blockDraftStorageKey);
-    resetComposer();
-  }, [draftStorageKey, blockDraftStorageKey, resetComposer]);
-
   const {
     handlePaste,
     handleFileSelection,
@@ -270,158 +232,32 @@ export function ChatInput({
     addNotification,
   });
 
-  const sendAsRegularChat = useCallback(async (message: string, messageAttachments: ImageAttachment[], rawInput?: string) => {
-    setIsSubmitting(true);
-    // Clear draft immediately so rapid subsequent keystrokes are preserved
-    clearInputDraft();
-    try {
-      onSend?.(message);
-      await sendMessage(message, currentSessionId ?? undefined, { attachments: messageAttachments });
-    } catch (error) {
-      // Preserve input on failure so user can retry
-      console.error('[ChatInput] sendMessage failed, preserving input:', error);
-      setInput(rawInput !== undefined ? rawInput : message);
-      setAttachments(messageAttachments);
-    } finally {
-      setIsSubmitting(false);
-    }
-  }, [clearInputDraft, currentSessionId, onSend, sendMessage]);
-
-  const sendToBrowserWorkflow = useCallback(async (message: string) => {
-    setIsSubmitting(true);
-    try {
-      const handled = await handleChatBrowserWorkflow(message);
-      if (shouldClearDraftAfterBrowserWorkflow(handled)) {
-        clearInputDraft();
-      } else if (!handled) {
-        // Browser handoff declined — preserve input and show fallback prompt
-        setInput(message);
-        setBrowserIntentCandidate(message);
-      }
-      return handled;
-    } catch (error) {
-      console.error('[ChatInput] Failed to hand off browser workflow:', error);
-      // Preserve input and re-show intent confirm so user can choose "send as normal"
-      setInput(message);
-      setBrowserIntentCandidate(message);
-      return false;
-    } finally {
-      setIsSubmitting(false);
-    }
-  }, [clearInputDraft]);
-
-  const submitOutboundMessage = useCallback(async (compiledOverride?: string) => {
-    const promptContext = {
-      projectFolder: projectDir ?? undefined,
-      pipiOutputDir: pipiOutputDir ?? undefined,
-    };
-    const message = compiledOverride ?? resolveComposerSubmitMessage({
-      composerOpen,
-      composerBlocks,
-      input,
-      context: promptContext,
-    });
-
-    if (!message) {
-      return;
-    }
-
-    const messageAttachments = compiledOverride !== undefined ? [] : attachments;
-    const rawInput = input.trim();
-
-    if (submitMode === 'callback-only') {
-      if (isSubmitting) {
-        return;
-      }
-
-      setIsSubmitting(true);
-      clearInputDraft();
-      try {
-        await onSend?.(message, messageAttachments);
-      } catch (error) {
-        console.error('[ChatInput] callback-only onSend failed, preserving input:', error);
-        setInput(rawInput);
-      } finally {
-        setIsSubmitting(false);
-      }
-      return;
-    }
-
-    const decision = decideChatInputSubmission({
-      input: message,
-      hasAttachments: messageAttachments.length > 0,
-      isStreaming: showStopControl,
-      isSubmitting,
-      isBrowserIntent: quickCheckBrowserIntent,
-    });
-
-    if (decision.type === 'noop') {
-      return;
-    }
-
-    if (decision.type === 'confirm-browser') {
-      setBrowserIntentCandidate((current) => current === decision.message ? current : decision.message);
-      return;
-    }
-
-    await sendAsRegularChat(decision.message, messageAttachments, rawInput);
-  }, [
-    attachments,
-    clearInputDraft,
-    composerBlocks,
-    composerOpen,
-    input,
-    showStopControl,
+  const {
     isSubmitting,
-    onSend,
-    pipiOutputDir,
+    browserIntentCandidate,
+    handleSubmit,
+    handleConfirmBrowserIntent,
+    handleSendAsNormalMessage,
+    handleCancelBrowserIntent,
+  } = useChatInputSubmission({
+    input,
+    setInput,
+    attachments,
+    setAttachments,
+    draftStorageKey,
+    blockDraftStorageKey,
+    resetComposer,
+    composerOpen,
+    composerBlocks,
     projectDir,
-    sendAsRegularChat,
+    pipiOutputDir,
+    currentSessionId,
+    onSend,
     submitMode,
-  ]);
-
-  /**
-   * Handle message submission
-   */
-  const handleSubmit = useCallback(async () => {
-    const rawMessage = input.trim();
-    const hasMeaningfulBlock = composerOpen && hasMeaningfulComposerContent(composerBlocks);
-    if (!rawMessage && attachments.length === 0 && !hasMeaningfulBlock) {
-      return;
-    }
-
-    await submitOutboundMessage();
-  }, [attachments.length, composerBlocks, composerOpen, input, submitOutboundMessage]);
-
-  const handleConfirmBrowserIntent = useCallback(async () => {
-    if (!browserIntentCandidate || isSubmitting) return;
-    await sendToBrowserWorkflow(browserIntentCandidate);
-  }, [browserIntentCandidate, isSubmitting, sendToBrowserWorkflow]);
-
-  const handleSendAsNormalMessage = useCallback(async () => {
-    const message = browserIntentCandidate ?? input.trim();
-    if (!message || isSubmitting) return;
-    const rawInput = input.trim();
-    let finalMessage = message;
-    if (composerOpen && !isCompiledTaskPrompt(message)) {
-      finalMessage = resolveComposerSubmitMessage({
-        composerOpen,
-        composerBlocks,
-        input: message,
-        context: {
-          projectFolder: projectDir ?? undefined,
-          pipiOutputDir: pipiOutputDir ?? undefined,
-        },
-      }) ?? message;
-    }
-    await sendAsRegularChat(finalMessage, [], rawInput);
-  }, [browserIntentCandidate, composerBlocks, composerOpen, input, isSubmitting, pipiOutputDir, projectDir, sendAsRegularChat]);
-
-  const handleCancelBrowserIntent = useCallback(() => {
-    if (isSubmitting) return;
-    setBrowserIntentCandidate(null);
-    textareaRef.current?.focus();
-  }, [isSubmitting]);
+    showStopControl,
+    sendMessage,
+    textareaRef,
+  });
 
   /**
    * Handle stop generation
@@ -430,9 +266,6 @@ export function ChatInput({
     await stopGeneration();
   }, [stopGeneration]);
 
-  /**
-   * Handle paste events — convert pasted screenshots into image attachments.
-   */
   const isDisabled = showStopControl || isSubmitting;
 
   return (
@@ -445,42 +278,10 @@ export function ChatInput({
             projectDir={projectDir}
             pipiOutputDir={pipiOutputDir}
             isBindingFolder={isBindingFolder}
-            onBindProject={async () => {
-              if (!currentSession) return null;
-              setIsBindingFolder('project');
-              try {
-                return await setSessionProjectDir(currentSession.id);
-              } finally {
-                setIsBindingFolder(null);
-              }
-            }}
-            onClearProject={async () => {
-              if (!currentSession) return;
-              setIsBindingFolder('project');
-              try {
-                await clearSessionProjectDir(currentSession.id);
-              } finally {
-                setIsBindingFolder(null);
-              }
-            }}
-            onBindOutput={async () => {
-              if (!currentSession) return null;
-              setIsBindingFolder('output');
-              try {
-                return await setSessionPipiOutputDir(currentSession.id);
-              } finally {
-                setIsBindingFolder(null);
-              }
-            }}
-            onClearOutput={async () => {
-              if (!currentSession) return;
-              setIsBindingFolder('output');
-              try {
-                await clearSessionPipiOutputDir(currentSession.id);
-              } finally {
-                setIsBindingFolder(null);
-              }
-            }}
+            onBindProject={handleBindProject}
+            onClearProject={handleClearProject}
+            onBindOutput={handleBindOutput}
+            onClearOutput={handleClearOutput}
             terminalPanelVisible={terminalPanelVisible}
             onToggleTerminal={toggleTerminalPanel}
             showTerminal={isTauri}

@@ -8,7 +8,7 @@ import { t } from '@/i18n';
 
 export interface UseSessionGoalComposerBindingsParams {
   currentSessionId: string | null;
-  addNotification: (type: string, message: string) => void;
+  addNotification: (type: any, message: string) => void;
 }
 
 export function useSessionGoalComposerBindings({

@@ -36,6 +36,7 @@ describe('ChatInput two-folder copy', () => {
   const source = readSource('src/components/ChatInput.tsx');
   const barSource = readSource('src/components/chatInput/SessionFolderBar.tsx');
   const chipSource = readSource('src/components/chatInput/SessionFolderChip.tsx');
+  const folderBindingsSource = readSource('src/components/chatInput/useSessionFolderBindings.ts');
 
   it('labels the Project Folder chip with the new "project folder" terminology', () => {
     // Project Folder is the user's repo. Its bound, set, and tooltip
@@ -86,12 +87,14 @@ describe('ChatInput two-folder copy', () => {
 
   it('exposes independent bind and clear handlers for each folder', () => {
     // The two-folder model requires that removing one folder does
-    // not remove the other. The store actions called from this
-    // component enforce that — we assert the wiring is in place.
-    expect(source).toMatch(/setSessionProjectDir/);
-    expect(source).toMatch(/setSessionPipiOutputDir/);
-    expect(source).toMatch(/clearSessionProjectDir/);
-    expect(source).toMatch(/clearSessionPipiOutputDir/);
+    // not remove the other. AG-13 PR4 extracted the store wiring into
+    // useSessionFolderBindings; ChatInput must still mount that hook,
+    // and the hook must call the four independent store actions.
+    expect(source).toMatch(/useSessionFolderBindings/);
+    expect(folderBindingsSource).toMatch(/setSessionProjectDir/);
+    expect(folderBindingsSource).toMatch(/setSessionPipiOutputDir/);
+    expect(folderBindingsSource).toMatch(/clearSessionProjectDir/);
+    expect(folderBindingsSource).toMatch(/clearSessionPipiOutputDir/);
   });
 });
 
