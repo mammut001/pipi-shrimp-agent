@@ -8,41 +8,27 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
-import { useMCPStore } from '@/store/mcpStore';
 import { useSettingsStore } from '@/store';
-import { parseMCPToolName } from '@/services/mcp/toolNormalizer';
-import type { ToolResult as MCPToolResult } from '@/services/mcp/types';
-import { resolveActiveAgentConfig } from '@/services/agentConfig';
-import {
-  buildProviderExecutionCapabilities,
-  resolveProviderRequestHint,
-} from '@/services/llm/capabilities';
-import {
-  AUTORESEARCH_BOOTSTRAP_TOOL_NAMES,
-} from '@/services/tools/autoresearchBootstrap';
-import { loadToolRuntimeMetadata } from '@/services/tools/toolMetadata';
 import {
   DEFAULT_TOOL_EXECUTION_SOURCE,
   canAutoApproveTool,
-  isLegacyChatOnlyTool,
   type ToolPolicyPreviewResult,
-  type ToolExecutionSource,
 } from '@/services/tools/toolExecutionPolicy';
 import { runPreToolUseHooks } from '@/services/tools/preToolUseHooks';
 import { withWindowsShellProfileArgs } from '@/utils/windowsShellProfile';
 import { BROWSER_TOOL_NAMES } from './browser/browserTools';
+import { loadToolRuntimeMetadata } from '@/services/tools/toolMetadata';
 import {
   buildPolicyErrorResult,
   buildStructuredToolError,
-  contentBlocksToString,
-  finalizeToolResult,
   isFrontendOnlyTool,
-  sanitizeMcpServerName,
   type BatchExecutionResult,
   type ToolExecutionOptions,
   type ToolRequest,
   type ToolResult,
 } from './streamingToolExecutorHelpers';
+import { executeFrontendOnlyBatch } from './streamingToolExecutorFrontend';
+import { executeNativeBatch } from './streamingToolExecutorNative';
 
 export type {
   BatchExecutionResult,
@@ -50,8 +36,6 @@ export type {
   ToolRequest,
   ToolResult,
 } from './streamingToolExecutorHelpers';
-
-const AUTORESEARCH_BOOTSTRAP_TOOL_SET = new Set<string>(AUTORESEARCH_BOOTSTRAP_TOOL_NAMES);
 
 /**
  * Streaming Tool Executor with policy/frontend integration.
@@ -66,27 +50,6 @@ export class StreamingToolExecutor {
     } else {
       this.timeoutMs = options.timeoutMs ?? 300_000;
     }
-  }
-
-  private getBootstrapProviderContext() {
-    const activeConfig = resolveActiveAgentConfig();
-    if (!activeConfig) {
-      return {
-        activeConfig: null,
-        provider: null,
-        providerCapabilities: null,
-      };
-    }
-
-    return {
-      activeConfig,
-      provider: resolveProviderRequestHint(activeConfig.provider, activeConfig.apiFormat),
-      providerCapabilities: buildProviderExecutionCapabilities({
-        provider: activeConfig.provider,
-        apiFormat: activeConfig.apiFormat,
-        model: activeConfig.model,
-      }),
-    };
   }
 
   /**
@@ -302,18 +265,20 @@ export class StreamingToolExecutor {
     const frontendOnlyRequests = executableRequests.filter((request) => isFrontendOnlyTool(request.name));
     const nativeRequests = executableRequests.filter((request) => !isFrontendOnlyTool(request.name));
 
-    const nativeResults = await this.executeNativeBatch(
+    const nativeResults = await executeNativeBatch(
       nativeRequests,
       sessionId,
       reportProgress,
+      this.timeoutMs,
       workDir,
       source,
       allowedTools,
       executionMode,
     );
-    const frontendResults = await this.executeFrontendOnlyBatch(
+    const frontendResults = await executeFrontendOnlyBatch(
       frontendOnlyRequests,
       reportProgress,
+      this.timeoutMs,
       workDir,
       sessionId,
       source,
@@ -340,308 +305,6 @@ export class StreamingToolExecutor {
       totalExecutionTime: Date.now() - startTime,
       errors,
     };
-  }
-
-  /** Execute frontend-only tools serially. */
-  private async executeFrontendOnlyBatch(
-    toolRequests: ToolRequest[],
-    onProgress: (toolName: string) => void,
-    workDir?: string,
-    sessionId?: string,
-    source: ToolExecutionSource = DEFAULT_TOOL_EXECUTION_SOURCE,
-    executionMode?: string,
-  ): Promise<{ results: ToolResult[]; errors: ToolResult[] }> {
-    const results: ToolResult[] = [];
-    const errors: ToolResult[] = [];
-
-    for (const request of toolRequests) {
-      const result = await this.executeFrontendOnlyTool(
-        request,
-        workDir,
-        sessionId,
-        source,
-        executionMode,
-      ).catch((error) => ({
-        id: request.id,
-        content: '',
-        is_error: true,
-        error_message: error instanceof Error ? error.message : 'Unknown error',
-        execution_time_ms: 0,
-      } satisfies ToolResult));
-      onProgress(request.name);
-      const finalized = finalizeToolResult(request.name, result);
-      results.push(finalized);
-      if (finalized.is_error) {
-        errors.push(finalized);
-      }
-    }
-
-    return { results, errors };
-  }
-
-  /** Execute chat-scoped legacy tools outside the Rust registry. */
-  private async executeLegacyChatTool(
-    request: ToolRequest,
-    sessionId: string,
-    workDir: string | undefined,
-    source: ToolExecutionSource,
-    executionMode: string | undefined,
-    startTime: number,
-  ): Promise<ToolResult> {
-    const content = await invoke<string>('execute_tool', {
-      toolName: request.name,
-      arguments: JSON.stringify(request.arguments),
-      workDir: workDir ?? null,
-      toolCallId: request.id,
-      sessionId,
-      approvalToken: request.approvalToken ?? null,
-      source,
-      executionMode: executionMode ?? null,
-    });
-    const isError = content.startsWith('Error:');
-    return finalizeToolResult(request.name, {
-      id: request.id,
-      content,
-      is_error: isError,
-      error_message: isError ? content : undefined,
-      execution_time_ms: Date.now() - startTime,
-    } satisfies ToolResult);
-  }
-
-  /** Execute Rust-backed tools via the authoritative batch scheduler. */
-  private async executeNativeBatch(
-    toolRequests: ToolRequest[],
-    sessionId: string,
-    onProgress: (toolName: string) => void,
-    workDir?: string,
-    source: ToolExecutionSource = DEFAULT_TOOL_EXECUTION_SOURCE,
-    allowedTools?: string[],
-    executionMode?: string,
-  ): Promise<{ results: ToolResult[]; errors: ToolResult[] }> {
-    if (toolRequests.length === 0) {
-      return { results: [], errors: [] };
-    }
-
-    const startTime = Date.now();
-    const legacyRequests = toolRequests.filter((tool) => isLegacyChatOnlyTool(tool.name));
-    const registryRequests = toolRequests.filter((tool) => !isLegacyChatOnlyTool(tool.name));
-    const resultsById = new Map<string, ToolResult>();
-
-    try {
-      for (const request of legacyRequests) {
-        const result = await this.executeLegacyChatTool(
-          request,
-          sessionId,
-          workDir,
-          source,
-          executionMode,
-          startTime,
-        );
-        resultsById.set(request.id, result);
-        onProgress(request.name);
-      }
-
-      if (registryRequests.length > 0) {
-        const { activeConfig, provider, providerCapabilities } = registryRequests.some((tool) => AUTORESEARCH_BOOTSTRAP_TOOL_SET.has(tool.name))
-          ? this.getBootstrapProviderContext()
-          : { activeConfig: null, provider: null, providerCapabilities: null };
-
-        const rawResults = await Promise.race([
-          invoke<any[]>('execute_tool_batch', {
-            toolCalls: registryRequests.map((tool) => ({
-              id: tool.id,
-              name: tool.name,
-              arguments: JSON.stringify(tool.arguments),
-              workDir: workDir ?? null,
-              source,
-              allowedTools: allowedTools?.length ? allowedTools : null,
-              approvalToken: tool.approvalToken ?? null,
-              apiKey: activeConfig?.apiKey ?? null,
-              model: activeConfig?.model ?? null,
-              baseUrl: activeConfig?.baseUrl || null,
-              provider,
-              apiFormat: activeConfig?.apiFormat || null,
-              providerCapabilities,
-              executionMode: executionMode ?? null,
-            })),
-            sessionId,
-          }),
-          new Promise<never>((_, reject) =>
-            setTimeout(
-              () => reject(new Error(`Tool batch execution timeout: ${registryRequests.map((tool) => tool.name).join(', ')}`)),
-              this.timeoutMs * Math.max(1, registryRequests.length),
-            )
-          ),
-        ]);
-
-        const elapsed = Date.now() - startTime;
-        for (const result of rawResults) {
-          const content = typeof result.content === 'string' ? result.content : JSON.stringify(result.content);
-          resultsById.set(result.id, finalizeToolResult(result.name ?? 'unknown', {
-            id: result.id,
-            content,
-            is_error: Boolean(result.is_error),
-            status: typeof result.status === 'string' ? result.status : undefined,
-            terminal_status: typeof result.terminal_status === 'string'
-              ? result.terminal_status
-              : undefined,
-            error_code: typeof result.error_code === 'string' ? result.error_code : null,
-            error_message: result.is_error ? content : undefined,
-            execution_time_ms: elapsed,
-          } satisfies ToolResult));
-        }
-
-        for (const request of registryRequests) {
-          onProgress(request.name);
-        }
-      }
-
-      const results = toolRequests.map((request) => resultsById.get(request.id) ?? finalizeToolResult(request.name, {
-        id: request.id,
-        content: buildStructuredToolError(request.name, request.arguments, new Error(`Missing tool result: ${request.name}`)),
-        is_error: true,
-        error_message: `Missing tool result: ${request.name}`,
-        execution_time_ms: Date.now() - startTime,
-      } satisfies ToolResult));
-
-      return {
-        errors: results.filter((result) => result.is_error),
-        results,
-      };
-    } catch (error) {
-      const elapsed = Date.now() - startTime;
-      const message = error instanceof Error ? error.message : 'Unknown error';
-      const results = toolRequests.map((request) => {
-        if (!resultsById.has(request.id)) {
-          onProgress(request.name);
-        }
-        return resultsById.get(request.id) ?? finalizeToolResult(request.name, {
-          id: request.id,
-          content: buildStructuredToolError(request.name, request.arguments, error),
-          is_error: true,
-          error_message: message,
-          execution_time_ms: elapsed,
-        } satisfies ToolResult);
-      });
-
-      return { results, errors: results };
-    }
-  }
-
-  /** Execute a single frontend-only tool with timeout. */
-  private async executeFrontendOnlyTool(
-    request: ToolRequest,
-    _workDir?: string,
-    sessionId?: string,
-    source: ToolExecutionSource = DEFAULT_TOOL_EXECUTION_SOURCE,
-    executionMode?: string,
-  ): Promise<ToolResult> {
-    const startTime = Date.now();
-
-    if (request.name.startsWith('mcp__')) {
-      return this.executeMCPTool(request, startTime, sessionId, source, executionMode);
-    }
-
-    try {
-      throw new Error(`Frontend-only executor received unsupported tool: ${request.name}`);
-    } catch (error) {
-      const executionTime = Date.now() - startTime;
-      return {
-        id: request.id,
-        content: buildStructuredToolError(request.name, request.arguments, error),
-        is_error: true,
-        error_message: error instanceof Error ? error.message : undefined,
-        execution_time_ms: executionTime,
-      };
-    }
-  }
-
-  /** Execute an MCP tool by resolving the server from store. */
-  private async executeMCPTool(
-    request: ToolRequest,
-    startTime: number,
-    sessionId?: string,
-    source: ToolExecutionSource = DEFAULT_TOOL_EXECUTION_SOURCE,
-    executionMode?: string,
-  ): Promise<ToolResult> {
-    const parsed = parseMCPToolName(request.name);
-    if (!parsed) {
-      const errorMessage = `Invalid MCP tool name: ${request.name}`;
-      return {
-        id: request.id,
-        content: buildStructuredToolError(
-          request.name,
-          request.arguments,
-          new Error(errorMessage),
-          'tool_not_found',
-        ),
-        is_error: true,
-        error_message: errorMessage,
-        execution_time_ms: 0,
-      };
-    }
-
-    const { runtimes } = useMCPStore.getState();
-    const runtime = runtimes.find(r => sanitizeMcpServerName(r.name) === parsed.serverName);
-
-    if (!runtime) {
-      const errorMessage = `MCP server '${parsed.serverName}' is not connected`;
-      return {
-        id: request.id,
-        content: buildStructuredToolError(
-          request.name,
-          request.arguments,
-          new Error(errorMessage),
-          'transient_failure',
-        ),
-        is_error: true,
-        error_message: errorMessage,
-        execution_time_ms: Date.now() - startTime,
-      };
-    }
-
-    try {
-      const mcpResult = await Promise.race([
-        invoke<MCPToolResult>('mcp_call_tool', {
-          serverId: runtime.id,
-          toolName: parsed.toolName,
-          args: request.arguments,
-          sessionId: sessionId ?? null,
-          approvalToken: request.approvalToken ?? null,
-          source,
-          executionMode: executionMode ?? null,
-          mcpToolName: request.name,
-          toolCallId: request.id,
-        }),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error(`MCP tool timeout: ${request.name}`)),
-            this.timeoutMs,
-          )
-        ),
-      ]);
-
-      return {
-        id: request.id,
-        content: contentBlocksToString(mcpResult.content),
-        is_error: mcpResult.is_error,
-        execution_time_ms: Date.now() - startTime,
-      };
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'MCP tool execution failed';
-      return {
-        id: request.id,
-        content: buildStructuredToolError(
-          request.name,
-          request.arguments,
-          new Error(errorMessage),
-          'transient_failure',
-        ),
-        is_error: true,
-        error_message: errorMessage,
-        execution_time_ms: Date.now() - startTime,
-      };
-    }
   }
 
   /** Execute tools using the legacy batch method (for compatibility). */
