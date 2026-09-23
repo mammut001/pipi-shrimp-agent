@@ -2,7 +2,8 @@
  * ChatBrowserWorkspaceShell - Chat workspace with optional browser split layout
  *
  * This component wraps the chat experience and manages the browser dock layout.
- * See browser-docked-layout-design.md for design details.
+ * Terminal dock, browser split layout, and swarm float panel live in sibling
+ * modules (AG-15). See browser-docked-layout-design.md for design details.
  *
  * Layout modes:
  * - hidden/panel: Chat takes full width
@@ -10,7 +11,7 @@
  * - external: Browser in separate window, Chat takes full width
  */
 
-import { useMemo, useEffect, useRef, useCallback, useState, lazy, Suspense } from 'react';
+import { useMemo, useEffect, useState, lazy, Suspense } from 'react';
 import { useChatStore, useUIStore, useSettingsStore } from '@/store';
 import { useBrowserAgentStore } from '@/store';
 import { MainLayout } from '@/layout';
@@ -25,8 +26,9 @@ import {
   useSessionWorkspacePreview,
   workspacePreviewChrome,
 } from './SessionWorkspacePreview';
-import { SwarmPanel } from './SwarmPanel';
-import { TerminalPanel } from './TerminalPanel';
+import { SwarmPanelDraggable } from './SwarmPanelDraggable';
+import { ChatTerminalDock } from './ChatTerminalDock';
+import { BrowserChatSplitLayout } from './BrowserChatSplitLayout';
 
 // Lazy-loaded modal/overlay components (rarely visible on first render)
 const PermissionModal = lazy(() => import('./PermissionModal'));
@@ -38,104 +40,7 @@ import { getHiddenMessageCount, getVisibleMessageWindow } from './chat/messageWi
 import { ScrollToBottomButton } from './chat/ScrollToBottomButton';
 import { useChatMessageScroll } from '@/hooks/useChatMessageScroll';
 import { resolveFallbackTerminalCwd } from '@/utils/terminalCwd';
-import { safeGetJSON, safeSetJSON } from '@/utils/safeStorage';
 
-/**
- * Draggable wrapper for SwarmPanel — allows free positioning anywhere on screen.
- */
-const SWARM_PANEL_POS_KEY = 'swarm-panel-position';
-
-function SwarmPanelDraggable() {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const dragState = useRef<{ offsetX: number; offsetY: number } | null>(null);
-
-  // Restore saved position on mount
-  useEffect(() => {
-    const panel = containerRef.current;
-    if (!panel) return;
-    // AUDIT-FIX [fix-22#1] — Use the safe-storage helper for the read
-    // path; quota / SecurityError fall through to the default bottom-right
-    // position which the panel already starts with.
-    const saved = safeGetJSON<{ x: number; y: number }>(SWARM_PANEL_POS_KEY);
-    if (saved.value) {
-      const { x, y } = saved.value;
-      const maxX = window.innerWidth - panel.offsetWidth;
-      const maxY = window.innerHeight - panel.offsetHeight;
-      panel.style.left = `${Math.max(0, Math.min(x, maxX))}px`;
-      panel.style.top = `${Math.max(0, Math.min(y, maxY))}px`;
-      panel.style.right = 'auto';
-      panel.style.bottom = 'auto';
-    }
-  }, []);
-
-  const handleMouseDown = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    // Only drag from the header drag-handle area (data-drag-handle attribute)
-    if (!(e.target as HTMLElement).closest('[data-drag-handle]')) return;
-    e.preventDefault();
-
-    const panel = containerRef.current;
-    if (!panel) return;
-
-    const rect = panel.getBoundingClientRect();
-    dragState.current = {
-      offsetX: e.clientX - rect.left,
-      offsetY: e.clientY - rect.top,
-    };
-
-    const onMouseMove = (ev: MouseEvent) => {
-      if (!dragState.current || !panel) return;
-      let x = ev.clientX - dragState.current.offsetX;
-      let y = ev.clientY - dragState.current.offsetY;
-      // Clamp within viewport
-      const maxX = window.innerWidth - panel.offsetWidth;
-      const maxY = window.innerHeight - panel.offsetHeight;
-      x = Math.max(0, Math.min(x, maxX));
-      y = Math.max(0, Math.min(y, maxY));
-      panel.style.left = `${x}px`;
-      panel.style.top = `${y}px`;
-      panel.style.right = 'auto';
-      panel.style.bottom = 'auto';
-    };
-
-    const onMouseUp = () => {
-      dragState.current = null;
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-      // Persist final position via the safe-storage helper so quota
-      // errors don't crash the listener teardown path.
-      if (panel) {
-        const rect = panel.getBoundingClientRect();
-        safeSetJSON(SWARM_PANEL_POS_KEY, { x: rect.left, y: rect.top });
-      }
-    };
-
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
-  }, []);
-
-  // AUDIT-FIX [fix-19#1] — Last-line-of-defence cleanup. If the component
-  // unmounts mid-drag (e.g. the user navigates away or the panel
-  // disappears) the document listeners above would leak. We mirror the
-  // `mouseup` cleanup here as a safety net.
-  useEffect(() => {
-    return () => {
-      // We can't reference the inner onMouseUp / onMouseMove (they live in
-      // the closure above), but the drag state itself can be reset so any
-      // subsequent callback is a no-op until the user starts a new drag.
-      dragState.current = null;
-    };
-  }, []);
-
-  return (
-    <div
-      ref={containerRef}
-      className="fixed bottom-4 right-4 z-40 w-[460px]"
-      onMouseDown={handleMouseDown}
-    >
-      <SwarmPanel />
-    </div>
-  );
-}
 
 /**
  * ChatBrowserWorkspaceShell component
@@ -175,12 +80,8 @@ export function ChatBrowserWorkspaceShell() {
   const submitQuestionnaire = useUIStore((s) => s.submitQuestionnaire);
   const clearQuestionnaire = useUIStore((s) => s.clearQuestionnaire);
 
-  // Terminal panel state
+  // Needed for fallback cwd resolve when the terminal dock opens without a session dir.
   const terminalPanelVisible = useUIStore((s) => s.terminalPanelVisible);
-  const terminalPanelHeight = useUIStore((s) => s.terminalPanelHeight);
-  const setTerminalPanelHeight = useUIStore((s) => s.setTerminalPanelHeight);
-  const toggleTerminalPanel = useUIStore((s) => s.toggleTerminalPanel);
-
   const [fallbackTerminalCwd, setFallbackTerminalCwd] = useState<string | undefined>();
   const setAgentPanelTab = useUIStore((s) => s.setAgentPanelTab);
 
@@ -194,26 +95,6 @@ export function ChatBrowserWorkspaceShell() {
     addNotification('info', t('permission.deniedMessage'));
     resolvePermissionRequest(false, pendingPermission.id);
   };
-
-  // Terminal drag-resize handler
-  const handleTerminalDragStart = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      const startY = e.clientY;
-      const startHeight = terminalPanelHeight;
-      const onMouseMove = (ev: MouseEvent) => {
-        const delta = startY - ev.clientY;
-        setTerminalPanelHeight(Math.max(100, Math.min(600, startHeight + delta)));
-      };
-      const onMouseUp = () => {
-        document.removeEventListener('mousemove', onMouseMove);
-        document.removeEventListener('mouseup', onMouseUp);
-      };
-      document.addEventListener('mousemove', onMouseMove);
-      document.addEventListener('mouseup', onMouseUp);
-    },
-    [terminalPanelHeight, setTerminalPanelHeight]
-  );
 
   // Chat store
   const {
@@ -576,28 +457,7 @@ export function ChatBrowserWorkspaceShell() {
 
       <ChatInput />
 
-      {/* Mount the PTY only while visible. Hiding with display:none left xterm
-          attached to a 0-height box (gray dot, black screen, no echo). */}
-      {terminalPanelVisible && (
-        <>
-          <div
-            className={workspacePreviewChrome.terminalDivider}
-            onMouseDown={handleTerminalDragStart}
-          >
-            <span className={workspacePreviewChrome.terminalDividerThumb} />
-          </div>
-          <div
-            className="flex-shrink-0 overflow-hidden"
-            style={{ height: terminalPanelHeight }}
-          >
-            <TerminalPanel
-              key={terminalCwd ?? '__no_cwd__'}
-              cwd={terminalCwd}
-              onClose={toggleTerminalPanel}
-            />
-          </div>
-        </>
-      )}
+      <ChatTerminalDock cwd={terminalCwd} />
     </div>
   );
 
@@ -622,22 +482,11 @@ export function ChatBrowserWorkspaceShell() {
     >
       {/* Split Mode: browser + chat side by side; focusChatPane enlarges chat pane */}
       {isSplitMode ? (
-        <div className="flex-1 flex min-h-0 min-w-0">
-          <div
-            className={`min-w-0 bg-white ${
-              browserSplitFocus === 'browser' ? 'flex-[3]' : 'flex-[2]'
-            }`}
-          >
-            <BrowserWorkspacePane />
-          </div>
-          <div
-            className={`flex min-h-0 min-w-0 flex-col border-l border-gray-200 ${
-              browserSplitFocus === 'chat' ? 'flex-[3]' : 'flex-[2]'
-            }`}
-          >
-            {renderChatPanel()}
-          </div>
-        </div>
+        <BrowserChatSplitLayout
+          browserSplitFocus={browserSplitFocus}
+          browser={<BrowserWorkspacePane />}
+          chat={renderChatPanel()}
+        />
       ) : (
         /* Normal Mode: Chat takes full width */
         previewWorkspaceActive ? renderPreviewWorkspaceShell() : renderChatPanel()
