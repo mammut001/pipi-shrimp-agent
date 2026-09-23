@@ -681,7 +681,7 @@ Per [complexity-governance.md](../architecture/complexity-governance.md) and `np
 
 ### Split soon (500–800 LOC) — sample
 
-`engine.ts` (~450 after split-soon **PR2** #154 merge `b47bf66`; under `<500` watch), `BootstrapChatView.tsx` (~367 after split-soon **PR2**: `bootstrapChatHandoff` / `bootstrapChatStart` / `BootstrapChatStartedPanels` extracts; was ~871, now <500 under watch), `QueryEngine.ts` (see report) — full list in complexity report output. AG-13 ChatInput (~406) and AG-15 shell (~244) cleared below watch. No dedicated AG id for workflowEngine / BootstrapChatView — tracked as split-soon / >800 sample only.
+`engine.ts` (~450 after split-soon **PR2** #154 merge `b47bf66`; under `<500` watch), `BootstrapChatView.tsx` (**Fixed** — split-soon PR1 helpers #155 + PR2 handoff/start/panels #156 merge `c900329`; ~367 LOC, cleared below `<500` watch; was ~871), `QueryEngine.ts` (~50 after prior runtime extract; cleared), `AutoResearchSetupModal.tsx` (**partially fixed** — PR1 extract `AutoResearchSetupModalUi` presentational helpers; ~801 → ~706, under 800 hard limit; further split toward `<500` still open) — full list in complexity report output. AG-13 ChatInput (~406) and AG-15 shell (~244) cleared below watch. No dedicated AG id for workflowEngine / BootstrapChatView / SetupModal — tracked as split-soon / >800 sample only.
 
 ---
 
