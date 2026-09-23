@@ -13,19 +13,19 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { safeInvoke, safeInvokeOrNull } from '@/utils/safeInvoke';
 import { fileToImageAttachment } from '@/services/vision/imageAttachments';
 import { useChatStore, useUIStore } from '@/store';
-import {
-  COMPOSER_STOP_BUSY_HINT_TEST_ID,
-  resolveComposerSendStopAffordance,
-} from '@/store/chat/chatSelectors';
+import { resolveComposerSendStopAffordance } from '@/store/chat/chatSelectors';
 import { useSessionGoalStore } from '@/store/sessionGoalStore';
 import { useMCPStore } from '@/store/mcpStore';
-import { MCPChatButton, MCPDropdown } from '@/components/mcp';
 import { BrowserIntentConfirm } from './BrowserIntentConfirm';
-import { ExecutionModeDropdown } from './chatInput/ExecutionModeDropdown';
-import { ExecutionModeDropdownErrorBoundary } from './chatInput/ExecutionModeDropdownErrorBoundary';
-import { SessionFolderChip } from './chatInput/SessionFolderChip';
-import { SessionGoalPopover } from './chatInput/SessionGoalPopover';
+import { SessionFolderBar } from './chatInput/SessionFolderBar';
+import { ComposerActionToolbar } from './chatInput/ComposerActionToolbar';
 import { ImageAttachmentChips } from './chatInput/ImageAttachmentChips';
+import {
+  extractImageFilesFromClipboard,
+  extractImageFilesFromFileList,
+  extractImageFilesFromDataTransfer,
+  hasImageItems,
+} from './chatInput/imageAttachmentInput';
 import {
   DRAFT_PERSIST_DEBOUNCE_MS,
   cleanupOldDrafts,
@@ -540,32 +540,46 @@ export function ChatInput({
    * Handle paste events — convert pasted screenshots into image attachments.
    */
   const handlePaste = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const items = Array.from(e.clipboardData?.items ?? []);
-    const imageFiles = items
-      .filter((item) => item.type.startsWith('image/'))
-      .map((item) => item.getAsFile())
-      .filter((file): file is File => Boolean(file));
-    const hasImage = imageFiles.length > 0;
-    if (!hasImage) return; // plain text paste — let browser handle it normally
- 
+    const imageFiles = extractImageFilesFromClipboard(e.clipboardData);
+    if (imageFiles.length === 0) return; // plain text paste — let browser handle it normally
+
     e.preventDefault(); // stop the tofu characters from being inserted
     void appendImageAttachments(imageFiles, 'paste');
   }, [appendImageAttachments]);
 
   const handleFileSelection = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files ?? []).filter((file) => file.type.startsWith('image/'));
+    const files = extractImageFilesFromFileList(e.target.files);
     await appendImageAttachments(files, 'upload');
     e.target.value = '';
   }, [appendImageAttachments]);
 
   const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
-    const files = Array.from(e.dataTransfer?.files ?? []).filter((file) => file.type.startsWith('image/'));
+    const files = extractImageFilesFromDataTransfer(e.dataTransfer);
     if (files.length === 0) {
       return;
     }
     e.preventDefault();
     void appendImageAttachments(files, 'upload');
   }, [appendImageAttachments]);
+
+  const handleClearGoal = useCallback(() => {
+    if (!currentSessionId) return;
+    clearSessionGoal(currentSessionId);
+    setGoalInputText('');
+    setGoalPopoverOpen(false);
+    addNotification('success', t('goal.clearSuccess'));
+  }, [addNotification, clearSessionGoal, currentSessionId]);
+
+  const handleSaveGoal = useCallback((trimmed: string) => {
+    if (!currentSessionId) return;
+    if (trimmed) {
+      setSessionObjective(currentSessionId, trimmed);
+    } else {
+      clearSessionGoal(currentSessionId);
+    }
+    setGoalPopoverOpen(false);
+    addNotification('success', trimmed ? t('goal.saveSuccess') : t('goal.clearSuccess'));
+  }, [addNotification, clearSessionGoal, currentSessionId, setSessionObjective]);
 
 
   const isDisabled = showStopControl || isSubmitting;
@@ -575,73 +589,51 @@ export function ChatInput({
       <div className="max-w-4xl relative">
         {/* Two-folder chips — always visible once a session exists */}
         {currentSession && (
-          <div className="px-4 pt-4 pb-2 flex items-center gap-2 flex-wrap">
-            <SessionFolderChip
-              kind="project"
-              value={projectDir ?? null}
-              isBinding={isBindingFolder === 'project'}
-              onBind={async () => {
-                if (!currentSession) return null;
-                setIsBindingFolder('project');
-                try {
-                  return await setSessionProjectDir(currentSession.id);
-                } finally {
-                  setIsBindingFolder(null);
-                }
-              }}
-              onClear={async () => {
-                if (!currentSession) return;
-                setIsBindingFolder('project');
-                try {
-                  await clearSessionProjectDir(currentSession.id);
-                } finally {
-                  setIsBindingFolder(null);
-                }
-              }}
-            />
-            <SessionFolderChip
-              kind="output"
-              value={pipiOutputDir ?? null}
-              isBinding={isBindingFolder === 'output'}
-              onBind={async () => {
-                if (!currentSession) return null;
-                setIsBindingFolder('output');
-                try {
-                  return await setSessionPipiOutputDir(currentSession.id);
-                } finally {
-                  setIsBindingFolder(null);
-                }
-              }}
-              onClear={async () => {
-                if (!currentSession) return;
-                setIsBindingFolder('output');
-                try {
-                  await clearSessionPipiOutputDir(currentSession.id);
-                } finally {
-                  setIsBindingFolder(null);
-                }
-              }}
-            />
-
-            {/* Terminal toggle button */}
-            {isTauri && (
-              <button
-                onClick={toggleTerminalPanel}
-                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full
-                           border text-xs transition-all duration-150
-                           ${terminalPanelVisible
-                             ? 'bg-gray-800 border-gray-700 text-gray-200 hover:bg-gray-700'
-                             : 'border-gray-200 text-gray-400 hover:border-gray-300 hover:text-gray-600'
-                           }`}
-                title={terminalPanelVisible ? t('chat.hideTerminal') : t('chat.showTerminal')}
-              >
-                <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-                {t('chat.terminal')}
-              </button>
-            )}
-          </div>
+          <SessionFolderBar
+            currentSession={currentSession}
+            projectDir={projectDir}
+            pipiOutputDir={pipiOutputDir}
+            isBindingFolder={isBindingFolder}
+            onBindProject={async () => {
+              if (!currentSession) return null;
+              setIsBindingFolder('project');
+              try {
+                return await setSessionProjectDir(currentSession.id);
+              } finally {
+                setIsBindingFolder(null);
+              }
+            }}
+            onClearProject={async () => {
+              if (!currentSession) return;
+              setIsBindingFolder('project');
+              try {
+                await clearSessionProjectDir(currentSession.id);
+              } finally {
+                setIsBindingFolder(null);
+              }
+            }}
+            onBindOutput={async () => {
+              if (!currentSession) return null;
+              setIsBindingFolder('output');
+              try {
+                return await setSessionPipiOutputDir(currentSession.id);
+              } finally {
+                setIsBindingFolder(null);
+              }
+            }}
+            onClearOutput={async () => {
+              if (!currentSession) return;
+              setIsBindingFolder('output');
+              try {
+                await clearSessionPipiOutputDir(currentSession.id);
+              } finally {
+                setIsBindingFolder(null);
+              }
+            }}
+            terminalPanelVisible={terminalPanelVisible}
+            onToggleTerminal={toggleTerminalPanel}
+            showTerminal={isTauri}
+          />
         )}
 
         {browserIntentCandidate && (
@@ -661,7 +653,7 @@ export function ChatInput({
             : 'border-gray-200'
           }`}
           onDragOver={(e) => {
-            if (Array.from(e.dataTransfer?.items ?? []).some((item) => item.type.startsWith('image/'))) {
+            if (hasImageItems(e.dataTransfer)) {
               e.preventDefault();
             }
           }}
@@ -717,141 +709,35 @@ export function ChatInput({
           />
 
           {/* Actions */}
-          <div className={actionRowClassName}>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept="image/*"
-              multiple
-              className="hidden"
-              onChange={(e) => { void handleFileSelection(e); }}
-            />
-
-            {/* Execution mode dropdown */}
-            <ExecutionModeDropdownErrorBoundary>
-              <ExecutionModeDropdown
-                selectedModeId={selectedExecutionModeId}
-                onSelect={handleExecutionModeSelect}
-                disabled={isDisabled}
-              />
-            </ExecutionModeDropdownErrorBoundary>
-
-            <SessionGoalPopover
-              open={goalPopoverOpen}
-              onOpenChange={setGoalPopoverOpen}
-              sessionGoal={sessionGoal}
-              goalInputText={goalInputText}
-              onGoalInputChange={setGoalInputText}
-              disabled={isDisabled}
-              hasSession={Boolean(currentSessionId)}
-              onClear={() => {
-                if (!currentSessionId) return;
-                clearSessionGoal(currentSessionId);
-                setGoalInputText('');
-                setGoalPopoverOpen(false);
-                addNotification('success', t('goal.clearSuccess'));
-              }}
-              onSave={(trimmed) => {
-                if (!currentSessionId) return;
-                if (trimmed) {
-                  setSessionObjective(currentSessionId, trimmed);
-                } else {
-                  clearSessionGoal(currentSessionId);
-                }
-                setGoalPopoverOpen(false);
-                addNotification('success', trimmed ? t('goal.saveSuccess') : t('goal.clearSuccess'));
-              }}
-            />
-
-            {/* MCP toggle button and dropdown */}
-            <div className="relative">
-              <MCPChatButton />
-              <MCPDropdown
-                onOpenSettings={() => {
-                  setDropdownOpen(false);
-                  toggleSettings();
-                }}
-              />
-            </div>
-
-            <button
-              onClick={() => fileInputRef.current?.click()}
-              type="button"
-              className={`${actionButtonClassName} hover:bg-gray-200 text-gray-500 transition-colors`}
-              title={t('chat.addImage')}
-            >
-              <svg className={actionIconClassName} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-8h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
-            </button>
-
-            {/* Open Folder Button */}
-            <button
-              onClick={handleOpenFolder}
-              type="button"
-              className={`${actionButtonClassName} hover:bg-gray-200 text-gray-500 transition-colors`}
-              title={t('chat.openChatFolder')}
-            >
-              <svg className={actionIconClassName} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z" />
-              </svg>
-            </button>
-
-            {/* Busy hint when stop shown */}
-            {showStopControl && sendStopAffordance.busyHintKey && (
-              <span
-                data-testid={COMPOSER_STOP_BUSY_HINT_TEST_ID}
-                className="px-1 text-[10px] leading-snug text-gray-500 select-none"
-                title={t(sendStopAffordance.busyHintKey)}
-              >
-                {t(sendStopAffordance.busyHintKey)}
-              </span>
-            )}
-
-            {/* Send/Stop Button */}
-            {showStopControl ? (
-              <button
-                onClick={handleStop}
-                type="button"
-                data-testid={sendStopAffordance.stopTestId}
-                aria-label={t(sendStopAffordance.stopTitleKey)}
-                title={t(sendStopAffordance.stopTitleKey)}
-                className={`${actionButtonClassName} bg-red-600 hover:bg-red-700 text-white transition-colors`}
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className={actionIconClassName}
-                  viewBox="0 0 20 20"
-                  fill="currentColor"
-                >
-                  <path
-                    fillRule="evenodd"
-                    d="M10 18a8 8 0 100-16 8 8 0 000 16zM8 7a1 1 0 00-1 1v4a1 1 0 001 1h4a1 1 0 001-1V8a1 1 0 00-1-1H8z"
-                    clipRule="evenodd"
-                  />
-                </svg>
-              </button>
-            ) : (
-              <button
-                onClick={() => { void handleSubmit(); }}
-                type="button"
-                disabled={isDisabled || (attachments.length === 0 && !canSendFromComposer(composerOpen ? composerBlocks : [], input))}
-                data-testid={sendStopAffordance.sendTestId}
-                aria-label={t('chat.send')}
-                title={t('chat.send')}
-                className={`${actionButtonClassName} bg-gray-900 hover:bg-gray-800 text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed`}
-              >
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  className={actionIconClassName}
-                  viewBox="0 0 20 20"
-                  fill="currentColor"
-                >
-                  <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
-                </svg>
-              </button>
-            )}
-          </div>
+          <ComposerActionToolbar
+            density={density}
+            actionRowClassName={actionRowClassName}
+            actionButtonClassName={actionButtonClassName}
+            actionIconClassName={actionIconClassName}
+            fileInputRef={fileInputRef}
+            onFileSelection={handleFileSelection}
+            selectedExecutionModeId={selectedExecutionModeId}
+            onSelectExecutionMode={handleExecutionModeSelect}
+            goalPopoverOpen={goalPopoverOpen}
+            onGoalPopoverOpenChange={setGoalPopoverOpen}
+            sessionGoal={sessionGoal}
+            goalInputText={goalInputText}
+            onGoalInputChange={setGoalInputText}
+            hasSession={Boolean(currentSessionId)}
+            onClearGoal={handleClearGoal}
+            onSaveGoal={handleSaveGoal}
+            onOpenSettings={() => {
+              setDropdownOpen(false);
+              toggleSettings();
+            }}
+            onOpenFolder={handleOpenFolder}
+            showStopControl={showStopControl}
+            sendStopAffordance={sendStopAffordance}
+            isDisabled={isDisabled}
+            canSend={attachments.length > 0 || canSendFromComposer(composerOpen ? composerBlocks : [], input)}
+            onSend={handleSubmit}
+            onStop={handleStop}
+          />
           </div>
         </div>
 
