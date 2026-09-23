@@ -1499,7 +1499,7 @@
     "title": "Split ChatInput.tsx (>1125 LOC)",
     "lane": "I. Architecture Governance",
     "severity": "Governance",
-    "status": "open",
+    "status": "partially fixed",
     "whyItMatters": "Component exceeds 500 LOC threshold",
     "files": ["src/components/ChatInput.tsx"],
     "smallestPrScope": "Extract BlockComposer wiring",
@@ -1508,7 +1508,8 @@
     "runtimeBehavior": false,
     "uiBehavior": true,
     "splitPrs": true,
-    "recommendedPr": null
+    "recommendedPr": null,
+    "fixNote": "2026-09-22: AG-13 PR1 extracted draftPersistence, SessionGoalPopover, ImageAttachmentChips from ChatInput (~1081 → ~868 LOC). Further extracts (action toolbar / BlockComposer wiring remnant) still needed to clear >800."
   },
   {
     "id": "AG-14",
@@ -1528,19 +1529,20 @@
   },
   {
     "id": "AG-15",
-    "title": "Split ChatBrowserWorkspaceShell.tsx (695 LOC split soon)",
+    "title": "Split ChatBrowserWorkspaceShell.tsx (layout/orchestration only)",
     "lane": "I. Architecture Governance",
     "severity": "Governance",
-    "status": "open",
+    "status": "fixed",
     "whyItMatters": "Primary shell approaching split threshold",
     "files": ["src/components/ChatBrowserWorkspaceShell.tsx"],
-    "smallestPrScope": "Extract terminal and browser dock panes",
+    "smallestPrScope": "Done — PR1+PR2",
     "tests": ["TOP-15-02", "TOP-15-11"],
     "dependencies": ["INFRA-01"],
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": true,
-    "recommendedPr": null
+    "recommendedPr": null,
+    "fixNote": "2026-09-22: AG-15 PR1 dock/split/swarm (#147) + PR2 ChatWorkspacePanel + PreviewWorkspaceShell (#148). Shell now ~244 LOC (layout/orchestration only), under component safe (<300) and file-size low (<300) thresholds in complexity-governance.md. TOP-15-02 split ChatInput regression still green."
   },
   {
     "id": "AG-16",

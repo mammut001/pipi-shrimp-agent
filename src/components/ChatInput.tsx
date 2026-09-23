@@ -11,12 +11,10 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { safeInvoke, safeInvokeOrNull } from '@/utils/safeInvoke';
-import { buildImageDataUrl, fileToImageAttachment } from '@/services/vision/imageAttachments';
+import { fileToImageAttachment } from '@/services/vision/imageAttachments';
 import { useChatStore, useUIStore } from '@/store';
 import {
-  COMPOSER_SEND_CONTROL_TEST_ID,
   COMPOSER_STOP_BUSY_HINT_TEST_ID,
-  COMPOSER_STOP_CONTROL_TEST_ID,
   resolveComposerSendStopAffordance,
 } from '@/store/chat/chatSelectors';
 import { useSessionGoalStore } from '@/store/sessionGoalStore';
@@ -26,9 +24,18 @@ import { BrowserIntentConfirm } from './BrowserIntentConfirm';
 import { ExecutionModeDropdown } from './chatInput/ExecutionModeDropdown';
 import { ExecutionModeDropdownErrorBoundary } from './chatInput/ExecutionModeDropdownErrorBoundary';
 import { SessionFolderChip } from './chatInput/SessionFolderChip';
+import { SessionGoalPopover } from './chatInput/SessionGoalPopover';
+import { ImageAttachmentChips } from './chatInput/ImageAttachmentChips';
+import {
+  DRAFT_PERSIST_DEBOUNCE_MS,
+  cleanupOldDrafts,
+  clearDraftPair,
+  persistBlockDraft,
+  persistTextDraft,
+  readTextDraft,
+} from './chatInput/draftPersistence';
 import {
   decideChatInputSubmission,
-  isStaleChatDraftValue,
   shouldClearDraftAfterBrowserWorkflow,
   shouldDismissBrowserIntentConfirm,
 } from './chatInputFlow';
@@ -36,82 +43,11 @@ import { t } from '@/i18n';
 import { resolveSessionExecutionModeId, type ExecutionModeId } from '@/services/executionMode';
 import { quickCheckBrowserIntent, handleChatBrowserWorkflow } from '@/utils/chatBrowserBridge';
 import type { ImageAttachment } from '@/types/vision';
-import { BlockComposer } from './chatInput/BlockComposer';
 import { type ComposerBlock } from './chatInput/blocks/types';
 import { canSendFromComposer, hasMeaningfulComposerContent, isCompiledTaskPrompt, resolveComposerSubmitMessage } from './chatInput/blocks/promptBuilder';
-import { BypassWarningDialog } from './chatInput/ExecutionModeDropdown';
-import { EXECUTION_MODES } from '@/services/executionMode';
-
-// AUDIT-FIX [audit-1#6] — Debounce window for localStorage writes. 300ms is
-// short enough that a navigation away from the tab will still flush the
-// last keystroke before unmount, and long enough to coalesce typical typing.
-const DRAFT_PERSIST_DEBOUNCE_MS = 300;
 
 // Check if running inside Tauri
 const isTauri = !!(window as any).__TAURI__;
-
-/**
- * Cleanup old drafts from localStorage to prevent unbounded growth.
- * Removes drafts older than 7 days.
- */
-function cleanupOldDrafts(): void {
-  try {
-    const cleanupKey = 'draft_cleanup_timestamp';
-    const now = Date.now();
-    const maxAge = 7 * 24 * 60 * 60 * 1000; // 7 days in ms
-
-    const lastCleanup = parseInt(localStorage.getItem(cleanupKey) || '0', 10);
-    if (lastCleanup && now - lastCleanup < maxAge) {
-      return; // Recently cleaned, skip
-    }
-
-    // Mark cleanup time
-    localStorage.setItem(cleanupKey, now.toString());
-
-    // Find and remove old drafts. We iterate the raw localStorage keys so we
-    // can also delete the matching `<key>__ts` timestamp entry.
-    const draftPrefix = 'chat_draft_';
-    const timestampSuffix = '__ts';
-    const keysToRemove: string[] = [];
-    const timestampsToRemove: string[] = [];
-
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (!key || key.endsWith(timestampSuffix)) {
-        continue;
-      }
-      const isTextDraft = key.startsWith('chat_draft_');
-      const isBlockDraft = key.startsWith('chat_blocks_draft_');
-      if (!isTextDraft && !isBlockDraft) {
-        continue;
-      }
-      const value = localStorage.getItem(key);
-      if (!value || value.length === 0) {
-        keysToRemove.push(key);
-        continue;
-      }
-
-      const tsRaw = localStorage.getItem(`${key}${timestampSuffix}`);
-      const lastTouchedAt = tsRaw ? Number.parseInt(tsRaw, 10) : null;
-
-      // AUDIT-FIX [audit-1#6] — isStaleChatDraftValue now consults the
-      // timestamp when present, so a large but recently-touched prompt is
-      // preserved. Only the size+age combination triggers removal.
-      if (isStaleChatDraftValue(value, Number.isFinite(lastTouchedAt) ? lastTouchedAt : null)) {
-        keysToRemove.push(key);
-        timestampsToRemove.push(`${key}${timestampSuffix}`);
-      }
-    }
-
-    keysToRemove.forEach((key) => localStorage.removeItem(key));
-    timestampsToRemove.forEach((key) => localStorage.removeItem(key));
-    if (keysToRemove.length > 0) {
-      console.log(`[ChatInput] Cleaned up ${keysToRemove.length} old drafts`);
-    }
-  } catch (e) {
-    // Ignore cleanup errors
-  }
-}
 
 /**
  * Props for ChatInput component
@@ -147,7 +83,6 @@ export function ChatInput({
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [goalPopoverOpen, setGoalPopoverOpen] = useState(false);
   const [goalInputText, setGoalInputText] = useState<string>('');
-  const goalPopoverRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isComposingRef = useRef(false);
@@ -250,21 +185,6 @@ export function ChatInput({
     setGoalInputText(useSessionGoalStore.getState().goalsBySession[currentSessionId]?.objective ?? '');
   }, [currentSessionId]);
 
-  // Click outside to close goal popover
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (goalPopoverRef.current && !goalPopoverRef.current.contains(event.target as Node)) {
-        setGoalPopoverOpen(false);
-      }
-    }
-    if (goalPopoverOpen) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [goalPopoverOpen]);
-
   // Get current session
   const currentSession = sessions.find(s => s.id === currentSessionId);
   // Two-folder model: surface both folders independently. The
@@ -289,7 +209,7 @@ export function ChatInput({
 
   // Restore draft from localStorage on mount
   useEffect(() => {
-    const saved = localStorage.getItem(draftStorageKey);
+    const saved = readTextDraft(draftStorageKey);
     if (saved) setInput(saved);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftStorageKey]);
@@ -297,8 +217,7 @@ export function ChatInput({
   // Main-chat block composer was removed. Clear any legacy hidden draft so a
   // stale composer payload can never affect a normal send after the UI is gone.
   useEffect(() => {
-    localStorage.removeItem(blockDraftStorageKey);
-    localStorage.removeItem(`${blockDraftStorageKey}__ts`);
+    clearDraftPair(blockDraftStorageKey);
     setComposerBlocks([]);
     setComposerOpen(false);
     setPendingBypassBlocks(null);
@@ -309,11 +228,9 @@ export function ChatInput({
     const handle = window.setTimeout(() => {
       const isDirty = composerBlocks.length > 0;
       if (composerOpen && isDirty) {
-        localStorage.setItem(blockDraftStorageKey, JSON.stringify(composerBlocks));
-        localStorage.setItem(`${blockDraftStorageKey}__ts`, String(Date.now()));
+        persistBlockDraft(blockDraftStorageKey, JSON.stringify(composerBlocks));
       } else {
-        localStorage.removeItem(blockDraftStorageKey);
-        localStorage.removeItem(`${blockDraftStorageKey}__ts`);
+        persistBlockDraft(blockDraftStorageKey, null);
       }
     }, DRAFT_PERSIST_DEBOUNCE_MS);
     return () => window.clearTimeout(handle);
@@ -375,26 +292,11 @@ export function ChatInput({
     setPendingBypassBlocks(null);
   }, [pendingBypassBlocks, selectedExecutionModeId]);
 
-  // AUDIT-FIX [audit-1#6] — Persist the draft with a short debounce so
-  // every keystroke (especially for large copy-pasted prompts) doesn't
-  // trigger a synchronous localStorage.setItem on the main thread. We also
-  // store a `lastTouchedAt` timestamp alongside the value so the staleness
-  // heuristic can make an actual time-based decision instead of guessing
-  // from content length (see MAX_CHAT_DRAFT_STALE_MS).
+  // AUDIT-FIX [audit-1#6] — Persist the draft with a short debounce via
+  // persistTextDraft (timestamp + silent full/disabled degrade).
   useEffect(() => {
     const handle = window.setTimeout(() => {
-      if (input) {
-        try {
-          localStorage.setItem(draftStorageKey, input);
-          localStorage.setItem(`${draftStorageKey}__ts`, String(Date.now()));
-        } catch (error) {
-          // localStorage may be full / disabled; degrade silently.
-          console.warn('[ChatInput] failed to persist draft:', error);
-        }
-      } else {
-        localStorage.removeItem(draftStorageKey);
-        localStorage.removeItem(`${draftStorageKey}__ts`);
-      }
+      persistTextDraft(draftStorageKey, input);
     }, DRAFT_PERSIST_DEBOUNCE_MS);
     return () => window.clearTimeout(handle);
   }, [input, draftStorageKey]);
@@ -451,8 +353,8 @@ export function ChatInput({
     setInput('');
     setAttachments([]);
     setBrowserIntentCandidate(null);
-    localStorage.removeItem(draftStorageKey);
-    localStorage.removeItem(blockDraftStorageKey);
+    clearDraftPair(draftStorageKey);
+    clearDraftPair(blockDraftStorageKey);
     setComposerBlocks([]);
     setComposerOpen(false);
   }, [draftStorageKey, blockDraftStorageKey]);
@@ -765,41 +667,10 @@ export function ChatInput({
           }}
           onDrop={handleDrop}
         >
-          {attachments.length > 0 && (
-            <div className="flex flex-wrap gap-2 pt-3">
-              {attachments.map((attachment) => (
-                <div
-                  key={attachment.id}
-                  className="flex items-center gap-2 rounded-lg border border-gray-200 bg-white px-2 py-1.5"
-                >
-                  <img
-                    src={buildImageDataUrl(attachment)}
-                    alt={attachment.origPath || 'attachment'}
-                    className="h-10 w-10 rounded object-cover"
-                  />
-                  <div className="min-w-0">
-                    <div className="truncate text-xs font-medium text-gray-700">
-                      {attachment.origPath || t('chat.imageAttachment')}
-                    </div>
-                    <div className="text-[10px] text-gray-400">
-                      {(attachment.bytes / 1024).toFixed(1)} KB
-                    </div>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setAttachments((current) => current.filter((item) => item.id !== attachment.id))}
-                    className="text-gray-300 transition-colors hover:text-gray-500"
-                    aria-label={t('common.delete')}
-                    title={t('common.delete')}
-                  >
-                    <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                    </svg>
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+          <ImageAttachmentChips
+            attachments={attachments}
+            onRemove={(id) => setAttachments((current) => current.filter((item) => item.id !== id))}
+          />
 
           <div className="relative flex items-end gap-2">
           {/* Text Input */}
@@ -865,116 +736,32 @@ export function ChatInput({
               />
             </ExecutionModeDropdownErrorBoundary>
 
-            {/* Goal button and Popover */}
-            <div className="relative" ref={goalPopoverRef}>
-              <button
-                type="button"
-                data-testid="goal-button"
-                data-goal-trigger="true"
-                onClick={() => {
-                  setGoalPopoverOpen(!goalPopoverOpen);
-                  if (!goalPopoverOpen) {
-                    setGoalInputText(sessionGoal);
-                  }
-                }}
-                disabled={isDisabled}
-                className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[11px] font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
-                  sessionGoal.trim()
-                    ? 'border-emerald-200 bg-emerald-50/70 text-emerald-700 hover:bg-emerald-100/70'
-                    : 'border-gray-200 bg-white text-gray-700 hover:bg-gray-50'
-                }`}
-                title={sessionGoal.trim() ? `${t('goal.active')}: ${sessionGoal}` : t('goal.setTooltip')}
-              >
-                {sessionGoal.trim() ? (
-                  <span className="flex h-2 w-2 relative">
-                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-                  </span>
-                ) : (
-                  <svg
-                    className="h-3 w-3 text-gray-500"
-                    viewBox="0 0 20 20"
-                    fill="currentColor"
-                    aria-hidden="true"
-                  >
-                    <path d="M10 2a8 8 0 100 16 8 8 0 000-16zm0 2a6 6 0 016 6h-2a4 4 0 00-4-4V4z" />
-                  </svg>
-                )}
-                <span>{t('goal.label')}</span>
-              </button>
-
-              {goalPopoverOpen && (
-                <div className="absolute bottom-full mb-2 left-0 w-80 bg-white border border-gray-200 rounded-xl shadow-xl z-50 p-4 max-w-none flex flex-col gap-3">
-                  <div className="flex items-center justify-between border-b border-gray-100 pb-2">
-                    <h3 className="text-xs font-semibold text-gray-800 flex items-center gap-1.5">
-                      <svg className="h-3.5 w-3.5 text-emerald-500" viewBox="0 0 20 20" fill="currentColor">
-                        <path d="M10 2a8 8 0 100 16 8 8 0 000-16zm0 2a6 6 0 016 6h-2a4 4 0 00-4-4V4z" />
-                      </svg>
-                      {t('goal.title')}
-                    </h3>
-                    {sessionGoal.trim() && (
-                      <span className="text-[10px] bg-emerald-100 text-emerald-800 px-1.5 py-0.5 rounded-full font-medium">
-                        {t('goal.active')}
-                      </span>
-                    )}
-                  </div>
-                  
-                  <p className="text-[11px] text-gray-500 leading-normal">
-                    {t('goal.description')}
-                  </p>
-
-                  <textarea
-                    rows={3}
-                    className="w-full text-xs border border-gray-200 rounded-lg p-2 focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 resize-none placeholder-gray-400"
-                    placeholder={t('goal.inputPlaceholder')}
-                    value={goalInputText}
-                    onChange={(e) => setGoalInputText(e.target.value)}
-                  />
-
-                  <div className="flex items-center justify-between gap-2 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (!currentSessionId) return;
-                        clearSessionGoal(currentSessionId);
-                        setGoalInputText('');
-                        setGoalPopoverOpen(false);
-                        addNotification('success', t('goal.clearSuccess'));
-                      }}
-                      className="px-2.5 py-1.5 text-xs text-red-600 hover:bg-red-50 rounded-lg transition-colors font-medium"
-                    >
-                      {t('goal.clear')}
-                    </button>
-                    <div className="flex gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setGoalPopoverOpen(false)}
-                        className="px-2.5 py-1.5 text-xs text-gray-500 hover:bg-gray-100 rounded-lg transition-colors font-medium"
-                      >
-                        {t('workflow.cancel')}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (!currentSessionId) return;
-                          const trimmed = goalInputText.trim();
-                          if (trimmed) {
-                            setSessionObjective(currentSessionId, trimmed);
-                          } else {
-                            clearSessionGoal(currentSessionId);
-                          }
-                          setGoalPopoverOpen(false);
-                          addNotification('success', trimmed ? t('goal.saveSuccess') : t('goal.clearSuccess'));
-                        }}
-                        className="px-2.5 py-1.5 text-xs bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg transition-colors font-medium shadow-sm"
-                      >
-                        {t('goal.save')}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-            </div>
+            <SessionGoalPopover
+              open={goalPopoverOpen}
+              onOpenChange={setGoalPopoverOpen}
+              sessionGoal={sessionGoal}
+              goalInputText={goalInputText}
+              onGoalInputChange={setGoalInputText}
+              disabled={isDisabled}
+              hasSession={Boolean(currentSessionId)}
+              onClear={() => {
+                if (!currentSessionId) return;
+                clearSessionGoal(currentSessionId);
+                setGoalInputText('');
+                setGoalPopoverOpen(false);
+                addNotification('success', t('goal.clearSuccess'));
+              }}
+              onSave={(trimmed) => {
+                if (!currentSessionId) return;
+                if (trimmed) {
+                  setSessionObjective(currentSessionId, trimmed);
+                } else {
+                  clearSessionGoal(currentSessionId);
+                }
+                setGoalPopoverOpen(false);
+                addNotification('success', trimmed ? t('goal.saveSuccess') : t('goal.clearSuccess'));
+              }}
+            />
 
             {/* MCP toggle button and dropdown */}
             <div className="relative">
