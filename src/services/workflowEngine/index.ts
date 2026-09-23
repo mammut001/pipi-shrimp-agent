@@ -8,3 +8,9 @@ export {
   type WorkflowTranscriptEntryType,
 } from './transcript';
 export { runAgentWithRetry, type StreamChunkCallback } from './agentRunner';
+export { extractCodeBlockArtifacts } from './codeBlockArtifacts';
+export {
+  createWorkflowRunSnapshot,
+  buildGoalEvaluationInstance,
+  type WorkflowRunSnapshot,
+} from './runSnapshot';
