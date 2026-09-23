@@ -54,8 +54,9 @@ describe('AutoResearch controlled profile', () => {
       expect(site).toMatch(/toolExecutionSource:\s*'autoresearch_phase'/);
     }
 
+    // split-soon PR2: bootstrap headless turn lives in bootstrapChatStart.ts
     const bootstrapSource = fs.readFileSync(
-      path.resolve(process.cwd(), 'src/components/autoresearch/BootstrapChatView.tsx'),
+      path.resolve(process.cwd(), 'src/components/autoresearch/bootstrapChatStart.ts'),
       'utf8',
     );
     const bootstrapSites = bootstrapSource.match(/runHeadlessAgentTurn\([\s\S]*?\n\s+\}\);/g) ?? [];
