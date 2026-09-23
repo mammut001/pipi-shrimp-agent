@@ -374,6 +374,6 @@ describe('AgentPanel', () => {
     expect(source).toMatch(/agentPanel\.workingFolders\.emptyHint/);
     expect(source).toMatch(/data-testid="working-folders-empty"/);
     // Count badge only when there is something to count — avoid "0" noise.
-    expect(source).toMatch(/count=\{\(\(syncedFiles\.length\) \+ allWorkingFiles\.length\) > 0/);
+    expect(source).toMatch(/workingFoldersCountBadge\(syncedFiles\.length, allWorkingFiles\.length\)/);
   });
 });
