@@ -1,31 +1,12 @@
 /**
  * secureSecrets — Unified secret storage abstraction.
  *
- * Provides a single API for saving/loading/deleting sensitive values
- * (API keys, tokens, passwords) in localStorage with XOR obfuscation.
- *
- * ⚠️ SECURITY WARNING ⚠️
- * localStorage + XOR obfuscation is NOT real encryption.
- * A determined attacker with devtools access can reverse this.
- *
- * Current protection:
- *   - XOR cipher with a per-installation random 32-byte key
- *   - The key is stored in localStorage (same origin), so this is
- *     defense-in-depth against casual XSS exfiltration and accidental
- *     log/console exposure
- *   - Significantly stronger than plain btoa() — cannot be decoded
- *     by simply calling atob() on the stored value
- *
- * Future upgrade path:
- *   - A maintained Tauri 2 desktop keychain plugin (see docs/audit/r7-15-keychain-spike.md)
- *   - tauri-plugin-stronghold integration
- *   - When a real keychain backend is wired, migrate saveSecret/loadSecret
- *     to it. Do NOT assume a silent localStorage fallback when the plugin
- *     is missing — migrateLegacySecret is fail-safe (keeps the old key
- *     until the new store verifies the write).
+ * Discrete secrets use the selected SecureStorageProvider: native OS
+ * keychain in Tauri desktop builds and the legacy XOR-backed provider
+ * in browser builds. Inline settings that mix secrets with other data
+ * still use the existing XOR format and are not OS-keychain protected.
  */
 
-const SECRET_PREFIX = 'pipi_secret_v2_';
 const INSTALLATION_KEY_STORAGE = '__pipi_shrimp_sk__';
 
 /**
@@ -146,13 +127,8 @@ function deobfuscate(value: string): string {
  * @param value - The plaintext secret to store
  */
 export async function saveSecret(key: string, value: string): Promise<void> {
-  try {
-    const { getSecureStorage } = await import('@/utils/secureStorage');
-    const storage = getSecureStorage();
-    await storage.save(key, value);
-  } catch (error) {
-    console.error(`Failed to save secret "${key}":`, error);
-  }
+  const { getSecureStorage } = await import('@/utils/secureStorage');
+  await getSecureStorage().save(key, value);
 }
 
 /**
@@ -162,14 +138,8 @@ export async function saveSecret(key: string, value: string): Promise<void> {
  * @returns The plaintext secret, or null if not found
  */
 export async function loadSecret(key: string): Promise<string | null> {
-  try {
-    const { getSecureStorage } = await import('@/utils/secureStorage');
-    const storage = getSecureStorage();
-    return await storage.load(key);
-  } catch (error) {
-    console.error(`Failed to load secret "${key}":`, error);
-    return null;
-  }
+  const { getSecureStorage } = await import('@/utils/secureStorage');
+  return getSecureStorage().load(key);
 }
 
 /**
@@ -178,13 +148,8 @@ export async function loadSecret(key: string): Promise<string | null> {
  * @param key - Unique identifier for the secret
  */
 export async function deleteSecret(key: string): Promise<void> {
-  try {
-    const { getSecureStorage } = await import('@/utils/secureStorage');
-    const storage = getSecureStorage();
-    await storage.remove(key);
-  } catch (error) {
-    console.error(`Failed to delete secret "${key}":`, error);
-  }
+  const { getSecureStorage } = await import('@/utils/secureStorage');
+  await getSecureStorage().remove(key);
 }
 
 /**
@@ -193,7 +158,7 @@ export async function deleteSecret(key: string): Promise<void> {
  *
  * Fail-safe: the legacy localStorage key is removed only after the
  * active SecureStorageProvider save+load round-trip verifies the new
- * value. If the new store fails (e.g. keychain plugin missing), the
+ * value. If the native keychain is unavailable, the
  * legacy key is left intact and the decoded value is still returned
  * when available so the caller can hydrate this session.
  *
@@ -219,8 +184,7 @@ export async function migrateLegacySecret(legacyKey: string, newKey: string): Pr
 
     // Fail-safe (AUDIT-FIX [R7-15]): only delete the legacy key AFTER the
     // active provider confirms it retained the value. Calling storage
-    // directly (not saveSecret) so a thrown keychain/plugin error cannot
-    // be swallowed while we still wipe the old token.
+    // directly preserves any keychain failure while the old token remains.
     const { getSecureStorage } = await import('@/utils/secureStorage');
     const storage = getSecureStorage();
     await storage.save(newKey, decoded);
@@ -236,8 +200,8 @@ export async function migrateLegacySecret(legacyKey: string, newKey: string): Pr
     localStorage.removeItem(legacyKey);
     return decoded;
   } catch (error) {
-    // Do NOT remove legacyKey — new store failed (e.g. keychain plugin
-    // missing). Return decoded when available so this session can hydrate;
+    // Do NOT remove legacyKey when the native store fails. Return decoded
+    // when available so this session can hydrate;
     // next boot will re-attempt migrate against the intact legacy key.
     console.error(`Failed to migrate legacy secret "${legacyKey}":`, error);
     return decoded;
