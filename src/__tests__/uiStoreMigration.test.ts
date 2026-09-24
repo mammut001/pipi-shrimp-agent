@@ -158,6 +158,30 @@ describe('uiStoreMigration', () => {
       expect(store.getState().permissionQueue).toHaveLength(0);
     });
 
+    it('recoverToChatView resolves pending permission as denied and records cancellation', async () => {
+      const { useUIStore: store } = await freshImport();
+      const resolvePermission = jest.fn();
+
+      store.getState().setPermissionRequest({
+        id: 'perm-recovery-1',
+        toolName: 'execute_command',
+        toolInput: '{"command":"pwd"}',
+        description: 'Run a command',
+        _resolve: resolvePermission,
+      });
+
+      store.getState().recoverToChatView();
+
+      expect(resolvePermission).toHaveBeenCalledTimes(1);
+      expect(resolvePermission).toHaveBeenCalledWith(false);
+      expect(store.getState().permissionQueue).toHaveLength(0);
+      expect(store.getState().permissionLedger[0]).toMatchObject({
+        id: 'perm-recovery-1',
+        toolName: 'execute_command',
+        decision: 'cancelled',
+      });
+    });
+
     it('recoverToChatView clears activeQuestionnaire', async () => {
       const { useUIStore: store } = await freshImport();
 
