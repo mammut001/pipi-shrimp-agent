@@ -4,9 +4,7 @@
  * Handles web automation and browser control
  * (Placeholder for future Page-Agent integration)
  */
-use crate::browser::actions::{
-    self, ActionContext, ClickInput, ElementReference, NavigateInput, TypeTextInput, WaitInput,
-};
+use crate::browser::actions;
 use crate::browser::dom::{
     capture_light_observation, capture_screenshot_with_options, LightObservation, PageState,
     ScreenshotArtifact, ScreenshotOptions,
@@ -21,8 +19,13 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Mutex;
 
+mod action_helpers;
 mod cdp;
 mod search;
+use action_helpers::{
+    action_context, action_result, browser_click_with_ctx, browser_type_with_ctx,
+    browser_wait_with_ctx, clone_manager_handle, navigate_and_wait_with_ctx,
+};
 pub use search::{FetchResult, SearchResult};
 
 pub struct BrowserController {
@@ -35,126 +38,6 @@ impl Default for BrowserController {
             manager: Arc::new(Mutex::new(BrowserSessionManager::default())),
         }
     }
-}
-
-async fn clone_manager_handle(
-    state: &tauri::State<'_, Arc<Mutex<BrowserController>>>,
-) -> Arc<Mutex<BrowserSessionManager>> {
-    state.lock().await.manager.clone()
-}
-
-async fn action_context(state: &tauri::State<'_, Arc<Mutex<BrowserController>>>) -> ActionContext {
-    ActionContext::new(clone_manager_handle(state).await)
-}
-
-fn action_result<T>(result: actions::ActionResult<T>) -> Result<T, String> {
-    result.map_err(|error| error.to_string())
-}
-
-async fn navigate_and_wait_with_ctx(
-    ctx: &ActionContext,
-    url: String,
-    wait_selector: Option<String>,
-) -> Result<String, String> {
-    action_result(
-        actions::navigate(
-            ctx,
-            NavigateInput {
-                url: Some(url),
-                wait_selector,
-                timeout_ms: None,
-            },
-        )
-        .await,
-    )?;
-
-    Ok("页面加载并渲染完全".to_string())
-}
-
-async fn browser_wait_with_ctx(
-    ctx: &ActionContext,
-    seconds: Option<u64>,
-    wait_selector: Option<String>,
-) -> Result<String, String> {
-    let output = action_result(
-        actions::wait(
-            ctx,
-            WaitInput {
-                seconds,
-                wait_selector,
-                timeout_ms: None,
-            },
-        )
-        .await,
-    )?;
-
-    if output.selector_matched {
-        Ok(format!(
-            "等待完成，目标选择器已出现（{}ms）",
-            output.waited_ms
-        ))
-    } else {
-        Ok(format!("已等待 {} 秒", output.waited_ms / 1_000))
-    }
-}
-
-async fn browser_click_with_ctx(
-    ctx: &ActionContext,
-    element_id: Option<u64>,
-    backend_node_id: Option<i64>,
-    navigation_id: Option<String>,
-) -> Result<String, String> {
-    let output = action_result(
-        actions::click(
-            ctx,
-            ClickInput {
-                target: ElementReference {
-                    index: element_id,
-                    backend_node_id,
-                    navigation_id,
-                },
-            },
-        )
-        .await,
-    )?;
-
-    Ok(format!(
-        "点击成功: backend_node_id {}{}",
-        output.backend_node_id,
-        output
-            .tag_name
-            .as_ref()
-            .map(|tag| format!(" <{}>", tag))
-            .unwrap_or_default()
-    ))
-}
-
-async fn browser_type_with_ctx(
-    ctx: &ActionContext,
-    element_id: Option<u64>,
-    backend_node_id: Option<i64>,
-    navigation_id: Option<String>,
-    text: String,
-) -> Result<String, String> {
-    let output = action_result(
-        actions::type_text(
-            ctx,
-            TypeTextInput {
-                target: ElementReference {
-                    index: element_id,
-                    backend_node_id,
-                    navigation_id,
-                },
-                text,
-            },
-        )
-        .await,
-    )?;
-
-    Ok(format!(
-        "输入成功: backend_node_id {}，共 {} 个字符",
-        output.backend_node_id, output.text_len
-    ))
 }
 
 #[derive(Debug, Clone, Serialize)]
