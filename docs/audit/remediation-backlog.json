@@ -1389,12 +1389,25 @@
     "title": "Split browserAgentStore.ts extract CDP runner",
     "lane": "I. Architecture Governance",
     "severity": "Governance",
-    "status": "open",
-    "whyItMatters": "Live 606 LOC on main 2026-09-24 (audit baseline 1413); under 800 hard limit, still in 500–800 split-soon band (no new features before split); aligns with R3-05 stopTask fix",
-    "files": ["src/store/browserAgentStore.ts"],
-    "smallestPrScope": "Extract CDP task runner module",
-    "tests": ["browser store tests", "T-17"],
-    "dependencies": ["R3-05"],
+    "status": "fixed",
+    "fixNote": "2026-09-24: AG-05 closed by #195. Mechanical, behavior-preserving extract of src/store/browserAgentStore.ts (606→373 LOC, live wc -l) into a zustand action-slice sibling module (same pattern as existing browserAgentEventActions.ts / browserAgentTaskActions.ts and #194 workflowStore slices): browserAgentInspectionActions.ts (261; createBrowserAgentInspectionActions — verbatim inspectCurrentPage/requestLogin/confirmLoginAndResume/forceResumeWithoutAuth bodies, 236 lines byte-identical, script-verified). The slice is spread at the exact position the inline actions occupied (between the event and task action spreads; identical store key order), receives the same zustand set/get, and keeps the same await boundaries (8 awaits, none added/removed; requestLogin stays synchronous with its fire-and-forget notification IIFE); same set/get call order, log keys, state transitions, inspection timeout retry + fallback. The slice import sits where @tauri-apps/plugin-notification and utils/browserInspection were imported, so ES module evaluation order is unchanged; the slice imports only types from browserAgentStore.types (no store import, no cycle). Static imports only (no dynamic import). Added missing type-only imports (BrowserSessionStatus/BrowserControlMode/BrowserInspectionResult/BrowserHandoffState), clearing 5 pre-existing TS2304 errors (tsc --noEmit 15→10). Exported API unchanged (useBrowserAgentStore + BrowserAgentState/BrowserAgentActions type re-exports). The CDP task runner already lives in store/browser/browserCdpTaskRunner.ts. Behavior + source-guard tests in src/store/__tests__/browserAgentStoreExtract.test.ts.",
+    "whyItMatters": "Was in 500–800 split-soon band (audit baseline 1413; 606 on main 2026-09-24); now 373 LOC after #195, under 500",
+    "files": [
+      "src/store/browserAgentStore.ts",
+      "src/store/browserAgentInspectionActions.ts",
+      "src/store/browserAgentEventActions.ts",
+      "src/store/browserAgentTaskActions.ts",
+      "src/store/browserAgentStore.types.ts"
+    ],
+    "smallestPrScope": "Done — #195 inspection/login-handoff action slice (606→373)",
+    "tests": [
+      "browser store tests",
+      "T-17",
+      "src/store/__tests__/browserAgentStoreExtract.test.ts"
+    ],
+    "dependencies": [
+      "R3-05"
+    ],
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": true,

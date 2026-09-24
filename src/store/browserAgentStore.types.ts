@@ -134,3 +134,11 @@ export type BrowserAgentTaskActions = Pick<
   | 'clearTask'
   | 'resumePendingTask'
 >;
+
+export type BrowserAgentInspectionActions = Pick<
+  BrowserAgentActions,
+  | 'inspectCurrentPage'
+  | 'requestLogin'
+  | 'confirmLoginAndResume'
+  | 'forceResumeWithoutAuth'
+>;
