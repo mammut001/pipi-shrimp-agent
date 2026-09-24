@@ -32,7 +32,7 @@ Earlier post-audit fixes (still need regression tests): R1-01–03, R4-01–03, 
 | **High — security** | R7-04 artifact sandbox ✅, R7-06 outputDir, R7-12 Telegram Rust parity ✅ |
 | **High — AutoResearch** | R5-02 preflight abort controller leak ✅ |
 | **Test infra** | INFRA-01 `@testing-library/react`, TOP-15 regression suites |
-| **Architecture** | AG-01–AG-15 **all fixed** (all ≤800 LOC on main 2026-09-24; AG-14 `Settings.tsx` 729→459 via #191; AG-12 `chatAdapter.ts` 762→418 via #192; AG-07 `nativeBrowserAgent.ts` 757→463 via #193; AG-11 `workflowStore.ts` 712→362 via #194; AG-05 `browserAgentStore.ts` 606→373 via #195; AG-10 `web.rs` 514→397 via #196); AG-21 `web/cdp.rs` 526→361 via #197. No open architecture items |
+| **Architecture** | AG-01–AG-15 **all fixed** (all ≤800 LOC on main 2026-09-24; AG-14 `Settings.tsx` 729→459 via #191; AG-12 `chatAdapter.ts` 762→418 via #192; AG-07 `nativeBrowserAgent.ts` 757→463 via #193; AG-11 `workflowStore.ts` 712→362 via #194; AG-05 `browserAgentStore.ts` 606→373 via #195; AG-10 `web.rs` 514→397 via #196); AG-21 `web/cdp.rs` 526→361 via #197. **AG-22–AG-33 open** (12 production files >1000 LOC with no prior AG item, added 2026-09-24; plans in §I) |
 | **Rust High (round-02)** | R2-05 typst resolve_path ✅, R2-06 backup sibling-prefix ✅, R2-07 blocked exact roots ✅, R2-08 Autoresearch bypass network ✅, R2-09 SSHPASS env-not-cmdline ✅, R2-10 CDP navigate scheme allowlist ✅, R2-11 MCP stdio cwd sandbox ✅, R2-12 mcp_call_tool policy ✅ |
 
 **Open P0/Critical in backlog:** 0.
@@ -672,6 +672,27 @@ LOC column = live `wc -l` on `main` (`b6c811a`, 2026-09-24). Original audit base
 | AG-15 | `src/components/ChatBrowserWorkspaceShell.tsx` | ~244 | **Fixed** — PR1 dock/split/swarm (#147) + PR2 `ChatWorkspacePanel`/`PreviewWorkspaceShell` (#148); shell layout/orchestration only; under `<300` safe | No | Done |
 | AG-21 | `src-tauri/src/commands/web/cdp.rs` | **361** | **Fixed** — #197 extracted Chrome remote-debugging launch helpers into child module `web/cdp/chrome_launch.rs` (192; `ChromeDebugLaunchOutcome`/`chrome_debug_port_ready`/`linux_chrome_debug_args`/`ensure_chrome_debug_process`, verbatim, token-identical) (526→361; under 500; all 24 `cdp::*` command bodies + R3-06 `cdp_execute_script` policy gate stay in `cdp.rs`; `super::cdp::linux_chrome_debug_args` test path, await points (52) + error strings unchanged) (2026-09-24) | No | Done — #197 |
 
+### Requires refactor plan (>1000 LOC) — files without a prior AG item (added 2026-09-24)
+
+LOC = live `wc -l` on `main` (`99113a6`, 2026-09-24), including inline Rust `#[cfg(test)]` modules. Target for each: **under 800 first, then under 500**. Items marked careful/extra-careful implement a policy gate, permissions, command safety, redaction or credentials — only verbatim / pure-data / test-module moves, one cohesive group per PR. Test files and i18n/translation data files over 1000 LOC (`chatStoreSendMessage.test.ts` 3415, `chatToolExecution.test.ts` 2464, `zh-CN.ts` 1814, `en-US.ts` 1813, `loopEngine.integration.test.ts` 1676, `i18n/types.ts` 1643, `website/src/translations/index.ts` 1246, `BootstrapChatView.test.tsx` 1193, `QueryEngine.test.ts` 1177, `vulnerability.test.ts` 1016) are not tracked as AG items.
+
+| ID | File | LOC | Suggested action | Block feature work? | Split PRs? |
+| --- | ---- | --- | ---------------- | ------------------- | ---------- |
+| AG-22 | `src-tauri/src/tools/execution_policy.rs` | **1901** | **Open — extra-careful (policy gate).** 1063 prod + 838 inline tests. Move tests → `execution_policy/tests.rs` (~1065), then pure data/classifier tables (`WRITE_TOOLS`/`WORKSPACE_BOUND_TOOLS`, `is_*_tool`, `command_uses_network`/`command_is_long_running`) → `classify.rs` (<800); SSH remote-path helpers later. No `evaluate_*`/`enforce_*`/approval-store edits | Yes | Yes |
+| AG-23 | `src-tauri/src/commands/code.rs` | **1472** | **Open — careful (command safety).** Mid-file tests (L966-1374) → `code/tests.rs` (~1065); Python session pool + cwd/WSL path helpers → `code/python_session.rs` / `code/cwd.rs` (<800); all `#[tauri::command]` fns stay; `check_command_safety` verbatim only | Yes | Yes |
+| AG-24 | `src/store/chat/chatToolExecution.ts` | **1348** | **Open — careful (permission gate).** Pure status mapping + trace emitters → `chatToolStatus.ts`/`chatToolTrace.ts`; then `executeAgentTool` / `executeConcurrentTools` whole-function moves (<800), `executeSerialTool` later (<500). Permission/preflight fns verbatim, same awaits | Yes | Yes |
+| AG-25 | `src-tauri/src/tools/registry.rs` | **1304** | **Open — careful (tool metadata feeds policy).** Tests → `registry/tests.rs` (~1060); split `register_builtin_tools` (~700 LOC) into `builtin_fs.rs` / `builtin_search.rs` / `builtin_command.rs` called in the same order (<500); `ToolMetadata` literals byte-identical | Yes | Yes |
+| AG-26 | `src-tauri/src/tools/autoresearch_bootstrap/mod.rs` | **1268** | **Open.** Serde model structs → `autoresearch_bootstrap/types.rs`; template tables + rendering → `scaffold_template.rs` (<800); arXiv parsing → `arxiv.rs` (<500); scaffold path checks verbatim | Yes | Yes |
+| AG-27 | `src/pages/AutoResearch.tsx` | **1131** | **Open.** `loadPersistedSetup` + types → `autoResearchSetupPersistence.ts`, `ExperimentDetailPanel` → own file; then display-only JSX sections of `AutoResearchView` (<800 → <500); handlers stay | Yes | Yes |
+| AG-28 | `src-tauri/src/commands/browser.rs` | **1098** | **Open — careful (`proxy_http_request`).** web.rs pattern: keep all 26 `#[tauri::command]` wrappers, move bodies to `browser/embedded_surface.rs` / `browser/window.rs`, `BrowserState` → `browser/state.rs` (<800 → <500); proxy verbatim only | Yes | Yes |
+| AG-29 | `src/components/chatInput/BlockComposer.tsx` | **1047** | **Open.** `createBlock` → `blocks/createComposerBlock.ts`; per-type editors (context / constraints / verification / safety / output) → `chatInput/blocks/*BlockEditor.tsx` (<800 → <500); state stays in the shell | Yes | Yes |
+| AG-30 | `src-tauri/src/utils/typst.rs` | **1028** | **Open.** Production is 442 LOC; move the inline test module (L442-1028) verbatim → `utils/typst/tests.rs` + `utils/typst/tests/template_examples.rs` (each <500) → typst.rs <500 | Yes | Yes |
+| AG-31 | `src/services/autoresearch/history.ts` | **1016** | **Open — careful (redaction).** Types → `historyTypes.ts` (re-exported); normalizers → `historyNormalize.ts` (<800); compaction/persistence → `historyPersistence.ts` (<500); redaction + `MAX_*` caps verbatim | Yes | Yes |
+| AG-32 | `src-tauri/src/commands/telegram.rs` | **1012** | **Open — careful (token redaction / allowed chats).** Serde types → `telegram/types.rs` with `pub use` (<800); webhook/file bodies behind thin wrappers (<500); redaction + URL builders verbatim | Yes | Yes |
+| AG-33 | `src-tauri/src/claude/http/request_builder.rs` | **1009** | **Open — careful (API-key headers).** Tests (L639-1009) → `request_builder/tests.rs` (~638, <800); artifact detection + OpenAI history sanitization → sibling modules (<500); header builders verbatim | Yes | Yes |
+
+**Other production files >800 LOC with no AG item** (live `wc -l`, `99113a6`; not yet tracked): `src/store/browserObservabilityStore.ts` 958, `src/components/BrowserPanel.tsx` 932, `src-tauri/src/claude/http/tool_catalog.rs` 900, `src/components/autoresearch/AutoResearchDashboardView.tsx` 887, `src-tauri/src/claude/http/adapters/openai.rs` 873, `src/components/autoresearch/AdvancedWorkdirSetup.tsx` 868, `src-tauri/src/commands/file.rs` 864, `src-tauri/src/claude/adapter.rs` 806.
+
 ### Concept doc alignment (governance)
 
 | ID | Title | Sev | Status | Why | Docs | Action |
@@ -690,19 +711,19 @@ LOC column = live `wc -l` on `main` (`b6c811a`, 2026-09-24). Original audit base
 
 ## Summary counts
 
-Recomputed from `docs/audit/remediation-backlog.json` by `status` / `severity` / `lane` — **as of 2026-09-24, main `b6c811a` + PR #189** (AG-01/03/04/06/08 open → fixed) **+ PR #191** (AG-14 open → fixed) **+ PR #192** (AG-12 open → fixed) **+ PR #193** (AG-07 open → fixed) **+ PR #194** (AG-11 open → fixed) **+ PR #195** (AG-05 open → fixed) **+ PR #196** (AG-10 open → fixed) **+ PR #197** (AG-21 added as fixed: `web/cdp.rs` 526→361). Items tracked only in round docs are not counted here.
+Recomputed from `docs/audit/remediation-backlog.json` by `status` / `severity` / `lane` — **as of 2026-09-24, main `b6c811a` + PR #189** (AG-01/03/04/06/08 open → fixed) **+ PR #191** (AG-14 open → fixed) **+ PR #192** (AG-12 open → fixed) **+ PR #193** (AG-07 open → fixed) **+ PR #194** (AG-11 open → fixed) **+ PR #195** (AG-05 open → fixed) **+ PR #196** (AG-10 open → fixed) **+ PR #197** (AG-21 added as fixed: `web/cdp.rs` 526→361) **+ AG-22–AG-33 added as open** (>1000 LOC files, main `99113a6`). Items tracked only in round docs are not counted here.
 
 | Category | Count |
 | -------- | ----- |
-| **Total tracked in backlog JSON** | 101 |
+| **Total tracked in backlog JSON** | 113 |
 | **Fixed** (`status: fixed`; many still need regression tests) | 87 |
-| **Open** (`status: open`) | 0 |
+| **Open** (`status: open`) | 12 — AG-22–AG-33 (architecture governance, severity Governance) |
 | **Partially fixed** (`status: partially fixed`) | 5 — R5-14, R5-15, R7-15, TOP-15-08, TOP-15-09 |
 | **Test gap only** (`status: test gap only`) | 9 — TOP-15-03/04/05/06/07/10/11/14/15 |
 | **Open P0 / Critical** (`status: open`) | 0 |
 | **Open High+** (`status: open`, severity P0/Critical/High) | 0 |
 | **Not fixed with P0/Critical/High severity** (partially fixed / test gap only) | 10 — all TOP-15 regression-suite items in lane H (TOP-15-04/05/06/07/08/09/10/11/14/15): P0 ×2, Critical ×5, High ×3 |
-| **Architecture governance lane (I)** | 21 — 21 fixed, 0 open |
+| **Architecture governance lane (I)** | 33 — 21 fixed, 12 open |
 | **Test infrastructure lane (H)** | 19 — 6 fixed, 4 partially fixed, 9 test gap only |
 
 Previous snapshot (before this refresh): Fixed 24, Total 95 — stale vs JSON (main `b6c811a` JSON had 100 items: 75 fixed / 11 open / 5 partially fixed / 9 test gap only).
