@@ -230,7 +230,7 @@ export function buildIterationFailureOutput(input: {
     : JSON.stringify(payload, null, 2);
 }
 
-async export function writeIterationTranscriptHeader(userMessage: string): Promise<void> {
+export async function writeIterationTranscriptHeader(userMessage: string): Promise<void> {
   const state = useAutoResearchStore.getState();
   const runDir = getCurrentRunDir();
   if (!state.sshConfig || !runDir) {
@@ -244,7 +244,7 @@ async export function writeIterationTranscriptHeader(userMessage: string): Promi
   );
 }
 
-async export function appendIterationTranscript(section: string): Promise<void> {
+export async function appendIterationTranscript(section: string): Promise<void> {
   const state = useAutoResearchStore.getState();
   const runDir = getCurrentRunDir();
   if (!state.sshConfig || !runDir) {
