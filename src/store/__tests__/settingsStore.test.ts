@@ -2,6 +2,20 @@ import { beforeEach, describe, expect, it, jest } from '@jest/globals';
 import type { ApiConfig } from '@/types/settings';
 import { DEFAULT_AUTORESEARCH_LLM_SETTINGS } from '@/types/settings';
 
+const mockLoadSecret = jest.fn(async (_key: string): Promise<string | null> => null);
+const mockMigrateLegacySecret = jest.fn(async (_legacyKey: string, _key: string): Promise<string | null> => null);
+const mockSaveSecret = jest.fn(async (_key: string, _value: string): Promise<void> => undefined);
+
+jest.mock('../../utils/secureSecrets', () => {
+  const actual = jest.requireActual('../../utils/secureSecrets') as typeof import('../../utils/secureSecrets');
+  return {
+    ...actual,
+    loadSecret: (...args: [string]) => mockLoadSecret(...args),
+    migrateLegacySecret: (...args: [string, string]) => mockMigrateLegacySecret(...args),
+    saveSecret: (...args: [string, string]) => mockSaveSecret(...args),
+  };
+});
+
 const storage = {
   data: {} as Record<string, string>,
   getItem: jest.fn((key: string) => storage.data[key] ?? null),
@@ -161,5 +175,48 @@ describe('settingsStore AutoResearch mutation guard', () => {
 
     expect(useSettingsStore.getState().windowsShellProfile).toBe('wsl');
     expect(storage.setItem).toHaveBeenCalledWith('ai-agent-windows-shell-profile', 'wsl');
+  });
+});
+
+describe('initializeSettings telegram secret isolation', () => {
+  let useSettingsStore: typeof import('../settingsStore').useSettingsStore;
+  let initializeSettings: typeof import('../settingsStore').initializeSettings;
+
+  beforeEach(async () => {
+    jest.resetModules();
+    storage.clear();
+    mockLoadSecret.mockReset();
+    mockMigrateLegacySecret.mockReset();
+    mockSaveSecret.mockReset();
+    mockLoadSecret.mockResolvedValue(null);
+    mockMigrateLegacySecret.mockResolvedValue(null);
+    mockSaveSecret.mockResolvedValue(undefined);
+  });
+
+  it('still hydrates budget/agent/importedFiles when loadSecret rejects', async () => {
+    mockLoadSecret.mockRejectedValue(new Error('keychain unavailable'));
+
+    const importedFiles = [
+      { id: 'file-1', name: 'notes.md', path: '/tmp/notes.md', addedAt: 1_700_000_000_000 },
+    ];
+    storage.data['ai-agent-imported-files'] = JSON.stringify(importedFiles);
+    storage.data['ai-agent-budget-settings'] = JSON.stringify({
+      monthlyLimit: 42,
+      enabled: true,
+    });
+    storage.data['ai-agent-agent-settings'] = JSON.stringify({
+      maxToolRounds: 9,
+    });
+
+    ({ useSettingsStore, initializeSettings } = await import('../settingsStore'));
+    await initializeSettings();
+
+    const state = useSettingsStore.getState();
+    expect(state.importedFiles).toEqual(importedFiles);
+    expect(state.budgetSettings.monthlyLimit).toBe(42);
+    expect(state.budgetSettings.enabled).toBe(true);
+    expect(state.agentSettings.maxToolRounds).toBe(9);
+    expect(state.telegramToken).toBeUndefined();
+    expect(mockLoadSecret).toHaveBeenCalledWith('telegram-token');
   });
 });

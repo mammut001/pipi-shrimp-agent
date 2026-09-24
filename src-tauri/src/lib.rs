@@ -168,6 +168,10 @@ pub fn run() {
             commands::get_config,
             commands::set_config,
             commands::delete_config,
+            // Native OS keychain secret storage
+            commands::secure_storage_save,
+            commands::secure_storage_load,
+            commands::secure_storage_delete,
             // Web automation commands
             commands::web::connect_browser,
             commands::web::navigate_and_wait,
