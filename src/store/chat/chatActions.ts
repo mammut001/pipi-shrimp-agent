@@ -13,6 +13,7 @@ import {
   createChatStopGenerationAction,
   createChatStreamingUpdateActions,
 } from './chatStreamActions';
+import { createSendMessageActionMethod } from './sendMessageAction';
 import { useUIStore } from '@/store';
 import {
   appendBrowserResultToSystemPrompt,
@@ -389,32 +390,29 @@ export function createChatActionMethods({
   runSMCompactAfterStreaming,
 }: ChatActionFactoryDeps): Pick<ChatState, ChatActionMethodKeys> {
   let sendMessageAction: ChatState['sendMessage'] | null = null;
-  const getSendMessageAction = async (): Promise<ChatState['sendMessage']> => {
+  const getSendMessageAction = (): ChatState['sendMessage'] => {
     if (!sendMessageAction) {
-      const { createSendMessageActionMethod } = await import('./sendMessageAction');
-      if (!sendMessageAction) {
-        sendMessageAction = createSendMessageActionMethod({
-          set,
-          get,
-          ensureSessionWorkDir,
-          runMicrocompactAfterStreaming,
-          runSMCompactAfterStreaming,
-          setActiveChatDiagnosticsTaskId,
-          getActiveChatDiagnosticsTaskId,
-          ChatGenerationCancelledError,
-          isChatGenerationCancelledError,
-          looksLikeAskModePseudoToolCall,
-          buildAskModeToolUnavailableReply,
-          ensureChatSessionForSend,
-          pinChatSession,
-          tryRecoverFromToolPolicyError,
-          removeEmptyAssistantPlaceholderById,
-          shouldRemoveEmptyAssistantPlaceholder,
-          clearStreamChromeIfSelected,
-        });
-      }
+      sendMessageAction = createSendMessageActionMethod({
+        set,
+        get,
+        ensureSessionWorkDir,
+        runMicrocompactAfterStreaming,
+        runSMCompactAfterStreaming,
+        setActiveChatDiagnosticsTaskId,
+        getActiveChatDiagnosticsTaskId,
+        ChatGenerationCancelledError,
+        isChatGenerationCancelledError,
+        looksLikeAskModePseudoToolCall,
+        buildAskModeToolUnavailableReply,
+        ensureChatSessionForSend,
+        pinChatSession,
+        tryRecoverFromToolPolicyError,
+        removeEmptyAssistantPlaceholderById,
+        shouldRemoveEmptyAssistantPlaceholder,
+        clearStreamChromeIfSelected,
+      });
     }
-    return sendMessageAction!;
+    return sendMessageAction;
   };
 
   let stopGenerationAction: ChatState['stopGeneration'] | null = null;
@@ -584,8 +582,8 @@ export function createChatActionMethods({
       }
     },
 
-    sendMessage: async (content, targetSessionId, options) =>
-      (await getSendMessageAction())(content, targetSessionId, options),
+    sendMessage: (content, targetSessionId, options) =>
+      getSendMessageAction()(content, targetSessionId, options),
 
     stopGeneration: () => getStopGenerationAction()(),
 
