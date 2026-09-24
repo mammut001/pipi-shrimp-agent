@@ -1,4 +1,5 @@
 import React, { type Dispatch, type SetStateAction } from 'react';
+import { t } from '@/i18n';
 import type { useUIStore } from '@/store';
 
 type CurrentView = ReturnType<typeof useUIStore.getState>['currentView'];
