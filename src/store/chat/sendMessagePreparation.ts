@@ -59,6 +59,11 @@ type SendMessagePreparationResult =
       modeAllowedTools: string[] | undefined;
     };
 
+/**
+ * Prepare a turn up to the final epoch check in sendMessageAction.
+ * Record the placeholder as soon as it is created so the caller can clean it
+ * up if any later asynchronous preparation step throws.
+ */
 export async function prepareSendMessageContext(
   input: SendMessagePreparationInput,
 ): Promise<SendMessagePreparationResult> {
