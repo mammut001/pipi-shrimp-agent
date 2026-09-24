@@ -1504,12 +1504,23 @@
     "title": "Split web.rs extract CDP and policy",
     "lane": "I. Architecture Governance",
     "severity": "Governance",
-    "status": "open",
-    "whyItMatters": "Live 514 LOC on main 2026-09-24 (audit baseline 1219); under 800 hard limit, still in 500–800 split-soon band (no new features before split); aligns with R3-06 policy gate",
-    "files": ["src-tauri/src/commands/web.rs"],
-    "smallestPrScope": "R3-06 fix then extract cdp module",
-    "tests": ["cargo test web"],
-    "dependencies": ["R3-06"],
+    "status": "fixed",
+    "fixNote": "2026-09-24: AG-10 closed by #196. Mechanical, behavior-preserving extract of src-tauri/src/commands/web.rs (514→397 LOC, live wc -l) into a sibling submodule under the existing web/ directory (same layout as web/cdp.rs, web/search.rs and #173 commands/chat/ submodules): web/action_helpers.rs (131; clone_manager_handle, action_context, action_result, navigate_and_wait_with_ctx, browser_wait_with_ctx, browser_click_with_ctx, browser_type_with_ctx — moved verbatim, token-identical, script-verified; only pub(super) added plus one rustfmt signature wrap). All 34 #[tauri::command] fns stay in web.rs with the same names/signatures/module path, so lib.rs generate_handler! commands::web::* and the commands::{web_search, web_fetch} glob re-export resolve unchanged. A private use in web.rs re-imports the helpers, so web/cdp.rs (use super::{..}) and web/tests.rs (use super::*) compile untouched. Same await points (48 = 42 in web.rs + 6 in action_helpers.rs; none added/removed), same error strings, LegacySemanticElement serde attributes untouched (still in web.rs); no new dependencies, no new cargo warnings. CDP command bodies + R3-06 cdp_execute_script policy gate already live in web/cdp.rs (526 LOC, pre-existing, not tracked in this backlog). Validation: cargo check --lib, cargo test --lib (388 passed), commands::web live Chrome harness tests (--ignored, 3 passed). Source guards in src/__tests__/webCommandsRustExtract.test.ts.",
+    "whyItMatters": "Was in 500–800 split-soon band (audit baseline 1219; 514 on main 2026-09-24); now 397 LOC after #196, under 500; aligns with R3-06 policy gate",
+    "files": [
+      "src-tauri/src/commands/web.rs",
+      "src-tauri/src/commands/web/action_helpers.rs",
+      "src-tauri/src/commands/web/cdp.rs",
+      "src-tauri/src/commands/web/search.rs"
+    ],
+    "smallestPrScope": "Done — #196 shared action helpers extract (514→397)",
+    "tests": [
+      "cargo test web",
+      "src/__tests__/webCommandsRustExtract.test.ts"
+    ],
+    "dependencies": [
+      "R3-06"
+    ],
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": true,
