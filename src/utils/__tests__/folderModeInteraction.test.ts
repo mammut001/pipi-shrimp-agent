@@ -153,7 +153,7 @@ describe('Bypass mode does not collapse the two-folder model', () => {
 describe('Ask mode never mutates either folder', () => {
   it('Ask mode chat sendMessage does not write to Project or PiPi Output folder', () => {
     const source = readFileSync(
-      resolve(repoRoot, 'src/store/chat/chatActions.ts'),
+      resolve(repoRoot, 'src/store/chat/sendMessageAction.ts'),
       'utf8',
     );
     // Ask-mode path passes `{ noTools: true }` to runChatTurn.
@@ -203,19 +203,24 @@ describe('PiPi Output Folder is resolved via Tauri before real I/O', () => {
     resolve(repoRoot, 'src/store/chat/chatActions.ts'),
     'utf8',
   );
+  const sendMessageActionSource = readFileSync(
+    resolve(repoRoot, 'src/store/chat/sendMessageAction.ts'),
+    'utf8',
+  );
   const sessionFoldersSource = readFileSync(
     resolve(repoRoot, 'src/utils/sessionFolders.ts'),
     'utf8',
   );
 
-  it('chatActions imports the real-path resolver', () => {
-    expect(chatActionsSource).toMatch(/resolveRealSessionPipiOutputDir/);
+  it('sendMessageAction imports the real-path resolver', () => {
+    expect(sendMessageActionSource).toMatch(/resolveRealSessionPipiOutputDir/);
   });
 
-  it('chatActions no longer builds the JS-only placeholder for I/O', () => {
+  it('sendMessageAction no longer builds the JS-only placeholder for I/O', () => {
     // The historical `currentSession ? `PiPi-Shrimp/chats/${currentSession.id}` : undefined`
     // pattern is gone — the placeholder is now reserved for naming.
     expect(chatActionsSource).not.toMatch(/`PiPi-Shrimp\/chats\/\$\{/);
+    expect(sendMessageActionSource).not.toMatch(/`PiPi-Shrimp\/chats\/\$\{/);
   });
 
   it('sessionFolders exports resolveRealSessionPipiOutputDir', () => {
