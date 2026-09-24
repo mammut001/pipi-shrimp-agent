@@ -39,7 +39,7 @@ import {
   shouldPostWait,
   signatureFor,
 } from './nativeBrowserAgentHelpers';
-import type { CacheKey, LoopSignature } from './nativeBrowserAgentHelpers';
+import type { CacheKey, LoopSignature, ObservationSnapshot } from './nativeBrowserAgentHelpers';
 import { injectOverlay, removeOverlay } from './nativeBrowserAgentOverlay';
 import { NATIVE_BROWSER_AGENT_SYSTEM_PROMPT, resolveNativeAgentStartUrl } from './nativeBrowserAgentPrompt';
 import {
@@ -173,14 +173,19 @@ export async function executeNativeBrowserTask(
       const previousCacheKey = cachedObservationKey;
       const desiredLevel: ObservationLevel = effectiveLevel;
 
-      const observation = await captureStepObservation({
-        desiredLevel,
-        usePageStateFlow,
-        obsStartedAt,
-        log,
-        summary,
-        state: observationState,
-      });
+      // Same branch boundary as the original inline block: only the light and
+      // PageState paths await; otherwise continue synchronously (no microtask).
+      let observation: ObservationSnapshot | null = null;
+      if (desiredLevel === 'light' || usePageStateFlow) {
+        observation = await captureStepObservation({
+          desiredLevel,
+          usePageStateFlow,
+          obsStartedAt,
+          log,
+          summary,
+          state: observationState,
+        });
+      }
 
       // Maintain the observation cache. We always recompute it because the
       // model needs the latest URL/title even on light observations.

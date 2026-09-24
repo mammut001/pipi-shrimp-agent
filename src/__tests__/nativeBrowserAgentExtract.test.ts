@@ -26,11 +26,33 @@ jest.mock('../utils/browserSessionClient', () => ({
   resyncBrowserPage: jest.fn().mockResolvedValue('resynced'),
 }));
 
+jest.mock('../utils/browserFeatureFlags', () => ({
+  isBrowserActionsV2Enabled: jest.fn(() => false),
+  isBrowserPageStateV2Enabled: jest.fn(() => false),
+  getBrowserMaxAgentSteps: jest.fn(() => 30),
+}));
+
+// Pass-through spies so the real implementations run but calls are observable.
+jest.mock('../utils/nativeBrowserAgentObservation', () => {
+  const actual = jest.requireActual('../utils/nativeBrowserAgentObservation');
+  return { ...actual, captureStepObservation: jest.fn(actual.captureStepObservation) };
+});
+jest.mock('../utils/nativeBrowserAgentHelpers', () => {
+  const actual = jest.requireActual('../utils/nativeBrowserAgentHelpers');
+  return { ...actual, chooseObservationLevel: jest.fn(actual.chooseObservationLevel) };
+});
+
+import { invoke } from '@tauri-apps/api/core';
 import type { BrowserPageState } from '@/types/browserPageState';
 import { executeBrowserScript } from '@/utils/browserActionClient';
-import { getBrowserLightObservation, getBrowserPageState } from '@/utils/browserPageStateClient';
+import { isBrowserActionsV2Enabled, isBrowserPageStateV2Enabled } from '@/utils/browserFeatureFlags';
+import {
+  getBrowserLightObservation,
+  getBrowserPageState,
+  getBrowserSemanticTree,
+} from '@/utils/browserPageStateClient';
 import { resyncBrowserPage } from '@/utils/browserSessionClient';
-import type { LoopSignature } from '@/utils/nativeBrowserAgentHelpers';
+import { chooseObservationLevel, type LoopSignature } from '@/utils/nativeBrowserAgentHelpers';
 import {
   OVERLAY_INJECT_SCRIPT,
   OVERLAY_REMOVE_SCRIPT,
@@ -51,12 +73,24 @@ import {
   captureStepObservation,
   type NativeObservationState,
 } from '@/utils/nativeBrowserAgentObservation';
-import type { NativeAgentRunSummary, NativeAgentStepTiming } from '@/utils/nativeBrowserAgent';
+import {
+  executeNativeBrowserTask,
+  type NativeAgentRunSummary,
+  type NativeAgentStepTiming,
+} from '@/utils/nativeBrowserAgent';
 
 const executeBrowserScriptMock = executeBrowserScript as jest.MockedFunction<typeof executeBrowserScript>;
 const getBrowserPageStateMock = getBrowserPageState as jest.MockedFunction<typeof getBrowserPageState>;
 const getBrowserLightObservationMock = getBrowserLightObservation as jest.MockedFunction<typeof getBrowserLightObservation>;
 const resyncBrowserPageMock = resyncBrowserPage as jest.MockedFunction<typeof resyncBrowserPage>;
+const getBrowserSemanticTreeMock = getBrowserSemanticTree as jest.MockedFunction<typeof getBrowserSemanticTree>;
+const invokeMock = invoke as jest.MockedFunction<typeof invoke>;
+const actionsFlagMock = isBrowserActionsV2Enabled as jest.MockedFunction<typeof isBrowserActionsV2Enabled>;
+const pageStateFlagMock = isBrowserPageStateV2Enabled as jest.MockedFunction<typeof isBrowserPageStateV2Enabled>;
+const captureStepObservationMock = captureStepObservation as jest.MockedFunction<typeof captureStepObservation>;
+const chooseObservationLevelMock = chooseObservationLevel as jest.MockedFunction<typeof chooseObservationLevel>;
+const actualChooseObservationLevel = jest.requireActual('../utils/nativeBrowserAgentHelpers')
+  .chooseObservationLevel as typeof chooseObservationLevel;
 
 const makeSummary = (): NativeAgentRunSummary => ({
   startedAt: 0,
@@ -350,6 +384,70 @@ describe('captureStepObservation', () => {
   });
 });
 
+describe('executeNativeBrowserTask observation await boundary', () => {
+  const doneResponse = {
+    content: JSON.stringify({ thought: 't', action: { done: { text: 'ok', success: true } } }),
+  };
+
+  beforeEach(() => {
+    jest.useFakeTimers();
+    invokeMock.mockReset();
+    getBrowserPageStateMock.mockReset();
+  });
+
+  afterEach(() => {
+    jest.runOnlyPendingTimers();
+    jest.useRealTimers();
+    actionsFlagMock.mockReturnValue(false);
+    pageStateFlagMock.mockReturnValue(false);
+  });
+
+  it('non-light + PageState flow off: skips captureStepObservation with no microtask boundary', async () => {
+    actionsFlagMock.mockReturnValue(false);
+    pageStateFlagMock.mockReturnValue(false);
+    const order: string[] = [];
+    chooseObservationLevelMock.mockImplementationOnce((args) => {
+      const level = actualChooseObservationLevel(args);
+      order.push(`choose:${level}`);
+      // Queued before the observation section; must run only after the
+      // caller has synchronously reached loadSemanticTree (as on main).
+      void Promise.resolve().then(() => order.push('microtask'));
+      return level;
+    });
+    getBrowserSemanticTreeMock.mockImplementationOnce(async () => {
+      order.push('semanticTree');
+      return '[]';
+    });
+    invokeMock.mockResolvedValueOnce(doneResponse);
+
+    const resultPromise = executeNativeBrowserTask('Just inspect the page', 'k', 'm', {});
+    await jest.runAllTimersAsync();
+
+    await expect(resultPromise).resolves.toBe('ok');
+    expect(captureStepObservationMock).not.toHaveBeenCalled();
+    expect(getBrowserPageStateMock).not.toHaveBeenCalled();
+    expect(order).toEqual(['choose:full', 'semanticTree', 'microtask']);
+  });
+
+  it('PageState flow on: awaits captureStepObservation for the non-light level', async () => {
+    actionsFlagMock.mockReturnValue(true);
+    pageStateFlagMock.mockReturnValue(true);
+    getBrowserPageStateMock.mockResolvedValue(pageState);
+    invokeMock.mockResolvedValueOnce(doneResponse);
+
+    const resultPromise = executeNativeBrowserTask('Just inspect the page', 'k', 'm', {});
+    await jest.runAllTimersAsync();
+
+    await expect(resultPromise).resolves.toBe('ok');
+    expect(captureStepObservationMock).toHaveBeenCalledTimes(1);
+    expect(captureStepObservationMock.mock.calls[0]?.[0]).toMatchObject({
+      desiredLevel: 'full',
+      usePageStateFlow: true,
+    });
+    expect(getBrowserPageStateMock).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe('AG-07 source guards', () => {
   const utilsDir = path.join(__dirname, '..', 'utils');
   const read = (file: string) => fs.readFileSync(path.join(utilsDir, file), 'utf8');
@@ -371,6 +469,15 @@ describe('AG-07 source guards', () => {
     expect(lineCount(file)).toBeLessThan(500);
     expect(source).not.toMatch(/\bimport\s*\(/);
     expect(source).not.toMatch(/\brequire\s*\(/);
+  });
+
+  it('awaits captureStepObservation only inside the original light / PageState branch', () => {
+    const source = read('nativeBrowserAgent.ts');
+    expect(source.match(/captureStepObservation\(/g)).toHaveLength(1);
+    expect(source).toMatch(
+      /let observation: ObservationSnapshot \| null = null;\n\s*if \(desiredLevel === 'light' \|\| usePageStateFlow\) \{\n\s*observation = await captureStepObservation\(\{/,
+    );
+    expect(source).not.toMatch(/const observation = await captureStepObservation/);
   });
 
   it('keeps the public API of nativeBrowserAgent.ts', () => {
