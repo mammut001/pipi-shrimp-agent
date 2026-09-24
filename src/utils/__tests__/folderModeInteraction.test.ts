@@ -207,13 +207,17 @@ describe('PiPi Output Folder is resolved via Tauri before real I/O', () => {
     resolve(repoRoot, 'src/store/chat/sendMessageAction.ts'),
     'utf8',
   );
+  const sendMessagePreparationSource = readFileSync(
+    resolve(repoRoot, 'src/store/chat/sendMessagePreparation.ts'),
+    'utf8',
+  );
   const sessionFoldersSource = readFileSync(
     resolve(repoRoot, 'src/utils/sessionFolders.ts'),
     'utf8',
   );
 
-  it('sendMessageAction imports the real-path resolver', () => {
-    expect(sendMessageActionSource).toMatch(/resolveRealSessionPipiOutputDir/);
+  it('sendMessagePreparation imports the real-path resolver', () => {
+    expect(sendMessagePreparationSource).toMatch(/resolveRealSessionPipiOutputDir/);
   });
 
   it('sendMessageAction no longer builds the JS-only placeholder for I/O', () => {
@@ -221,6 +225,7 @@ describe('PiPi Output Folder is resolved via Tauri before real I/O', () => {
     // pattern is gone — the placeholder is now reserved for naming.
     expect(chatActionsSource).not.toMatch(/`PiPi-Shrimp\/chats\/\$\{/);
     expect(sendMessageActionSource).not.toMatch(/`PiPi-Shrimp\/chats\/\$\{/);
+    expect(sendMessagePreparationSource).not.toMatch(/`PiPi-Shrimp\/chats\/\$\{/);
   });
 
   it('sessionFolders exports resolveRealSessionPipiOutputDir', () => {
