@@ -235,8 +235,9 @@ export const createAutoResearchRunActions: (
           metadata: {
             pendingIteration: input.pendingIteration,
           },
-          // AUDIT-FIX [audit-2-ar#8]: see `addRunEvent` above — both paths
-          // now use the same 100-event cap as `MAX_PERSISTED_EVENTS_PER_RUN`.
+          // AUDIT-FIX [audit-2-ar#8]: see `addRunEvent` in
+          // autoresearchStoreIterationActions.ts — both paths now use the
+          // same 100-event cap as `MAX_PERSISTED_EVENTS_PER_RUN`.
         })].slice(-100),
       })),
       selectedRunId: input.runId,

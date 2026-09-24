@@ -1,9 +1,12 @@
 /**
- * AG-07: behavior + source-guard tests for the modules extracted from
- * `src/utils/nativeBrowserAgent.ts`.
+ * AG-07: behavior tests for the observation module extracted from
+ * `src/utils/nativeBrowserAgent.ts` (`captureStepObservation`) and the
+ * `executeNativeBrowserTask` observation await boundary.
+ *
+ * Pure / prompt / run-state / overlay helper behavior lives in
+ * `nativeBrowserAgentExtractHelpers.test.ts`; source guards live in
+ * `nativeBrowserAgentExtractGuards.test.ts`.
  */
-import fs from 'fs';
-import path from 'path';
 
 jest.mock('@tauri-apps/api/core', () => ({
   invoke: jest.fn(),
@@ -44,7 +47,6 @@ jest.mock('../utils/nativeBrowserAgentHelpers', () => {
 
 import { invoke } from '@tauri-apps/api/core';
 import type { BrowserPageState } from '@/types/browserPageState';
-import { executeBrowserScript } from '@/utils/browserActionClient';
 import { isBrowserActionsV2Enabled, isBrowserPageStateV2Enabled } from '@/utils/browserFeatureFlags';
 import {
   getBrowserLightObservation,
@@ -52,34 +54,18 @@ import {
   getBrowserSemanticTree,
 } from '@/utils/browserPageStateClient';
 import { resyncBrowserPage } from '@/utils/browserSessionClient';
-import { chooseObservationLevel, type LoopSignature } from '@/utils/nativeBrowserAgentHelpers';
-import {
-  OVERLAY_INJECT_SCRIPT,
-  OVERLAY_REMOVE_SCRIPT,
-  injectOverlay,
-  removeOverlay,
-} from '@/utils/nativeBrowserAgentOverlay';
-import {
-  NATIVE_BROWSER_AGENT_SYSTEM_PROMPT,
-  resolveNativeAgentStartUrl,
-} from '@/utils/nativeBrowserAgentPrompt';
-import {
-  countLoopRepeats,
-  emptySummary,
-  recordStepTiming,
-  resolveIncompleteRunOutcome,
-} from '@/utils/nativeBrowserAgentRunState';
+import { chooseObservationLevel } from '@/utils/nativeBrowserAgentHelpers';
 import {
   captureStepObservation,
   type NativeObservationState,
 } from '@/utils/nativeBrowserAgentObservation';
+import { emptySummary } from '@/utils/nativeBrowserAgentRunState';
 import {
   executeNativeBrowserTask,
   type NativeAgentRunSummary,
   type NativeAgentStepTiming,
 } from '@/utils/nativeBrowserAgent';
 
-const executeBrowserScriptMock = executeBrowserScript as jest.MockedFunction<typeof executeBrowserScript>;
 const getBrowserPageStateMock = getBrowserPageState as jest.MockedFunction<typeof getBrowserPageState>;
 const getBrowserLightObservationMock = getBrowserLightObservation as jest.MockedFunction<typeof getBrowserLightObservation>;
 const resyncBrowserPageMock = resyncBrowserPage as jest.MockedFunction<typeof resyncBrowserPage>;
@@ -101,24 +87,6 @@ const makeSummary = (): NativeAgentRunSummary => ({
   ...emptySummary(),
 });
 
-const makeStepTiming = (): NativeAgentStepTiming => ({
-  step: 1,
-  engine: 'cdp_native',
-  url: '',
-  navigationId: '',
-  observationLevel: 'light',
-  observationMs: 0,
-  promptChars: 0,
-  llmMs: 0,
-  actionName: 'invalid',
-  actionMs: 0,
-  postWaitMs: 0,
-  screenshotMs: 0,
-  totalStepMs: 0,
-  success: false,
-  reusedCache: false,
-});
-
 const pageState: BrowserPageState = {
   url: 'https://example.com/',
   title: 'Example',
@@ -129,161 +97,10 @@ const pageState: BrowserPageState = {
   elements: [],
 };
 
-const sig = (overrides: Partial<LoopSignature> = {}): LoopSignature => ({
-  url: 'https://a.com',
-  navigationId: 'n1',
-  actionName: 'click_element',
-  target: 'bn:1',
-  ...overrides,
-});
-
 const noopLog = jest.fn();
 
 beforeEach(() => {
   jest.clearAllMocks();
-});
-
-describe('resolveNativeAgentStartUrl', () => {
-  it('prefers an explicit targetUrl', () => {
-    expect(resolveNativeAgentStartUrl('go to https://b.com', 'https://target.dev', 'https://cur.com')).toBe('https://target.dev');
-  });
-
-  it('extracts an http(s) url from the task', () => {
-    expect(resolveNativeAgentStartUrl('open http://a.com/x?q=1 now', undefined, null)).toBe('http://a.com/x?q=1');
-  });
-
-  it('stops the url at Chinese punctuation', () => {
-    expect(resolveNativeAgentStartUrl('open https://a.com/x，then read', undefined, null)).toBe('https://a.com/x');
-  });
-
-  it('upgrades a bare domain to https', () => {
-    expect(resolveNativeAgentStartUrl('search github.com/foo for issues', undefined, null)).toBe('https://github.com/foo');
-  });
-
-  it('falls back to the current browser url when it is not about:blank', () => {
-    expect(resolveNativeAgentStartUrl('summarize this page', undefined, 'https://cur.com/p')).toBe('https://cur.com/p');
-  });
-
-  it('falls back to google for about:blank / null / empty targetUrl', () => {
-    expect(resolveNativeAgentStartUrl('summarize this page', undefined, 'about:blank')).toBe('https://www.google.com');
-    expect(resolveNativeAgentStartUrl('summarize this page', '', null)).toBe('https://www.google.com');
-  });
-});
-
-describe('NATIVE_BROWSER_AGENT_SYSTEM_PROMPT', () => {
-  it('keeps the action catalogue and header text', () => {
-    expect(NATIVE_BROWSER_AGENT_SYSTEM_PROMPT.startsWith('You are a powerful browser automation agent.')).toBe(true);
-    expect(NATIVE_BROWSER_AGENT_SYSTEM_PROMPT).toContain('VALID ACTIONS');
-    expect(NATIVE_BROWSER_AGENT_SYSTEM_PROMPT).toContain('screenshot_observe');
-    expect(NATIVE_BROWSER_AGENT_SYSTEM_PROMPT).toContain('```json ... ```');
-    expect(NATIVE_BROWSER_AGENT_SYSTEM_PROMPT.endsWith('use ask_user instead of guessing credentials.')).toBe(true);
-  });
-});
-
-describe('countLoopRepeats', () => {
-  it('counts equal signatures and trims history to the window', () => {
-    const history: LoopSignature[] = [];
-    expect(countLoopRepeats(history, sig(), 4)).toBe(1);
-    expect(countLoopRepeats(history, sig(), 4)).toBe(2);
-    expect(countLoopRepeats(history, sig({ target: 'bn:2' }), 4)).toBe(1);
-    expect(countLoopRepeats(history, sig(), 4)).toBe(3);
-    expect(history).toHaveLength(4);
-    // Pushing a 5th entry shifts the oldest matching one out.
-    expect(countLoopRepeats(history, sig(), 4)).toBe(3);
-    expect(history).toHaveLength(4);
-  });
-
-  it('never counts wait / wait_for_selector / refresh_page_state', () => {
-    for (const actionName of ['wait', 'wait_for_selector', 'refresh_page_state'] as const) {
-      const history: LoopSignature[] = [];
-      countLoopRepeats(history, sig({ actionName }), 4);
-      countLoopRepeats(history, sig({ actionName }), 4);
-      expect(countLoopRepeats(history, sig({ actionName }), 4)).toBe(0);
-    }
-  });
-});
-
-describe('resolveIncompleteRunOutcome', () => {
-  it('returns max_steps when steps reached maxSteps', () => {
-    const summary = makeSummary();
-    summary.steps.push(makeStepTiming(), makeStepTiming());
-    summary.loopDetections = 1;
-    expect(resolveIncompleteRunOutcome(summary, 2)).toBe('max_steps');
-  });
-
-  it('returns loop_detected when loops were detected', () => {
-    const summary = makeSummary();
-    summary.loopDetections = 1;
-    summary.policyDenials = 1;
-    expect(resolveIncompleteRunOutcome(summary, 5)).toBe('loop_detected');
-  });
-
-  it('returns aborted for policy denials and otherwise', () => {
-    const denied = makeSummary();
-    denied.policyDenials = 2;
-    expect(resolveIncompleteRunOutcome(denied, 5)).toBe('aborted');
-    expect(resolveIncompleteRunOutcome(makeSummary(), 5)).toBe('aborted');
-  });
-});
-
-describe('recordStepTiming / emptySummary', () => {
-  it('sets totalStepMs, pushes to summary.steps, then calls onStep', () => {
-    const summary = makeSummary();
-    const timing = makeStepTiming();
-    const onStep = jest.fn((t: NativeAgentStepTiming) => {
-      expect(summary.steps).toContain(t);
-    });
-    recordStepTiming(timing, Date.now() - 5, summary, onStep);
-    expect(timing.totalStepMs).toBeGreaterThanOrEqual(5);
-    expect(summary.steps).toEqual([timing]);
-    expect(onStep).toHaveBeenCalledWith(timing);
-  });
-
-  it('tolerates a missing onStep', () => {
-    const summary = makeSummary();
-    expect(() => recordStepTiming(makeStepTiming(), Date.now(), summary)).not.toThrow();
-    expect(summary.steps).toHaveLength(1);
-  });
-
-  it('emptySummary returns fresh zeroed counters each call', () => {
-    const a = emptySummary();
-    const b = emptySummary();
-    expect(a).toEqual({
-      steps: [],
-      policyApprovals: 0,
-      policyDenials: 0,
-      fullSnapshots: 0,
-      lightObservations: 0,
-      interactiveObservations: 0,
-      screenshots: 0,
-      loopDetections: 0,
-      malformedResponses: 0,
-      llmRetries: 0,
-      cacheHits: 0,
-      cacheMisses: 0,
-    });
-    expect(a.steps).not.toBe(b.steps);
-  });
-});
-
-describe('overlay helpers', () => {
-  it('inject/remove run the overlay scripts', async () => {
-    await injectOverlay();
-    await removeOverlay();
-    expect(executeBrowserScriptMock.mock.calls.map(([script]) => script)).toEqual([
-      OVERLAY_INJECT_SCRIPT,
-      OVERLAY_REMOVE_SCRIPT,
-    ]);
-    expect(OVERLAY_INJECT_SCRIPT).toContain('__ppa_overlay__');
-    expect(OVERLAY_REMOVE_SCRIPT).toContain('remove()');
-  });
-
-  it('swallow script failures (best-effort)', async () => {
-    executeBrowserScriptMock.mockRejectedValueOnce(new Error('boom'));
-    executeBrowserScriptMock.mockRejectedValueOnce(new Error('boom'));
-    await expect(injectOverlay()).resolves.toBeUndefined();
-    await expect(removeOverlay()).resolves.toBeUndefined();
-  });
 });
 
 describe('captureStepObservation', () => {
@@ -445,47 +262,5 @@ describe('executeNativeBrowserTask observation await boundary', () => {
       usePageStateFlow: true,
     });
     expect(getBrowserPageStateMock).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('AG-07 source guards', () => {
-  const utilsDir = path.join(__dirname, '..', 'utils');
-  const read = (file: string) => fs.readFileSync(path.join(utilsDir, file), 'utf8');
-  const lineCount = (file: string) => read(file).split('\n').length - 1;
-  const newModules = [
-    'nativeBrowserAgentOverlay.ts',
-    'nativeBrowserAgentPrompt.ts',
-    'nativeBrowserAgentRunState.ts',
-    'nativeBrowserAgentObservation.ts',
-    'nativeBrowserAgentTypes.ts',
-  ];
-
-  it('nativeBrowserAgent.ts is under 500 lines', () => {
-    expect(lineCount('nativeBrowserAgent.ts')).toBeLessThan(500);
-  });
-
-  it.each(['nativeBrowserAgent.ts', ...newModules])('%s is < 500 lines with static imports only', (file) => {
-    const source = read(file);
-    expect(lineCount(file)).toBeLessThan(500);
-    expect(source).not.toMatch(/\bimport\s*\(/);
-    expect(source).not.toMatch(/\brequire\s*\(/);
-  });
-
-  it('awaits captureStepObservation only inside the original light / PageState branch', () => {
-    const source = read('nativeBrowserAgent.ts');
-    expect(source.match(/captureStepObservation\(/g)).toHaveLength(1);
-    expect(source).toMatch(
-      /let observation: ObservationSnapshot \| null = null;\n\s*if \(desiredLevel === 'light' \|\| usePageStateFlow\) \{\n\s*observation = await captureStepObservation\(\{/,
-    );
-    expect(source).not.toMatch(/const observation = await captureStepObservation/);
-  });
-
-  it('keeps the public API of nativeBrowserAgent.ts', () => {
-    const source = read('nativeBrowserAgent.ts');
-    expect(source).toContain('export async function executeNativeBrowserTask(');
-    expect(source).toContain('export async function removeBrowserAgentOverlay(');
-    expect(source).toMatch(
-      /export type \{\s*NativeAgentOptions,\s*NativeAgentRunSummary,\s*NativeAgentStepTiming,\s*\} from '\.\/nativeBrowserAgentTypes';/,
-    );
   });
 });
