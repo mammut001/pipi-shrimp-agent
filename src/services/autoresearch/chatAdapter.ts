@@ -22,7 +22,8 @@ import {
   formatError,
   getToolRoundLimit,
   isAutoResearchAbortError,
-  isToolRoundLimitError,} from './errors';
+  isToolRoundLimitError,
+} from './errors';
 import {
   AutoResearchReflectionFailureError,
   buildFallbackReflectionDecision,
@@ -46,7 +47,9 @@ import {
   getAutoResearchAllowedToolsForPhase,
   isAutoResearchToolLaneTransitionAllowed,
 } from './toolLanes';
-import {  getRemainingToolBudget,
+import {
+  getRemainingToolBudget,
+  getRemainingToolBudget,
   getToolBudgetSummaryFromUnknown,
   type ToolBudgetSummary,
 } from '@/services/tools/toolBudget';
@@ -54,6 +57,7 @@ import { emitAutoResearchRuntimeEvent, setAutoResearchPhase } from './runtimeEve
 import { parseToolCommand, parseToolResult } from './chatAdapterHelpers';
 import {
   TOOL_BUDGET_EXHAUSTED_MARKER,
+  truncateTranscriptResult,
   truncateTranscriptResult,
   appendIterationTranscript,
   buildAutoResearchRetryConstraintState,

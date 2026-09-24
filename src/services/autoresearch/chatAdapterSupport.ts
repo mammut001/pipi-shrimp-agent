@@ -18,7 +18,7 @@ export interface AutoResearchRetryConstraintState {
   hardConstraintLines: string[];
 }
 
-export function truncateTranscriptResult(result: string, limit = 4000): string {
+export export function truncateTranscriptResult(result: string, limit = 4000): string {
   if (result.length <= limit) {
     return result;
   }
