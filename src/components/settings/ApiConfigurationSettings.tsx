@@ -1,5 +1,6 @@
 import type { Dispatch, SetStateAction } from 'react';
 import type { ApiConfig, ModelEntry, ModelPricing } from '@/types/settings';
+import { DEFAULT_MODEL_PRICING } from '@/types/settings';
 import {
   canFetchModels,
   getProvider,
