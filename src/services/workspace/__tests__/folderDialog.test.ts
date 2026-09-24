@@ -35,10 +35,10 @@ describe('folderDialog helpers', () => {
   });
 });
 
-describe('createChatStore dialog wiring (source contract)', () => {
-  it('opens the native picker with titled project/output invokes and busy handling', () => {
+describe('chatSessionActions dialog wiring (source contract)', () => {
+  it('keeps titled project/output picker invokes and busy handling in the extracted actions', () => {
     const source = readFileSync(
-      resolve(__dirname, '../../../store/createChatStore.ts'),
+      resolve(__dirname, '../../../store/chat/chatSessionActions.ts'),
       'utf8',
     );
     expect(source).toMatch(/open_folder_dialog/);

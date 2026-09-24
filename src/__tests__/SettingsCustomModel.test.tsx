@@ -6,6 +6,7 @@ import React, { act } from 'react';
 import { render, screen, fireEvent, cleanup } from '@testing-library/react';
 import { beforeEach, afterEach, describe, expect, it, jest } from '@jest/globals';
 import { Settings } from '../pages/Settings';
+import { t } from '../i18n';
 import { useSettingsStore } from '../store';
 import { supportsCustomModel } from '../shared/providers';
 import type { ApiConfig } from '../types/settings';
@@ -65,6 +66,17 @@ describe('Settings custom model support', () => {
       render(<Settings />);
     });
   }
+
+  it('renders the prompt template editor on the Settings page', async () => {
+    await renderSettings();
+
+    expect(
+      screen.getByRole('heading', {
+        level: 2,
+        name: t('settings.promptTemplates'),
+      }),
+    ).toBeDefined();
+  });
 
   it('saved custom model id remains available and selected for openai-compatible', async () => {
     const customConfig: ApiConfig = {
@@ -183,6 +195,7 @@ describe('Settings custom model support', () => {
 
     // Click "Fetch models"
     const fetchButton = screen.getByTestId('fetch-models-button');
+    expect(fetchButton).toHaveTextContent(t('settings.fetchModels'));
     await act(async () => {
       fireEvent.click(fetchButton);
     });

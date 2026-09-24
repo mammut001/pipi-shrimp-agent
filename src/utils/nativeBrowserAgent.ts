@@ -18,34 +18,20 @@
 
 import { invoke } from '@tauri-apps/api/core';
 
+import { executeBrowserScript } from './browserActionClient';
 import {
-  clickBrowserElement,
-  executeBrowserScript,
-  pressBrowserKey,
-  scrollBrowser,
-  typeIntoBrowserElement,
-  waitForBrowser,
-} from './browserActionClient';
-import {
-  getBrowserLightObservation,
   getBrowserPageState,
-  getBrowserSemanticTree,
-  getBrowserText,
   getCurrentBrowserUrl,
 } from './browserPageStateClient';
-import {
-  describeBrowserActionTarget,
-  formatBrowserPageStateForPrompt,
-  resolveBrowserActionTarget,
-} from './browserPageStateModel';
+import { formatBrowserPageStateForPrompt } from './browserPageStateModel';
 import { connectBrowserSession, navigateBrowserPage, resyncBrowserPage } from './browserSessionClient';
+import { executeBrowserActionEnvelope, renderActionFeedback } from './browserActionExecutor';
 import { browserSurfaceUrlsMatch } from '@/store/browser/browserAgentStartGate';
 import { isBrowserActionsV2Enabled, isBrowserPageStateV2Enabled, getBrowserMaxAgentSteps } from './browserFeatureFlags';
 import type { BrowserPageState } from '@/types/browserPageState';
 import type { ObservationLevel } from '@/types/browserEngine';
 import {
   parseBrowserActionEnvelopeWithRetry,
-  type ParsedActionEnvelope,
   type SupportedActionName,
 } from './browserAgentActionSchema';
 import {
@@ -53,6 +39,27 @@ import {
   type BrowserActionPolicyContext,
   type BrowserActionPolicyVerdict,
 } from './browserActionPolicy';
+import {
+  assertNotAborted,
+  buildPrompt,
+  cacheKeyEqual,
+  chooseObservationLevel,
+  computeCacheKey,
+  delay,
+  entriesEqual,
+  fetchLightObservation,
+  isPageReferenceError,
+  loadSemanticTree,
+  readString,
+  shouldPostWait,
+  signatureFor,
+} from './nativeBrowserAgentHelpers';
+import type {
+  AgentLogger,
+  CacheKey,
+  LoopSignature,
+  ObservationSnapshot,
+} from './nativeBrowserAgentHelpers';
 
 // ─── Agent scanning overlay ────────────────────────────────────────────────
 // Injected into the CDP-controlled Chrome page while the agent is running so
@@ -115,181 +122,6 @@ export async function removeBrowserAgentOverlay(): Promise<void> {
 
 // ─── Agent logging ─────────────────────────────────────────────────────────
 
-type AgentLogLevel = 'info' | 'success' | 'error' | 'warning';
-type AgentLogger = (level: AgentLogLevel, message: string) => void;
-
-const PAGE_REFERENCE_ERROR_MARKERS = ['receiver is gone', 'send failed', 'No page'];
-
-const delay = (ms: number, signal?: AbortSignal): Promise<void> => new Promise((resolve, reject) => {
-  if (signal?.aborted) {
-    reject(new DOMException('Native browser task aborted', 'AbortError'));
-    return;
-  }
-
-  const timer = setTimeout(() => {
-    signal?.removeEventListener('abort', onAbort);
-    resolve();
-  }, ms);
-
-  const onAbort = () => {
-    clearTimeout(timer);
-    reject(new DOMException('Native browser task aborted', 'AbortError'));
-  };
-
-  signal?.addEventListener('abort', onAbort, { once: true });
-});
-
-function assertNotAborted(signal?: AbortSignal): void {
-  if (signal?.aborted) {
-    throw new DOMException('Native browser task aborted', 'AbortError');
-  }
-}
-
-const isPageReferenceError = (error: unknown): boolean => {
-  const message = String(error);
-  return PAGE_REFERENCE_ERROR_MARKERS.some((marker) => message.includes(marker));
-};
-
-const readNumber = (value: unknown, fallback = 0): number => {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value;
-  }
-  if (typeof value === 'string') {
-    const parsed = Number(value);
-    if (Number.isFinite(parsed)) {
-      return parsed;
-    }
-  }
-  return fallback;
-};
-
-const readString = (value: unknown, fallback = ''): string => {
-  if (typeof value === 'string') {
-    return value;
-  }
-  return fallback;
-};
-
-// ─── Observation gathering ─────────────────────────────────────────────────
-
-interface ObservationSnapshot {
-  pageState: BrowserPageState | null;
-  /** Effective observation level that produced this snapshot. */
-  level: ObservationLevel;
-  /** Wall time spent in observation (ms). */
-  durationMs: number;
-  /** True when the snapshot reused a cached PageState. */
-  cached: boolean;
-}
-
-interface CacheKey {
-  url: string;
-  navigationId: string;
-  viewportBucket: string;
-  elementFingerprint: string;
-}
-
-const computeCacheKey = (pageState: BrowserPageState | null): CacheKey | null => {
-  if (!pageState) {
-    return null;
-  }
-  const viewport = pageState.viewport;
-  const viewportBucket = viewport
-    ? `${Math.round(viewport.width / 100)}x${Math.round(viewport.height / 100)}@${Math.round(viewport.page_x)},${Math.round(viewport.page_y)}`
-    : 'none';
-  const fingerprintSource = pageState.elements
-    .slice(0, 32)
-    .map((element) => `${element.backend_node_id}:${element.is_visible ? 1 : 0}:${element.is_clickable ? 1 : 0}:${element.is_editable ? 1 : 0}`)
-    .join('|');
-  return {
-    url: pageState.url,
-    navigationId: pageState.navigation_id,
-    viewportBucket,
-    elementFingerprint: fingerprintSource,
-  };
-};
-
-/**
- * Lightweight PageState used by ObservationLevel.light. Calls the dedicated
- * Rust `get_page_observation_light` command which runs a single JS expression
- * via CDP — dramatically cheaper than a full DOMSnapshot + AX tree capture.
- */
-async function fetchLightObservation(log: AgentLogger): Promise<{
-  url: string;
-  title: string;
-  readyState: string;
-  textExcerpt: string;
-  activeElement: string;
-  navigationId: string;
-}> {
-  try {
-    const obs = await getBrowserLightObservation();
-    return {
-      url: obs.url,
-      title: obs.title,
-      readyState: obs.ready_state,
-      textExcerpt: obs.text_excerpt,
-      activeElement: obs.active_element,
-      navigationId: obs.navigation_id,
-    };
-  } catch (error) {
-    log('warning', `[NativeAgent] Light observation failed: ${error}`);
-    return {
-      url: '',
-      title: '',
-      readyState: 'unknown',
-      textExcerpt: '',
-      activeElement: '',
-      navigationId: '',
-    };
-  }
-}
-
-/**
- * Decide the observation level for the upcoming step based on history.
- * The first step after navigation/click needs interactive or full; subsequent
- * steps with the same navigation_id and same target can reuse a cached
- * light observation.
- */
-function chooseObservationLevel(args: {
-  step: number;
-  isPostNavigation: boolean;
-  lastNavigationId: string;
-  nextNavigationId: string;
-  actionName?: SupportedActionName;
-  cacheHit: boolean;
-  pageState?: BrowserPageState | null;
-}): ObservationLevel {
-  const {
-    step,
-    isPostNavigation,
-    lastNavigationId,
-    nextNavigationId,
-    actionName,
-    cacheHit,
-    pageState,
-  } = args;
-  // Step 0 always starts with interactive so we can find things to click.
-  if (step === 0 || isPostNavigation || lastNavigationId !== nextNavigationId) {
-    return pageState && pageState.elements.length > 0 ? 'interactive' : 'full';
-  }
-  // After click/press we usually settle within ~500-800ms; light is enough.
-  if (actionName === 'click_element' || actionName === 'press_key' || actionName === 'navigate') {
-    return cacheHit ? 'light' : 'interactive';
-  }
-  // Scroll benefits from interactive so visible elements are still known.
-  if (actionName === 'scroll') {
-    return 'interactive';
-  }
-  // Type is small but can change the active element; interactive keeps the model grounded.
-  if (actionName === 'input_text') {
-    return 'interactive';
-  }
-  if (actionName === 'wait') {
-    return 'light';
-  }
-  return 'light';
-}
 
 // ─── Step timing model ─────────────────────────────────────────────────────
 
@@ -361,91 +193,6 @@ const emptySummary = (): Omit<
   cacheMisses: 0,
 });
 
-// ─── Loop detection ────────────────────────────────────────────────────────
-
-interface LoopSignature {
-  url: string;
-  navigationId: string;
-  actionName: SupportedActionName;
-  /** backend_node_id when applicable, else action target identifier. */
-  target: string;
-}
-
-const signatureFor = (
-  url: string,
-  navigationId: string,
-  envelope: ParsedActionEnvelope | null,
-): LoopSignature => {
-  if (!envelope) {
-    return { url, navigationId, actionName: 'wait', target: 'noop' };
-  }
-  const { actionName, payload } = envelope;
-  let target = 'none';
-  if (actionName === 'click_element' || actionName === 'input_text') {
-    const id = readNumber(payload.id ?? payload.element_id ?? payload.backend_node_id ?? payload.backendNodeId, 0);
-    target = id > 0 ? `bn:${id}` : readString(payload.selector, 'unknown');
-  } else if (actionName === 'navigate') {
-    target = readString(payload.url, '');
-  } else if (actionName === 'press_key') {
-    target = readString(payload.key, '');
-  } else if (actionName === 'scroll') {
-    target = `${readString(payload.direction, '')}:${readNumber(payload.pixels, 0)}`;
-  } else if (actionName === 'wait_for_selector') {
-    target = readString(payload.selector, '');
-  }
-  return { url, navigationId, actionName, target };
-};
-
-// ─── Action post-execution feedback ────────────────────────────────────────
-
-interface ActionFeedback {
-  success: boolean;
-  actionName: string;
-  targetLabel: string;
-  url: string;
-  navigationId: string;
-  elementCount: number;
-  errorCode?: string;
-  errorMessage?: string;
-}
-
-const buildActionFeedback = (input: {
-  actionName: string;
-  success: boolean;
-  targetLabel?: string;
-  url: string;
-  navigationId: string;
-  elementCount: number;
-  errorCode?: string;
-  errorMessage?: string;
-}): ActionFeedback => ({
-  success: input.success,
-  actionName: input.actionName,
-  targetLabel: input.targetLabel ?? '',
-  url: input.url,
-  navigationId: input.navigationId,
-  elementCount: input.elementCount,
-  errorCode: input.errorCode,
-  errorMessage: input.errorMessage,
-});
-
-const renderActionFeedback = (feedback: ActionFeedback): string => {
-  const lines = [
-    `Action result: ${feedback.success ? 'OK' : 'FAILED'}`,
-    `- action: ${feedback.actionName}`,
-    `- target: ${feedback.targetLabel || '(none)'}`,
-    `- url: ${feedback.url}`,
-    `- navigation_id: ${feedback.navigationId}`,
-    `- visible_element_count: ${feedback.elementCount}`,
-  ];
-  if (!feedback.success) {
-    lines.push(`- error_code: ${feedback.errorCode ?? 'unknown'}`);
-    if (feedback.errorMessage) {
-      lines.push(`- error_message: ${feedback.errorMessage}`);
-    }
-  }
-  return lines.join('\n');
-};
 
 // ─── Public entry point ────────────────────────────────────────────────────
 
@@ -872,7 +619,7 @@ KEY RULES:
 
       // ── 6. Execute ─────────────────────────────────────────────────────
       const execStartedAt = Date.now();
-      const feedback = await executeEnvelope({
+      const feedback = await executeBrowserActionEnvelope({
         envelope,
         pageState: observation?.pageState ?? null,
         log,
@@ -1006,358 +753,5 @@ KEY RULES:
   return finalResult;
   } finally {
     await removeOverlay();
-  }
-}
-
-// ─── Helpers ───────────────────────────────────────────────────────────────
-
-interface PromptArgs {
-  task: string;
-  currentUrl: string;
-  step: number;
-  maxSteps: number;
-  pageContextBody: string;
-  observationLevel: ObservationLevel;
-  elementsCount: number;
-}
-
-function buildPrompt(args: PromptArgs): string {
-  const { task, currentUrl, step, maxSteps, pageContextBody, observationLevel, elementsCount } = args;
-  return [
-    `TASK: ${task}`,
-    '',
-    `CURRENT URL: ${currentUrl || '(unknown)'}`,
-    `OBSERVATION LEVEL: ${observationLevel} (interactive_elements≈${elementsCount})`,
-    `STEP: ${step + 1}/${maxSteps}`,
-    '',
-    pageContextBody,
-    '',
-    'Decide your next action. Respond with JSON only (fenced ```json is OK).',
-  ].join('\n');
-}
-
-function shouldPostWait(actionName: SupportedActionName): number {
-  switch (actionName) {
-    case 'click_element':
-      return 600;
-    case 'press_key':
-      return 400;
-    case 'navigate':
-      return 800;
-    case 'scroll':
-      return 300;
-    case 'input_text':
-      return 250;
-    default:
-      return 0;
-  }
-}
-
-function entriesEqual(a: LoopSignature, b: LoopSignature): boolean {
-  return (
-    a.actionName === b.actionName &&
-    a.target === b.target &&
-    a.url === b.url &&
-    a.navigationId === b.navigationId
-  );
-}
-
-function cacheKeyEqual(a: CacheKey, b: CacheKey): boolean {
-  return (
-    a.url === b.url &&
-    a.navigationId === b.navigationId &&
-    a.viewportBucket === b.viewportBucket &&
-    a.elementFingerprint === b.elementFingerprint
-  );
-}
-
-async function loadSemanticTree(log: AgentLogger): Promise<string> {
-  try {
-    return await getBrowserSemanticTree();
-  } catch (error) {
-    log('warning', `[NativeAgent] Tree fetch failed: ${error}`);
-    if (!isPageReferenceError(error)) {
-      return '[]';
-    }
-    log('info', '[NativeAgent] Re-syncing page reference...');
-    try {
-      await resyncBrowserPage();
-      return await getBrowserSemanticTree();
-    } catch (resyncError) {
-      log('warning', `[NativeAgent] Re-sync failed: ${resyncError}`);
-      return '[]';
-    }
-  }
-}
-
-async function executeEnvelope(args: {
-  envelope: ParsedActionEnvelope;
-  pageState: BrowserPageState | null;
-  log: AgentLogger;
-}): Promise<ActionFeedback> {
-  const { envelope, pageState, log } = args;
-  const { actionName, payload } = envelope;
-  const base = {
-    url: pageState?.url ?? '',
-    navigationId: pageState?.navigation_id ?? '',
-    actionName,
-  };
-  try {
-    switch (actionName) {
-      case 'wait': {
-        const ms = readNumber(payload.milliseconds, 0) || Math.min(readNumber(payload.seconds, 3) * 1000, 10_000);
-        log('info', `[NativeAgent] Waiting ${ms}ms`);
-        await waitForBrowser({ seconds: ms / 1000 });
-        return { ...base, success: true, targetLabel: `${ms}ms`, elementCount: pageState?.elements.length ?? 0 };
-      }
-      case 'wait_for_selector': {
-        const selector = readString(payload.selector);
-        log('info', `[NativeAgent] Waiting for: ${selector}`);
-        try {
-          await waitForBrowser({ selector });
-          return { ...base, success: true, targetLabel: selector, elementCount: pageState?.elements.length ?? 0 };
-        } catch (error) {
-          return {
-            ...base,
-            success: false,
-            targetLabel: selector,
-            elementCount: pageState?.elements.length ?? 0,
-            errorCode: 'selector_timeout',
-            errorMessage: String(error),
-          };
-        }
-      }
-      case 'click_element': {
-        const target = resolveBrowserActionTarget(pageState, payload);
-        if (!target) {
-          return {
-            ...base,
-            success: false,
-            targetLabel: '',
-            elementCount: pageState?.elements.length ?? 0,
-            errorCode: 'invalid_input',
-            errorMessage: 'click payload missing id/backend_node_id/selector (or selector did not match page state)',
-          };
-        }
-        const targetLabel = describeBrowserActionTarget(target);
-        log('info', `[NativeAgent] Clicking ${targetLabel}`);
-        try {
-          const result = await clickBrowserElement(target);
-          return { ...base, success: true, targetLabel, elementCount: pageState?.elements.length ?? 0, errorMessage: result };
-        } catch (error) {
-          return {
-            ...base,
-            success: false,
-            targetLabel,
-            elementCount: pageState?.elements.length ?? 0,
-            errorCode: 'click_failed',
-            errorMessage: String(error),
-          };
-        }
-      }
-      case 'input_text': {
-        const target = resolveBrowserActionTarget(pageState, payload);
-        const text = readString(payload.text);
-        if (!target || !text) {
-          return {
-            ...base,
-            success: false,
-            targetLabel: '',
-            elementCount: pageState?.elements.length ?? 0,
-            errorCode: 'invalid_input',
-            errorMessage: 'input_text payload missing target (id/backend_node_id/selector) or text',
-          };
-        }
-        const targetLabel = describeBrowserActionTarget(target);
-        const shouldPressEnter = payload.press_enter === true;
-        log('info', `[NativeAgent] Typing: "${text.slice(0, 80)}" into ${targetLabel}`);
-        try {
-          const result = await typeIntoBrowserElement(target, text);
-          // R3-10: form submit — wire press_enter to native pressBrowserKey('Enter')
-          if (shouldPressEnter) {
-            log('info', `[NativeAgent] Pressing Enter after input into ${targetLabel}`);
-            try {
-              await pressBrowserKey('Enter');
-            } catch (enterError) {
-              return {
-                ...base,
-                success: false,
-                targetLabel,
-                elementCount: pageState?.elements.length ?? 0,
-                errorCode: 'press_enter_failed',
-                errorMessage: String(enterError),
-              };
-            }
-          }
-          return {
-            ...base,
-            success: true,
-            targetLabel,
-            elementCount: pageState?.elements.length ?? 0,
-            errorMessage: shouldPressEnter ? `${result}; pressed Enter` : result,
-          };
-        } catch (error) {
-          return {
-            ...base,
-            success: false,
-            targetLabel,
-            elementCount: pageState?.elements.length ?? 0,
-            errorCode: 'type_failed',
-            errorMessage: String(error),
-          };
-        }
-      }
-      case 'press_key': {
-        const key = readString(payload.key, 'Enter');
-        log('info', `[NativeAgent] Pressing key: ${key}`);
-        try {
-          await pressBrowserKey(key);
-          return { ...base, success: true, targetLabel: key, elementCount: pageState?.elements.length ?? 0 };
-        } catch (error) {
-          return {
-            ...base,
-            success: false,
-            targetLabel: key,
-            elementCount: pageState?.elements.length ?? 0,
-            errorCode: 'key_failed',
-            errorMessage: String(error),
-          };
-        }
-      }
-      case 'scroll': {
-        const direction = readString(payload.direction, 'down');
-        const pixels = readNumber(payload.pixels, 600);
-        log('info', `[NativeAgent] Scrolling ${direction} ${pixels}px`);
-        try {
-          await scrollBrowser(direction, pixels);
-          return { ...base, success: true, targetLabel: `${direction} ${pixels}px`, elementCount: pageState?.elements.length ?? 0 };
-        } catch (error) {
-          return {
-            ...base,
-            success: false,
-            targetLabel: `${direction} ${pixels}px`,
-            elementCount: pageState?.elements.length ?? 0,
-            errorCode: 'scroll_failed',
-            errorMessage: String(error),
-          };
-        }
-      }
-      case 'navigate': {
-        const url = readString(payload.url);
-        if (!url) {
-          return {
-            ...base,
-            success: false,
-            targetLabel: '',
-            elementCount: pageState?.elements.length ?? 0,
-            errorCode: 'invalid_input',
-            errorMessage: 'navigate payload missing url',
-          };
-        }
-        const waitSelector = readString(payload.wait_selector) || null;
-        log(
-          'info',
-          `[NativeAgent] Navigating to: ${url}${waitSelector ? ` (wait_selector=${waitSelector})` : ''}`,
-        );
-        try {
-          await navigateBrowserPage(url, waitSelector);
-          return {
-            ...base,
-            success: true,
-            targetLabel: waitSelector ? `${url} [wait:${waitSelector}]` : url,
-            elementCount: pageState?.elements.length ?? 0,
-            url,
-          };
-        } catch (error) {
-          return {
-            ...base,
-            success: false,
-            targetLabel: waitSelector ? `${url} [wait:${waitSelector}]` : url,
-            elementCount: pageState?.elements.length ?? 0,
-            errorCode: 'navigation_failed',
-            errorMessage: String(error),
-          };
-        }
-      }
-      case 'extract_text': {
-        const maxLength = readNumber(payload.max_length, 3000);
-        log('info', '[NativeAgent] Extracting page text');
-        try {
-          const pageText = await getBrowserText(maxLength);
-          return {
-            ...base,
-            success: true,
-            targetLabel: `${pageText.length} chars`,
-            elementCount: pageState?.elements.length ?? 0,
-            errorMessage: pageText,
-          };
-        } catch (error) {
-          return {
-            ...base,
-            success: false,
-            targetLabel: 'extract_text',
-            elementCount: pageState?.elements.length ?? 0,
-            errorCode: 'extract_failed',
-            errorMessage: String(error),
-          };
-        }
-      }
-      case 'refresh_page_state': {
-        log('info', '[NativeAgent] Refreshing page state');
-        try {
-          await getBrowserPageState();
-          return { ...base, success: true, targetLabel: 'refresh_page_state', elementCount: pageState?.elements.length ?? 0 };
-        } catch (error) {
-          return {
-            ...base,
-            success: false,
-            targetLabel: 'refresh_page_state',
-            elementCount: pageState?.elements.length ?? 0,
-            errorCode: 'refresh_failed',
-            errorMessage: String(error),
-          };
-        }
-      }
-      case 'screenshot_observe': {
-        log('info', '[NativeAgent] Capturing observation screenshot');
-        try {
-          await invoke<string>('browser_screenshot');
-          return { ...base, success: true, targetLabel: 'screenshot_observe', elementCount: pageState?.elements.length ?? 0 };
-        } catch (error) {
-          return {
-            ...base,
-            success: false,
-            targetLabel: 'screenshot_observe',
-            elementCount: pageState?.elements.length ?? 0,
-            errorCode: 'screenshot_failed',
-            errorMessage: String(error),
-          };
-        }
-      }
-      case 'done':
-      case 'ask_user': {
-        // Handled at the loop level.
-        return { ...base, success: true, targetLabel: actionName, elementCount: pageState?.elements.length ?? 0 };
-      }
-      default: {
-        return {
-          ...base,
-          success: false,
-          targetLabel: actionName,
-          elementCount: pageState?.elements.length ?? 0,
-          errorCode: 'unknown_action',
-          errorMessage: `Unknown action ${actionName}`,
-        };
-      }
-    }
-  } catch (error) {
-    return {
-      ...base,
-      success: false,
-      targetLabel: actionName,
-      elementCount: pageState?.elements.length ?? 0,
-      errorCode: 'exception',
-      errorMessage: String(error),
-    };
   }
 }

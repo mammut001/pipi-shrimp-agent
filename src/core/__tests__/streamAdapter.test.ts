@@ -134,4 +134,57 @@ describe('streamAdapter (invokeRustAPIStream)', () => {
     ]);
     expect(unlistenFn).toHaveBeenCalled();
   });
+  it('registers listeners, filters foreign sessions, streams events, and cleans up', async () => {
+    type CapturedEvent = { payload: Record<string, string> };
+    const handlers = new Map<string, (event: CapturedEvent) => void>();
+    const unlistenFns = [jest.fn(), jest.fn(), jest.fn()];
+    let listenerIndex = 0;
+
+    mockListen.mockImplementation((async (event: string, handler: unknown) => {
+      handlers.set(event, handler as (event: CapturedEvent) => void);
+      return unlistenFns[listenerIndex++]!;
+    }) as typeof listen);
+
+    const emit = (event: string, payload: Record<string, string>) => {
+      handlers.get(event)?.({ payload });
+    };
+    mockInvoke.mockImplementation((async () => {
+      emit('claude-token', { session_id: 'other-session', content: 'ignore me' });
+      emit('claude-token', { session_id: 'stream-session', content: 'answer' });
+      emit('claude-reasoning', { session_id: 'stream-session', content: 'thinking' });
+      emit('claude-tool-use', {
+        session_id: 'stream-session',
+        tool_call_id: 'call-1',
+        name: 'Bash',
+        arguments: '{"command":"pwd"}',
+      });
+      return { content: 'done' };
+    }) as unknown as typeof invoke);
+
+    const params = {
+      messages: [],
+      apiKey: 'test-key',
+      model: 'test-model',
+      baseUrl: 'https://api.example.com',
+      systemPrompt: 'test prompt',
+      sessionId: 'stream-session',
+    };
+    const chunks: unknown[] = [];
+    for await (const chunk of invokeRustAPIStream(params)) {
+      chunks.push(chunk);
+    }
+
+    expect(mockListen).toHaveBeenNthCalledWith(1, 'claude-token', expect.any(Function));
+    expect(mockListen).toHaveBeenNthCalledWith(2, 'claude-reasoning', expect.any(Function));
+    expect(mockListen).toHaveBeenNthCalledWith(3, 'claude-tool-use', expect.any(Function));
+    expect(mockInvoke).toHaveBeenCalledWith('send_claude_sdk_chat_streaming', params);
+    expect(chunks).toEqual([
+      { type: 'text_delta', content: 'answer' },
+      { type: 'reasoning_delta', content: 'thinking' },
+      { type: 'tool_call', tool: { id: 'call-1', name: 'Bash', arguments: '{"command":"pwd"}' } },
+      { type: 'api_response_complete', response: { content: 'done' } },
+    ]);
+    expect(unlistenFns.every((unlisten) => unlisten.mock.calls.length === 1)).toBe(true);
+  });
+
 });

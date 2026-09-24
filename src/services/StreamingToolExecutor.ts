@@ -259,6 +259,30 @@ export class StreamingToolExecutor {
         continue;
       }
 
+      if (
+        hookResult.requiresConfirmation
+        && !canAutoApproveTool(permissionMode, request.name, { browserIntent, source })
+      ) {
+        const approved = await requestPermission?.({
+          id: request.id,
+          name: request.name,
+          arguments: JSON.stringify(request.arguments),
+          reason: 'A frontend tool policy requires explicit approval.',
+          source,
+          workDir,
+        });
+
+        if (!approved) {
+          prevalidatedResults.push(buildPolicyErrorResult(
+            request,
+            'Tool execution was denied by the user.',
+            'permission_denied',
+          ));
+          reportProgress(request.name);
+          continue;
+        }
+      }
+
       executableRequests.push(request);
     }
 

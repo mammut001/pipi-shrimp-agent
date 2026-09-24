@@ -82,7 +82,7 @@ jest.mock('../preflight', () => ({
 import { createLocalSshConfig, initGitRepo, installLocalInvokeMock } from './helpers';
 import { getAutoResearchTestTmpDir } from './tmpRoot';
 import { createAutoResearchSendMessage } from '../chatAdapter';
-import { startExperimentLoop } from '../loopEngine';
+import { getActiveLoopAbortControllerForTest, startExperimentLoop, stopExperimentLoop } from '../loopEngine';
 import { getCurrentRunDir } from '../terminalRunner';
 import { getSessionRunPaths, listIterations, readTargetText, writeTargetText } from '../runDir';
 import { AutoResearchReflectionFailureError } from '../reflection';
@@ -115,7 +115,7 @@ const activeConfig: ResolvedAgentConfig = {
   apiKey: 'test-key',
 };
 
-function buildChatAdapterSendMessage(experimentDir: string) {
+function buildChatAdapterSendMessage(experimentDir: string, signal?: AbortSignal) {
   return createAutoResearchSendMessage(experimentDir, activeConfig, {
     environmentSummary: {
       experimentDir,
@@ -131,6 +131,7 @@ function buildChatAdapterSendMessage(experimentDir: string) {
     metricName: 'cv_accuracy',
     direction: 'higher',
     maxIterations: 1,
+    signal,
   });
 }
 
@@ -345,6 +346,73 @@ describe('loopEngine integration', () => {
       await fs.rm(PROJECT_TMP_DIR, { recursive: true, force: true });
     } catch {
       // Best-effort sweep; failures here are non-fatal.
+    }
+  });
+
+  it('stop aborts the active headless turn and clears the loop handle', async () => {
+    const cfg = createLocalSshConfig(workDir);
+    useAutoResearchStore.getState().initSession({
+      id: 'autoresearch-stop-active',
+      maxIterations: 3,
+      metricName: 'val_loss',
+      metricDirection: 'lower',
+      sshConfig: cfg,
+      sessionFilePath,
+    });
+
+    const abortController = new AbortController();
+    let signalReceivedByHeadlessTurn: AbortSignal | undefined;
+    let markHeadlessTurnStarted!: () => void;
+    const headlessTurnStarted = new Promise<void>((resolve) => {
+      markHeadlessTurnStarted = resolve;
+    });
+    mockRunHeadlessAgentTurn.mockImplementationOnce(async (input) => {
+      signalReceivedByHeadlessTurn = input.signal;
+      markHeadlessTurnStarted();
+      return new Promise<never>((_resolve, reject) => {
+        const rejectOnAbort = () => {
+          reject(Object.assign(new Error('headless turn aborted'), { name: 'AbortError' }));
+        };
+        if (abortController.signal.aborted) {
+          rejectOnAbort();
+          return;
+        }
+        abortController.signal.addEventListener('abort', rejectOnAbort, { once: true });
+      });
+    });
+
+    const runPromise = startExperimentLoop(
+      buildChatAdapterSendMessage(workDir, abortController.signal),
+      { abortController },
+    );
+    let startWatchdog: ReturnType<typeof setTimeout> | undefined;
+
+    try {
+      await Promise.race([
+        headlessTurnStarted,
+        new Promise<never>((_resolve, reject) => {
+          startWatchdog = setTimeout(
+            () => reject(new Error('AutoResearch headless turn did not start')),
+            5000,
+          );
+        }),
+      ]);
+      expect(signalReceivedByHeadlessTurn).toBe(abortController.signal);
+      expect(getActiveLoopAbortControllerForTest()).toBe(abortController);
+
+      stopExperimentLoop('autoresearch-stop-active');
+      await runPromise;
+
+      expect(abortController.signal.aborted).toBe(true);
+      expect(getActiveLoopAbortControllerForTest()).toBeNull();
+      expect(useAutoResearchStore.getState().loopState).toBe('stopped');
+      expect(mockRunHeadlessAgentTurn).toHaveBeenCalledTimes(1);
+    } finally {
+      if (startWatchdog !== undefined) clearTimeout(startWatchdog);
+      if (!abortController.signal.aborted) {
+        stopExperimentLoop('autoresearch-stop-active');
+      }
+      await runPromise;
     }
   });
 

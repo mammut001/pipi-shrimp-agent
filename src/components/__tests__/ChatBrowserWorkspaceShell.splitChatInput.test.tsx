@@ -8,7 +8,7 @@
 
 import React, { act } from 'react';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import { COMPOSER_SEND_CONTROL_TEST_ID } from '@/store/chat/chatSelectors';
 import { useChatStore } from '@/store';
@@ -133,6 +133,28 @@ jest.mock('@/store', () => {
   };
 });
 
+jest.mock('../PermissionModal', () => {
+  const ReactRuntime = require('react');
+  return {
+    __esModule: true,
+    default: ({ permission, onApprove }: { permission: { id: string }; onApprove: () => void }) =>
+      ReactRuntime.createElement(
+        'div',
+        { 'data-testid': 'permission-modal', 'data-permission-id': permission.id },
+        ReactRuntime.createElement('button', { 'data-testid': 'approve-permission', onClick: onApprove }, 'Approve'),
+      ),
+  };
+});
+
+jest.mock('../QuestionnaireCard', () => {
+  const ReactRuntime = require('react');
+  return {
+    __esModule: true,
+    default: ({ data }: { data: { toolCallId: string } }) =>
+      ReactRuntime.createElement('div', { 'data-testid': 'questionnaire-card' }, data.toolCallId),
+  };
+});
+
 import { ChatBrowserWorkspaceShell } from '../ChatBrowserWorkspaceShell';
 
 describe('ChatBrowserWorkspaceShell split ChatInput (TOP-15-02 / T-02 / R1-03)', () => {
@@ -189,6 +211,58 @@ describe('ChatBrowserWorkspaceShell split ChatInput (TOP-15-02 / T-02 / R1-03)',
 
     expect(mockSendMessage).toHaveBeenCalledTimes(1);
     expect(mockSendMessage).toHaveBeenCalledWith('hello from split', 'session-split-1');
+  });
+
+  it('shows current-session permissions in FIFO order and resolves the active request', async () => {
+    const firstResolve = jest.fn((_approved: boolean) => undefined);
+    const secondResolve = jest.fn((_approved: boolean) => undefined);
+    useUIStore.setState({
+      permissionQueue: [
+        { id: 'permission-1', sessionId: 'session-split-1', toolName: 'execute_command', toolInput: '{}', _resolve: firstResolve },
+        { id: 'permission-other', sessionId: 'session-other', toolName: 'execute_command', toolInput: '{}' },
+        { id: 'permission-2', sessionId: 'session-split-1', toolName: 'write_file', toolInput: '{}', _resolve: secondResolve },
+      ],
+    });
+
+    render(React.createElement(ChatBrowserWorkspaceShell));
+    expect(await screen.findByTestId('permission-modal')).toHaveAttribute('data-permission-id', 'permission-1');
+
+    fireEvent.click(screen.getByTestId('approve-permission'));
+    expect(firstResolve).toHaveBeenCalledWith(true);
+    await waitFor(() => {
+      expect(screen.getByTestId('permission-modal')).toHaveAttribute('data-permission-id', 'permission-2');
+    });
+    expect(useUIStore.getState().permissionQueue.map((permission) => permission.id)).toEqual([
+      'permission-other',
+      'permission-2',
+    ]);
+  });
+
+  it('shows a questionnaire only in its owning chat session', async () => {
+    const selectedSession = useChatStore.getState().sessions[0]!;
+    const otherSession = { ...createSession('Other session'), id: 'session-other' };
+    useChatStore.setState({
+      sessions: [selectedSession, otherSession],
+      currentSessionId: selectedSession.id,
+    });
+    useUIStore.setState({
+      activeQuestionnaire: {
+        toolCallId: 'questionnaire-other',
+        sessionId: otherSession.id,
+        title: 'Other session question',
+        description: '',
+        fields: [],
+      },
+      activeQuestionnaireSessionId: otherSession.id,
+    });
+
+    render(React.createElement(ChatBrowserWorkspaceShell));
+    expect(screen.queryByTestId('questionnaire-card')).toBeNull();
+
+    act(() => {
+      useChatStore.setState({ currentSessionId: otherSession.id });
+    });
+    expect(await screen.findByTestId('questionnaire-card')).toHaveTextContent('questionnaire-other');
   });
 
   it('keeps ChatInput when leaving split (hidden dock) — chat-only layout still composable', () => {

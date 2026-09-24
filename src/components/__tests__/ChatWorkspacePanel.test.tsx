@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 import { useChatStore } from '@/store';
-import { createSession } from '@/types/chat';
+import { createMessage, createSession } from '@/types/chat';
 import { ChatWorkspacePanel } from '../ChatWorkspacePanel';
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -24,11 +24,13 @@ jest.mock('@/layout/edgeToggleGutter', () => ({
   MAIN_LAYOUT_EDGE_TOGGLE_GUTTER_CLASS: '',
 }));
 
+let mockUserScrolledUp = false;
+
 jest.mock('@/hooks/useChatMessageScroll', () => ({
   useChatMessageScroll: () => ({
     scrollContainerRef: { current: null },
     messagesEndRef: { current: null },
-    userScrolledUp: false,
+    userScrolledUp: mockUserScrolledUp,
     handleScroll: jest.fn(),
     scrollToBottom: jest.fn(),
   }),
@@ -72,6 +74,7 @@ jest.mock('@/components', () => ({
 
 describe('ChatWorkspacePanel', () => {
   beforeEach(() => {
+    mockUserScrolledUp = false;
     const session = createSession('Test');
     act(() => {
       useChatStore.setState({
@@ -102,6 +105,32 @@ describe('ChatWorkspacePanel', () => {
     expect(screen.getByTestId('chat-input-mock')).toBeTruthy();
     expect(screen.getByTestId('terminal-dock-mock').getAttribute('data-cwd')).toBe('/tmp/work');
     expect(screen.queryByTestId('chat-page-workspace-mode-bar')).toBeNull();
+  });
+
+  it('shows the scroll-to-bottom control for a populated chat when the user has scrolled up', () => {
+    mockUserScrolledUp = true;
+    const session = createSession('Test');
+    session.messages = [createMessage('user', 'Earlier message')];
+    act(() => {
+      useChatStore.setState({
+        sessions: [session],
+        currentSessionId: session.id,
+        isStreaming: false,
+        error: null,
+      });
+    });
+
+    render(
+      React.createElement(ChatWorkspacePanel, {
+        showModeToggle: false,
+        workspaceMode: 'chat',
+        canPreviewWorkspace: false,
+        onWorkspaceModeChange: jest.fn(),
+      }),
+    );
+
+    const scrollButton = screen.getByRole('button', { name: 'chat.scrollToBottom' });
+    expect(scrollButton).toHaveTextContent('chat.scrollToBottom');
   });
 
   it('renders the page mode bar when showModeToggle is true', () => {
