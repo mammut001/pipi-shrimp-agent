@@ -32,7 +32,7 @@ Earlier post-audit fixes (still need regression tests): R1-01–03, R4-01–03, 
 | **High — security** | R7-04 artifact sandbox ✅, R7-06 outputDir, R7-12 Telegram Rust parity ✅ |
 | **High — AutoResearch** | R5-02 preflight abort controller leak ✅ |
 | **Test infra** | INFRA-01 `@testing-library/react`, TOP-15 regression suites |
-| **Architecture** | AG-01/02/03/04/06/08/09/12/13/14/15 **fixed** (all ≤800 LOC on main 2026-09-24; AG-14 `Settings.tsx` 729→459 via #191; AG-12 `chatAdapter.ts` 762→418 via #192). Still open (under 800 hard limit but split-soon 500–800 — no new features before split): AG-05 `browserAgentStore.ts` (606), AG-07 `nativeBrowserAgent.ts` (757), AG-10 `web.rs` (514), AG-11 `workflowStore.ts` (712) |
+| **Architecture** | AG-01/02/03/04/06/07/08/09/12/13/14/15 **fixed** (all ≤800 LOC on main 2026-09-24; AG-14 `Settings.tsx` 729→459 via #191; AG-12 `chatAdapter.ts` 762→418 via #192; AG-07 `nativeBrowserAgent.ts` 757→463 via #193). Still open (under 800 hard limit but split-soon 500–800 — no new features before split): AG-05 `browserAgentStore.ts` (606), AG-10 `web.rs` (514), AG-11 `workflowStore.ts` (712) |
 | **Rust High (round-02)** | R2-05 typst resolve_path ✅, R2-06 backup sibling-prefix ✅, R2-07 blocked exact roots ✅, R2-08 Autoresearch bypass network ✅, R2-09 SSHPASS env-not-cmdline ✅, R2-10 CDP navigate scheme allowlist ✅, R2-11 MCP stdio cwd sandbox ✅, R2-12 mcp_call_tool policy ✅ |
 
 **Open P0/Critical in backlog:** 0.
@@ -661,7 +661,7 @@ LOC column = live `wc -l` on `main` (`b6c811a`, 2026-09-24). Original audit base
 | AG-04 | `src/components/Sidebar.tsx` | **357** | **Fixed** — #174 extracted `sidebar/` lists, modals, bulk actions, controllers (1488→357; all extracted files <500) (2026-09-24) | No | Done — #174 |
 | AG-05 | `src/store/browserAgentStore.ts` | 606 | Extract CDP task runner (R3-05) — open; under 800, split-soon band (live 2026-09-24) | Yes — split-soon (500–800): no new features before split | Yes — aligns with browser lane |
 | AG-06 | `src/store/autoresearchStore.ts` | **304** | **Fixed** — #177 types/records/persistence (1389→799) + #188 `autoresearchStoreRunActions.ts` (246) / `autoresearchStoreIterationActions.ts` (305) (799→304) (2026-09-24) | No | Done — #177 + #188 |
-| AG-07 | `src/utils/nativeBrowserAgent.ts` | 757 | Extract action executor, observation — open; under 800, split-soon band (live 2026-09-24) | Yes — split-soon (500–800): no new features before split | Yes |
+| AG-07 | `src/utils/nativeBrowserAgent.ts` | **463** | **Fixed** — #193 extracted `nativeBrowserAgentObservation.ts` (97) + `nativeBrowserAgentPrompt.ts` (68) + pure `nativeBrowserAgentRunState.ts` (66) + `nativeBrowserAgentOverlay.ts` (60) + `nativeBrowserAgentTypes.ts` (86) (757→463; under 500; exported API unchanged) (2026-09-24) | No | Done — #193 |
 | AG-08 | `src/store/createChatStore.ts` | **497** | **Fixed** — #180 extracted `chatSessionActions` / `chatStreamActions` / `sessionLifecycle` (1258→497) (2026-09-24) | No | Done — #180 |
 | AG-09 | `src/store/chat/chatActions.ts` / `sendMessageAction.ts` | chatActions ~693; sendMessageAction **781** | **Fixed** — #180 session/stream extract; #186 `sendMessagePreparation.ts` (1013→781, 2026-09-24); under ~800 hard limit | No | Done — #180 + #186 |
 | AG-10 | `src-tauri/src/commands/web.rs` | 514 | Extract CDP + policy (R3-06) — open; under 800, split-soon band (live 2026-09-24) | Yes — split-soon (500–800): no new features before split | Yes |
@@ -689,19 +689,19 @@ LOC column = live `wc -l` on `main` (`b6c811a`, 2026-09-24). Original audit base
 
 ## Summary counts
 
-Recomputed from `docs/audit/remediation-backlog.json` by `status` / `severity` / `lane` — **as of 2026-09-24, main `b6c811a` + PR #189** (AG-01/03/04/06/08 open → fixed) **+ PR #191** (AG-14 open → fixed) **+ PR #192** (AG-12 open → fixed). Items tracked only in round docs are not counted here.
+Recomputed from `docs/audit/remediation-backlog.json` by `status` / `severity` / `lane` — **as of 2026-09-24, main `b6c811a` + PR #189** (AG-01/03/04/06/08 open → fixed) **+ PR #191** (AG-14 open → fixed) **+ PR #192** (AG-12 open → fixed) **+ PR #193** (AG-07 open → fixed). Items tracked only in round docs are not counted here.
 
 | Category | Count |
 | -------- | ----- |
 | **Total tracked in backlog JSON** | 100 |
-| **Fixed** (`status: fixed`; many still need regression tests) | 82 |
-| **Open** (`status: open`) | 4 — all Architecture Governance (AG-05/07/10/11) |
+| **Fixed** (`status: fixed`; many still need regression tests) | 83 |
+| **Open** (`status: open`) | 3 — all Architecture Governance (AG-05/10/11) |
 | **Partially fixed** (`status: partially fixed`) | 5 — R5-14, R5-15, R7-15, TOP-15-08, TOP-15-09 |
 | **Test gap only** (`status: test gap only`) | 9 — TOP-15-03/04/05/06/07/10/11/14/15 |
 | **Open P0 / Critical** (`status: open`) | 0 |
 | **Open High+** (`status: open`, severity P0/Critical/High) | 0 |
 | **Not fixed with P0/Critical/High severity** (partially fixed / test gap only) | 10 — all TOP-15 regression-suite items in lane H (TOP-15-04/05/06/07/08/09/10/11/14/15): P0 ×2, Critical ×5, High ×3 |
-| **Architecture governance lane (I)** | 20 — 16 fixed, 4 open |
+| **Architecture governance lane (I)** | 20 — 17 fixed, 3 open |
 | **Test infrastructure lane (H)** | 19 — 6 fixed, 4 partially fixed, 9 test gap only |
 
 Previous snapshot (before this refresh): Fixed 24, Total 95 — stale vs JSON (main `b6c811a` JSON had 100 items: 75 fixed / 11 open / 5 partially fixed / 9 test gap only).

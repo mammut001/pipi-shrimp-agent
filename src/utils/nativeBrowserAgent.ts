@@ -18,27 +18,15 @@
 
 import { invoke } from '@tauri-apps/api/core';
 
-import { executeBrowserScript } from './browserActionClient';
-import {
-  getBrowserPageState,
-  getCurrentBrowserUrl,
-} from './browserPageStateClient';
+import { getCurrentBrowserUrl } from './browserPageStateClient';
 import { formatBrowserPageStateForPrompt } from './browserPageStateModel';
 import { connectBrowserSession, navigateBrowserPage, resyncBrowserPage } from './browserSessionClient';
 import { executeBrowserActionEnvelope, renderActionFeedback } from './browserActionExecutor';
 import { browserSurfaceUrlsMatch } from '@/store/browser/browserAgentStartGate';
 import { isBrowserActionsV2Enabled, isBrowserPageStateV2Enabled, getBrowserMaxAgentSteps } from './browserFeatureFlags';
-import type { BrowserPageState } from '@/types/browserPageState';
 import type { ObservationLevel } from '@/types/browserEngine';
-import {
-  parseBrowserActionEnvelopeWithRetry,
-  type SupportedActionName,
-} from './browserAgentActionSchema';
-import {
-  evaluateBrowserAction,
-  type BrowserActionPolicyContext,
-  type BrowserActionPolicyVerdict,
-} from './browserActionPolicy';
+import { parseBrowserActionEnvelopeWithRetry } from './browserAgentActionSchema';
+import { evaluateBrowserAction, type BrowserActionPolicyContext } from './browserActionPolicy';
 import {
   assertNotAborted,
   buildPrompt,
@@ -46,178 +34,39 @@ import {
   chooseObservationLevel,
   computeCacheKey,
   delay,
-  entriesEqual,
-  fetchLightObservation,
-  isPageReferenceError,
   loadSemanticTree,
   readString,
   shouldPostWait,
   signatureFor,
 } from './nativeBrowserAgentHelpers';
+import type { CacheKey, LoopSignature, ObservationSnapshot } from './nativeBrowserAgentHelpers';
+import { injectOverlay, removeOverlay } from './nativeBrowserAgentOverlay';
+import { NATIVE_BROWSER_AGENT_SYSTEM_PROMPT, resolveNativeAgentStartUrl } from './nativeBrowserAgentPrompt';
+import {
+  countLoopRepeats,
+  emptySummary,
+  recordStepTiming,
+  resolveIncompleteRunOutcome,
+} from './nativeBrowserAgentRunState';
+import { captureStepObservation, type NativeObservationState } from './nativeBrowserAgentObservation';
 import type {
-  AgentLogger,
-  CacheKey,
-  LoopSignature,
-  ObservationSnapshot,
-} from './nativeBrowserAgentHelpers';
+  NativeAgentOptions,
+  NativeAgentRunSummary,
+  NativeAgentStepTiming,
+} from './nativeBrowserAgentTypes';
 
-// ─── Agent scanning overlay ────────────────────────────────────────────────
-// Injected into the CDP-controlled Chrome page while the agent is running so
-// the user has a visual indicator that automation is in progress.
-
-const OVERLAY_INJECT_SCRIPT = `(function(){
-  if(document.getElementById('__ppa_overlay__'))return;
-  var s=document.createElement('style');
-  s.id='__ppa_style__';
-  s.textContent=
-    '@property --ppa{syntax:"<angle>";initial-value:0deg;inherits:false}' +
-    '@keyframes ppa_sweep{to{--ppa:360deg}}' +
-    '#__ppa_overlay__{' +
-      'position:fixed;top:0;left:0;right:0;bottom:0;pointer-events:none;' +
-      'z-index:2147483647;--ppa:0deg;' +
-      'animation:ppa_sweep 1.8s linear infinite;' +
-      'background:conic-gradient(from var(--ppa),' +
-        'rgba(0,220,255,0) 0deg,' +
-        'rgba(0,200,255,1) 40deg,' +
-        'rgba(120,80,255,1) 70deg,' +
-        'rgba(255,60,220,1) 100deg,' +
-        'rgba(0,200,255,.3) 140deg,' +
-        'rgba(0,220,255,0) 180deg,' +
-        'rgba(0,220,255,0) 360deg);' +
-      '-webkit-mask:linear-gradient(#fff 0 0) content-box,linear-gradient(#fff 0 0);' +
-      '-webkit-mask-composite:xor;mask-composite:exclude;' +
-      'padding:10px;' +
-      'filter:drop-shadow(0 0 8px rgba(0,200,255,0.9)) drop-shadow(0 0 20px rgba(120,80,255,0.7))}';
-  document.head.appendChild(s);
-  var d=document.createElement('div');
-  d.id='__ppa_overlay__';
-  document.body.appendChild(d);
-})();`;
-
-const OVERLAY_REMOVE_SCRIPT = `(function(){
-  var el=document.getElementById('__ppa_overlay__');if(el)el.remove();
-  var s=document.getElementById('__ppa_style__');if(s)s.remove();
-})();`;
-
-async function injectOverlay(): Promise<void> {
-  try {
-    await executeBrowserScript(OVERLAY_INJECT_SCRIPT);
-  } catch {
-    /* best-effort */
-  }
-}
-
-async function removeOverlay(): Promise<void> {
-  try {
-    await executeBrowserScript(OVERLAY_REMOVE_SCRIPT);
-  } catch {
-    /* best-effort */
-  }
-}
+export type {
+  NativeAgentOptions,
+  NativeAgentRunSummary,
+  NativeAgentStepTiming,
+} from './nativeBrowserAgentTypes';
 
 /** Best-effort CDP page overlay teardown (R3-07). Safe to call from store error paths. */
 export async function removeBrowserAgentOverlay(): Promise<void> {
   await removeOverlay();
 }
 
-// ─── Agent logging ─────────────────────────────────────────────────────────
-
-
-// ─── Step timing model ─────────────────────────────────────────────────────
-
-export interface NativeAgentStepTiming {
-  step: number;
-  engine: 'cdp_native';
-  url: string;
-  navigationId: string;
-  observationLevel: ObservationLevel;
-  observationMs: number;
-  promptChars: number;
-  llmMs: number;
-  actionName: SupportedActionName | 'invalid';
-  actionMs: number;
-  postWaitMs: number;
-  screenshotMs: number;
-  totalStepMs: number;
-  success: boolean;
-  errorCode?: string;
-  reusedCache: boolean;
-}
-
-export interface NativeAgentRunSummary {
-  startedAt: number;
-  finishedAt: number;
-  totalMs: number;
-  steps: NativeAgentStepTiming[];
-  outcome: 'completed' | 'failed' | 'aborted' | 'loop_detected' | 'max_steps';
-  /** How many times the policy asked the user and was approved. */
-  policyApprovals: number;
-  /** How many times the policy denied an action. */
-  policyDenials: number;
-  /** Number of full PageState captures. */
-  fullSnapshots: number;
-  /** Number of light observations. */
-  lightObservations: number;
-  /** Number of interactive observations. */
-  interactiveObservations: number;
-  /** Number of screenshots taken. */
-  screenshots: number;
-  /** Number of repeated-action loops detected. */
-  loopDetections: number;
-  /** Number of times the model returned malformed JSON. */
-  malformedResponses: number;
-  /** Number of times the LLM call was retried due to error. */
-  llmRetries: number;
-  /** Cache hit / miss totals for PageState. */
-  cacheHits: number;
-  cacheMisses: number;
-  /** Final free-form text returned to the caller. */
-  finalText: string;
-}
-
-const emptySummary = (): Omit<
-  NativeAgentRunSummary,
-  'startedAt' | 'finishedAt' | 'totalMs' | 'outcome' | 'finalText'
-> => ({
-  steps: [],
-  policyApprovals: 0,
-  policyDenials: 0,
-  fullSnapshots: 0,
-  lightObservations: 0,
-  interactiveObservations: 0,
-  screenshots: 0,
-  loopDetections: 0,
-  malformedResponses: 0,
-  llmRetries: 0,
-  cacheHits: 0,
-  cacheMisses: 0,
-});
-
-
 // ─── Public entry point ────────────────────────────────────────────────────
-
-export interface NativeAgentOptions {
-  baseUrl?: string;
-  targetUrl?: string;
-  onLog?: AgentLogger;
-  /** Approve or deny a sensitive action. Returns true to allow, false to deny. */
-  approveAction?: (
-    verdict: BrowserActionPolicyVerdict,
-    context: BrowserActionPolicyContext,
-  ) => Promise<boolean> | boolean;
-  /** Hint to the policy layer. */
-  permissionMode?: 'observe_only' | 'ask_each_action' | 'auto_safe';
-  /** Force a screenshot per step regardless of flag. */
-  captureScreenshotEveryStep?: boolean;
-  /** Maximum number of steps (overrides flag). */
-  maxSteps?: number;
-  /** Stop early when a run summary callback fires. Used by debug panels. */
-  onStep?: (timing: NativeAgentStepTiming) => void;
-  /** Called once when the run finishes with the full summary. */
-  onRunSummary?: (summary: NativeAgentRunSummary) => void;
-  /** Cooperative cancellation for stopTask and diagnostics cancel hooks. */
-  signal?: AbortSignal;
-}
 
 export async function executeNativeBrowserTask(
   task: string,
@@ -255,60 +104,13 @@ export async function executeNativeBrowserTask(
     throw new Error(`Failed to connect to local Chrome (is remote debugging enabled?)\nDetails: ${e}`);
   }
 
-  const systemPrompt = `You are a powerful browser automation agent. You control a real Chrome browser to complete tasks for the user.
-
-OUTPUT FORMAT — Respond with valid JSON only. No conversational text outside JSON. The JSON may optionally be wrapped in a fenced \`\`\`json ... \`\`\` block. Anything before or after the JSON is ignored.
-{
-  "thought": "Brief explanation of what I see and what I'll do next",
-  "action": {
-    "<action_name>": { ...payload... }
-  }
-}
-
-VALID ACTIONS (only these — do NOT invent new ones):
-- wait: { "seconds"?: number <=15, "milliseconds"?: number <=15000 }
-- wait_for_selector: { "selector": string, "timeout_ms"?: number <=30000 }
-- click_element: { "id"?: number, "backend_node_id"?: number, "selector"?: string }
-- input_text: { "id"?: number, "backend_node_id"?: number, "text": string, "press_enter"?: boolean, "selector"?: string }
-- press_key: { "key": string, "modifiers"?: string[] }
-- scroll: { "direction": "up"|"down"|"left"|"right", "pixels"?: number <=10000 }
-- navigate: { "url": string, "wait_selector"?: string, "timeout_ms"?: number <=60000 }
-- extract_text: { "max_length"?: number <=20000, "selector"?: string }
-- done: { "text": string, "success": boolean }
-- ask_user: { "question": string, "options"?: string[] }
-- refresh_page_state: { "level"?: "light"|"interactive"|"full", "force"?: boolean }
-- screenshot_observe: { "max_width"?: number, "format"?: "jpeg"|"png" }
-
-TARGETING RULES:
-- For click_element and input_text, prefer backend_node_id when the page state exposes it (more stable on dynamic pages).
-- If both id and backend_node_id are listed, either works.
-- Selector-based targeting is allowed as a fallback when ids are missing.
-
-OBSERVATION:
-- After every action you will receive an "Action result" block summarising the previous tool call.
-- If the action failed, treat the error code as a hint to retry with a different target, escalate to refresh_page_state, or call ask_user.
-- If you find yourself repeating the same action three times with no progress, STOP and call done with success=false explaining why, OR call ask_user.
-
-TASK EXECUTION STRATEGY:
-1. Plan First: think in the "thought" field before emitting JSON.
-2. For generic queries, navigate to the best search engine or specialised site.
-3. Type in search boxes and press Enter to submit, then read results.
-4. Extract data with extract_text when you need raw text, or read the interactive elements directly.
-5. Report results in done.text.
-
-KEY RULES:
-- After typing in a search box, ALWAYS press_key Enter to submit.
-- If the page is loading, prefer wait or wait_for_selector over polling.
-- If no interactive elements are visible, call refresh_page_state with level="full".
-- If a target click/type fails with element_not_found, refresh the page state and pick a different id.
-- For login/auth/captcha pages, use ask_user instead of guessing credentials.`;
+  const systemPrompt = NATIVE_BROWSER_AGENT_SYSTEM_PROMPT;
 
   const messages: { role: 'user' | 'assistant'; content: string }[] = [];
   let isDone = false;
   let finalResult = '';
   let lastNavigationId = '';
-  let lastUrl = '';
-  let lastPageState: BrowserPageState | null = null;
+  const observationState: NativeObservationState = { lastUrl: '', lastPageState: null };
   let cachedObservationKey: CacheKey | null = null;
   let isPostNavigation = true;
   const loopHistory: LoopSignature[] = [];
@@ -318,19 +120,7 @@ KEY RULES:
   log('info', `[NativeAgent] Starting task: ${task}`);
   const currentBrowserUrl = await getCurrentBrowserUrl().catch(() => null);
 
-  const resolveStartUrl = (): string => {
-    if (options.targetUrl) return options.targetUrl;
-    const urlMatch = task.match(/https?:\/\/[^\s，。！？]+/);
-    if (urlMatch) return urlMatch[0];
-    const domainMatch = task.match(/(?:^|\s)([a-zA-Z0-9-]+\.[a-zA-Z]{2,}(?:\/[^\s，。！？]*)?)/);
-    if (domainMatch) return `https://${domainMatch[1]}`;
-    if (currentBrowserUrl && currentBrowserUrl !== 'about:blank') {
-      return currentBrowserUrl;
-    }
-    return 'https://www.google.com';
-  };
-
-  const startUrl = resolveStartUrl();
+  const startUrl = resolveNativeAgentStartUrl(task, options.targetUrl, currentBrowserUrl);
   if (currentBrowserUrl && browserSurfaceUrlsMatch(currentBrowserUrl, startUrl)) {
     log('info', `[NativeAgent] Already on target surface (${startUrl}), skipping redundant navigation.`);
   } else {
@@ -353,7 +143,7 @@ KEY RULES:
     const stepTiming: NativeAgentStepTiming = {
       step: step + 1,
       engine: 'cdp_native',
-      url: lastUrl,
+      url: observationState.lastUrl,
       navigationId: lastNavigationId,
       observationLevel: 'light',
       observationMs: 0,
@@ -371,84 +161,35 @@ KEY RULES:
     try {
       // ── 1. Observation ────────────────────────────────────────────────
       const obsStartedAt = Date.now();
-      let pageState: BrowserPageState | null = null;
-      let observation: ObservationSnapshot | null = null;
       const effectiveLevel = chooseObservationLevel({
         step,
         isPostNavigation,
         lastNavigationId,
         nextNavigationId: lastNavigationId,
         cacheHit: false,
-        pageState: lastPageState,
+        pageState: observationState.lastPageState,
       });
       // Pre-compute the cache key for the previous state if we have one.
       const previousCacheKey = cachedObservationKey;
       const desiredLevel: ObservationLevel = effectiveLevel;
 
-      if (desiredLevel === 'light') {
-        const light = await fetchLightObservation(log);
-        summary.lightObservations += 1;
-        lastUrl = light.url || lastUrl;
-        if (light.url) {
-          // url changed without us navigating? force an interactive refresh
-        }
-        observation = {
-          pageState: lastPageState,
-          level: 'light',
-          durationMs: Date.now() - obsStartedAt,
-          cached: false,
-        };
-      } else if (usePageStateFlow) {
-        try {
-          pageState = await getBrowserPageState();
-          observation = {
-            pageState,
-            level: desiredLevel,
-            durationMs: Date.now() - obsStartedAt,
-            cached: false,
-          };
-          lastPageState = pageState;
-          if (desiredLevel === 'full') summary.fullSnapshots += 1;
-          else summary.interactiveObservations += 1;
-        } catch (error) {
-          if (isPageReferenceError(error)) {
-            log('info', '[NativeAgent] Re-syncing page reference...');
-            try {
-              await resyncBrowserPage();
-              pageState = await getBrowserPageState();
-              observation = {
-                pageState,
-                level: desiredLevel,
-                durationMs: Date.now() - obsStartedAt,
-                cached: false,
-              };
-              lastPageState = pageState;
-              if (desiredLevel === 'full') summary.fullSnapshots += 1;
-              else summary.interactiveObservations += 1;
-            } catch (resyncError) {
-              log('warning', `[NativeAgent] PageState resync failed: ${resyncError}`);
-              observation = {
-                pageState: null,
-                level: desiredLevel,
-                durationMs: Date.now() - obsStartedAt,
-                cached: false,
-              };
-            }
-          } else {
-            log('warning', `[NativeAgent] PageState fetch failed: ${error}`);
-            observation = {
-              pageState: null,
-              level: desiredLevel,
-              durationMs: Date.now() - obsStartedAt,
-              cached: false,
-            };
-          }
-        }
+      // Same branch boundary as the original inline block: only the light and
+      // PageState paths await; otherwise continue synchronously (no microtask).
+      let observation: ObservationSnapshot | null = null;
+      if (desiredLevel === 'light' || usePageStateFlow) {
+        observation = await captureStepObservation({
+          desiredLevel,
+          usePageStateFlow,
+          obsStartedAt,
+          log,
+          summary,
+          state: observationState,
+        });
       }
 
       // Maintain the observation cache. We always recompute it because the
       // model needs the latest URL/title even on light observations.
-      const newKey = computeCacheKey(lastPageState);
+      const newKey = computeCacheKey(observationState.lastPageState);
       if (newKey && previousCacheKey && cacheKeyEqual(newKey, previousCacheKey)) {
         summary.cacheHits += 1;
         observation && (observation.cached = true);
@@ -460,10 +201,10 @@ KEY RULES:
 
       stepTiming.observationLevel = observation?.level ?? 'light';
       stepTiming.observationMs = Date.now() - obsStartedAt;
-      stepTiming.url = observation?.pageState?.url ?? lastUrl;
+      stepTiming.url = observation?.pageState?.url ?? observationState.lastUrl;
       stepTiming.navigationId = observation?.pageState?.navigation_id ?? lastNavigationId;
       lastNavigationId = stepTiming.navigationId;
-      lastUrl = stepTiming.url || lastUrl;
+      observationState.lastUrl = stepTiming.url || observationState.lastUrl;
 
       assertNotAborted(options.signal);
 
@@ -474,7 +215,7 @@ KEY RULES:
 
       const promptText = buildPrompt({
         task,
-        currentUrl: stepTiming.url || lastUrl,
+        currentUrl: stepTiming.url || observationState.lastUrl,
         step,
         maxSteps,
         pageContextBody,
@@ -518,19 +259,15 @@ KEY RULES:
         log('error', `[NativeAgent] JSON parse error: ${parsedResult.error}`);
         if (parsedResult.fatal) {
           log('error', '[NativeAgent] Repeated malformed response — stopping.');
-          stepTiming.totalStepMs = Date.now() - stepStartedAt;
           stepTiming.success = false;
-          summary.steps.push(stepTiming);
-          options.onStep?.(stepTiming);
+          recordStepTiming(stepTiming, stepStartedAt, summary, options.onStep);
           break;
         }
         messages.push({
           role: 'user',
           content: `Your previous response was not valid JSON. ${parsedResult.error ?? ''}\nRespond with a single JSON object that matches the schema.`,
         });
-        stepTiming.totalStepMs = Date.now() - stepStartedAt;
-        summary.steps.push(stepTiming);
-        options.onStep?.(stepTiming);
+        recordStepTiming(stepTiming, stepStartedAt, summary, options.onStep);
         continue;
       }
 
@@ -543,14 +280,7 @@ KEY RULES:
 
       // ── 4. Loop detection ──────────────────────────────────────────────
       const signature = signatureFor(stepTiming.url, stepTiming.navigationId, envelope);
-      loopHistory.push(signature);
-      if (loopHistory.length > LOOP_WINDOW) loopHistory.shift();
-      const sameLoop = loopHistory.filter((entry) =>
-        entriesEqual(entry, signature) &&
-        entry.actionName !== 'wait' &&
-        entry.actionName !== 'wait_for_selector' &&
-        entry.actionName !== 'refresh_page_state',
-      ).length;
+      const sameLoop = countLoopRepeats(loopHistory, signature, LOOP_WINDOW);
       if (sameLoop >= LOOP_TRIGGER) {
         summary.loopDetections += 1;
         log(
@@ -563,9 +293,7 @@ KEY RULES:
             'You appear to be repeating the same action without progress. Try a different target, refresh_page_state with level="full", or call ask_user to clarify the task.',
         });
         stepTiming.errorCode = 'loop_detected';
-        stepTiming.totalStepMs = Date.now() - stepStartedAt;
-        summary.steps.push(stepTiming);
-        options.onStep?.(stepTiming);
+        recordStepTiming(stepTiming, stepStartedAt, summary, options.onStep);
         continue;
       }
 
@@ -574,7 +302,7 @@ KEY RULES:
         actionName: envelope.actionName,
         payload: envelope.payload,
         pageState: observation?.pageState ?? null,
-        url: stepTiming.url || lastUrl,
+        url: stepTiming.url || observationState.lastUrl,
         permissionMode: options.permissionMode ?? 'auto_safe',
       };
       const verdict = evaluateBrowserAction(policyContext);
@@ -586,9 +314,7 @@ KEY RULES:
           content: `Action blocked by policy: ${verdict.reason}. Use a different approach or call ask_user.`,
         });
         stepTiming.errorCode = 'policy_blocked';
-        stepTiming.totalStepMs = Date.now() - stepStartedAt;
-        summary.steps.push(stepTiming);
-        options.onStep?.(stepTiming);
+        recordStepTiming(stepTiming, stepStartedAt, summary, options.onStep);
         continue;
       }
       if (verdict.decision === 'ask') {
@@ -608,9 +334,7 @@ KEY RULES:
             content: `User denied the action: ${verdict.reason}. Pick a different approach or call ask_user.`,
           });
           stepTiming.errorCode = 'policy_denied';
-          stepTiming.totalStepMs = Date.now() - stepStartedAt;
-          summary.steps.push(stepTiming);
-          options.onStep?.(stepTiming);
+          recordStepTiming(stepTiming, stepStartedAt, summary, options.onStep);
           continue;
         }
         summary.policyApprovals += 1;
@@ -630,7 +354,7 @@ KEY RULES:
       stepTiming.errorCode = feedback.errorCode;
       stepTiming.url = feedback.url || stepTiming.url;
       stepTiming.navigationId = feedback.navigationId || stepTiming.navigationId;
-      lastUrl = stepTiming.url;
+      observationState.lastUrl = stepTiming.url;
       lastNavigationId = stepTiming.navigationId;
 
       // Optional screenshot per step (off by default to keep memory low).
@@ -661,18 +385,14 @@ KEY RULES:
         finalResult = readString(envelope.payload.text, 'Task completed');
         await removeOverlay();
         log('success', `[NativeAgent] ✅ ${finalResult}`);
-        stepTiming.totalStepMs = Date.now() - stepStartedAt;
-        summary.steps.push(stepTiming);
-        options.onStep?.(stepTiming);
+        recordStepTiming(stepTiming, stepStartedAt, summary, options.onStep);
         break;
       }
       if (envelope.actionName === 'ask_user') {
         await removeOverlay();
         finalResult = `Agent needs your input: ${readString(envelope.payload.question, 'I need your help')}`;
         isDone = true;
-        stepTiming.totalStepMs = Date.now() - stepStartedAt;
-        summary.steps.push(stepTiming);
-        options.onStep?.(stepTiming);
+        recordStepTiming(stepTiming, stepStartedAt, summary, options.onStep);
         break;
       }
 
@@ -695,16 +415,12 @@ KEY RULES:
         }),
       });
 
-      stepTiming.totalStepMs = Date.now() - stepStartedAt;
-      summary.steps.push(stepTiming);
-      options.onStep?.(stepTiming);
+      recordStepTiming(stepTiming, stepStartedAt, summary, options.onStep);
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
         stepTiming.success = false;
         stepTiming.errorCode = 'aborted';
-        stepTiming.totalStepMs = Date.now() - stepStartedAt;
-        summary.steps.push(stepTiming);
-        options.onStep?.(stepTiming);
+        recordStepTiming(stepTiming, stepStartedAt, summary, options.onStep);
         await removeOverlay();
         summary.outcome = 'aborted';
         summary.finishedAt = Date.now();
@@ -714,24 +430,14 @@ KEY RULES:
       }
       stepTiming.success = false;
       stepTiming.errorCode = 'exception';
-      stepTiming.totalStepMs = Date.now() - stepStartedAt;
-      summary.steps.push(stepTiming);
-      options.onStep?.(stepTiming);
+      recordStepTiming(stepTiming, stepStartedAt, summary, options.onStep);
       throw error;
     }
   }
 
   if (!isDone) {
     await removeOverlay();
-    if (summary.steps.length >= maxSteps) {
-      summary.outcome = 'max_steps';
-    } else if (summary.loopDetections > 0) {
-      summary.outcome = 'loop_detected';
-    } else if (summary.policyDenials > 0) {
-      summary.outcome = 'aborted';
-    } else {
-      summary.outcome = 'aborted';
-    }
+    summary.outcome = resolveIncompleteRunOutcome(summary, maxSteps);
     if (!finalResult) {
       finalResult = 'NativeAgent stopped without producing a final answer.';
     }
