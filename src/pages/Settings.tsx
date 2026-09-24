@@ -644,6 +644,7 @@ export function Settings() {
             toggleShowApiKey={toggleShowApiKey}
             editingConfigId={editingConfigId}
             resolvedActiveConfigId={resolvedActiveConfigId}
+            activeConfigId={activeConfigId}
             formData={formData}
             errors={errors}
             isSaving={isSaving}

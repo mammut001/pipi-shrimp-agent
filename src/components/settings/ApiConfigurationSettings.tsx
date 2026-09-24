@@ -50,6 +50,7 @@ interface ApiConfigurationSettingsProps {
   toggleShowApiKey: () => void;
   editingConfigId: string | null;
   resolvedActiveConfigId: string | null;
+  activeConfigId: string | null;
   formData: SettingsFormData;
   errors: Record<string, string>;
   isSaving: boolean;
@@ -70,6 +71,7 @@ export function ApiConfigurationSettings({
   toggleShowApiKey,
   editingConfigId,
   resolvedActiveConfigId,
+  activeConfigId,
   formData,
   errors,
   isSaving,
