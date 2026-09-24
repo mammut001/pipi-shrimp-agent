@@ -251,6 +251,7 @@ export function createSendMessageActionMethod(
         assistantMessage = preparation.assistantMessage;
         sessionWorkDir = preparation.sessionWorkDir;
         const {
+          activeGoal,
           sessionPipiOutputDir,
           finalSystemPrompt,
           shouldAllowBrowserTools,
