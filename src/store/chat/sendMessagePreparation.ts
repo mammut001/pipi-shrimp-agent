@@ -47,11 +47,14 @@ type SendMessagePreparationInput = {
   ) => void;
 };
 
+type ActiveGoal = ReturnType<ReturnType<typeof useSessionGoalStore.getState>['getGoalForSession']>;
+
 type SendMessagePreparationResult =
   | { ready: false; assistantMessage: Message | null; sessionWorkDir?: string }
   | {
       ready: true;
       assistantMessage: Message;
+      activeGoal: ActiveGoal;
       sessionWorkDir?: string;
       sessionPipiOutputDir?: string;
       finalSystemPrompt: string;
@@ -323,6 +326,7 @@ export async function prepareSendMessageContext(
   return {
     ready: true,
     assistantMessage,
+    activeGoal,
     sessionWorkDir,
     sessionPipiOutputDir,
     finalSystemPrompt,
