@@ -3,9 +3,11 @@ import { validatePath } from '../pathValidation';
 
 describe('pathValidation', () => {
   it('rejects sibling-prefix paths outside workDir', () => {
-    const result = validatePath('/project2/secret.txt', '/project');
-    expect(result.isValid).toBe(false);
-    expect(result.error).toMatch(/outside working directory/i);
+    for (const siblingPath of ['/project2/secret.txt', '/project-evil/secret.txt']) {
+      const result = validatePath(siblingPath, '/project');
+      expect(result.isValid).toBe(false);
+      expect(result.error).toMatch(/outside working directory/i);
+    }
   });
 
   it('allows paths inside workDir', () => {

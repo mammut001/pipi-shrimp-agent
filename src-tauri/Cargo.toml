@@ -46,6 +46,7 @@ base64 = "0.22"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 portable-pty = "0.9"
 libc = "0.2"
+keyring = { version = "3.6.3", default-features = false, features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 
 [dev-dependencies]
 wiremock = "0.6"

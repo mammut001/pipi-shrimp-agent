@@ -940,6 +940,61 @@ describe('QueryEngine Ask-mode noTools contract', () => {
     );
   });
 
+  it('times out when the consumer never resolves a tool batch request', async () => {
+    const originalTimeout = process.env.PIPI_TOOL_BATCH_TIMEOUT_MS;
+    process.env.PIPI_TOOL_BATCH_TIMEOUT_MS = '25';
+
+    mockInvokeRustAPIStream.mockImplementationOnce(async function* toolTurn() {
+      yield {
+        type: 'tool_call',
+        tool: { id: 'tool-timeout-1', name: 'read_file', arguments: '{"path":"README.md"}' },
+      };
+      yield {
+        type: 'api_response_complete',
+        response: { usage: { input_tokens: 1, output_tokens: 1 }, model: 'MiniMax-M2.7' },
+      };
+    });
+
+    const iterator = runChatTurn(
+      'session-tool-batch-timeout',
+      [{ role: 'user', content: 'read README' }],
+      'system prompt',
+      undefined,
+      false,
+      resolvedConfig,
+    );
+    let watchdog: ReturnType<typeof setTimeout> | undefined;
+
+    try {
+      const statusEvent = await iterator.next();
+      expect(statusEvent.value?.type).toBe('status_update');
+      const batchEvent = await iterator.next();
+      expect(batchEvent.value?.type).toBe('tool_batch_request');
+
+      const nextEvent = await Promise.race([
+        iterator.next(),
+        new Promise<never>((_resolve, reject) => {
+          watchdog = setTimeout(
+            () => reject(new Error('Timed out waiting for tool batch timeout handling')),
+            1000,
+          );
+        }),
+      ]);
+      const event = nextEvent.value as { type?: string; error?: string };
+      expect(event).toMatchObject({ type: 'error' });
+      expect(event.error).toMatch(/tool batch timed out after 0\.025s/i);
+      expect(mockInvokeRustAPIStream).toHaveBeenCalledTimes(1);
+      await iterator.next();
+    } finally {
+      if (watchdog !== undefined) clearTimeout(watchdog);
+      if (originalTimeout === undefined) {
+        delete process.env.PIPI_TOOL_BATCH_TIMEOUT_MS;
+      } else {
+        process.env.PIPI_TOOL_BATCH_TIMEOUT_MS = originalTimeout;
+      }
+    }
+  });
+
   it('clears tool batch timeout handle after execution to prevent open handle hangs', async () => {
     const clearTimeoutSpy = jest.spyOn(global, 'clearTimeout');
     mockInvokeRustAPIStream

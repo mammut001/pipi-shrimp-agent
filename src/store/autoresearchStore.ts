@@ -6,15 +6,14 @@
  */
 
 import { create } from 'zustand';
+import { connectAutoResearchPersistence } from './autoresearchPersistence';
 import type { AutoResearchAgentConfigSnapshot } from '@/services/autoresearch/errors';
 import {
   clipLiveOutputBuffer,
   clipLiveOutputExcerpt,
   clipLiveOutputExcerptInMemory,
   loadPersistedAutoResearchHistory,
-  persistAutoResearchHistory,
   redactAutoResearchSensitiveText,
-  setHistoryPersistListener,
   toHistoryConfigSnapshot,
   type AutoResearchIterationRecord,
   type AutoResearchRecoveryAction,
@@ -37,6 +36,7 @@ import {
 } from '@/services/autoresearch/resumeToken';
 import { withSshConfigDefaults } from '@/types/ssh';
 import type { ExecMode, SshAuthMode, SshConfig } from '@/types/ssh';
+export { flushAutoResearchPersistOnClose } from './autoresearchPersistence';
 
 export type { AutoResearchIterationRecord, AutoResearchRunRecord, AutoResearchRunStatus } from '@/services/autoresearch/history';
 
@@ -1250,140 +1250,8 @@ export const useAutoResearchStore = create<AutoResearchStore>((set, get) => ({
   setShowSetupModal: (showSetupModal) => set({ showSetupModal }),
 }));
 
-/**
- * AUDIT-FIX [audit-1-ar#3]: Persist debounce.
- * A single AutoResearch iteration can trigger 5-20 `set()` calls
- * (addRunEvent, setStatusMessage, appendLiveOutput, etc.). Persisting on
- * every change was wasteful and could stall the UI thread when
- * `runHistory` is large — `JSON.stringify` over tens of MB is not free.
- * Coalesce writes within a 500ms window. The actual read of the latest
- * state happens inside the timer callback (see AUDIT-FIX [audit-3-ar#1]
- * in `schedulePersist` below) so we never persist a stale snapshot.
- *
- * `beforeunload` + Tauri's `onCloseRequested` (also added in audit-2)
- * are the synchronous flush paths that guarantee no writes are lost
- * when the user closes the window.
- */
-let persistTimer: ReturnType<typeof setTimeout> | null = null;
-const PERSIST_DEBOUNCE_MS = 500;
 
-// AUDIT-FIX [audit-3-ar#1]: Persist debounce closure bug.
-// `schedulePersist(state)` captured the state at subscribe-time into a
-// setTimeout closure. With multiple `set()` calls per iteration (addRunEvent,
-// setStatusMessage, appendLiveOutput, …) only the snapshot from the FIRST
-// set would be persisted; everything from the rest of the 500ms window was
-// dropped on reload. Fixed by re-reading state via `getState()` inside the
-// timer callback, so the latest authoritative state is what gets written.
-const schedulePersist = (_state: ExperimentSession): void => {
-  if (typeof window === 'undefined') return;
-  if (persistTimer) {
-    clearTimeout(persistTimer);
-  }
-  // Re-read state inside the timer callback. Subscribing captures the state
-  // at the moment the `set()` fires; between that fire and the 500ms timer
-  // expiring, additional `set()` calls (addRunEvent, setStatusMessage,
-  // appendLiveOutput, …) may have advanced runHistory/statusMessage/etc.
-  // Writing the snapshot from the first `set` would discard those updates
-  // on the next reload. Calling `getState()` at flush time captures the
-  // current authoritative state instead.
-  persistTimer = setTimeout(() => {
-    persistTimer = null;
-    const latest = useAutoResearchStore.getState();
-    persistAutoResearchHistory(latest.runHistory, latest.selectedRunId);
-    persistAutoResearchLastUsedConfig(latest.lastUsedConfig);
-  }, PERSIST_DEBOUNCE_MS);
-};
-
-useAutoResearchStore.subscribe((state) => {
-  schedulePersist(state);
+connectAutoResearchPersistence({
+  getState: () => useAutoResearchStore.getState(),
+  subscribe: (listener) => useAutoResearchStore.subscribe((state) => listener(state)),
 });
-
-/**
- * AUDIT-FIX [R5-13]: Flush current AutoResearch history/config on close
- * regardless of debounce timer state.
- *
- * Previously both `onCloseRequested` and `beforeunload` only flushed when
- * `persistTimer` was non-null. After a debounced persist attempt failed
- * (quota / storage-broken), the timer was already cleared to null, so
- * close skipped the retry and in-memory metrics were lost. Always clear
- * any pending timer, then write the latest `getState()` snapshot.
- */
-export function flushAutoResearchPersistOnClose(): void {
-  // No `window` guard: unit tests run in node with a localStorage mock, and
-  // persistAutoResearchHistory / persistAutoResearchLastUsedConfig already
-  // no-op when storage is unavailable (SSR / broken webview).
-  if (persistTimer) {
-    clearTimeout(persistTimer);
-    persistTimer = null;
-  }
-  try {
-    const state = useAutoResearchStore.getState();
-    persistAutoResearchHistory(state.runHistory, state.selectedRunId);
-    persistAutoResearchLastUsedConfig(state.lastUsedConfig);
-  } catch (flushError) {
-    console.error('Failed to flush AutoResearch history on close:', flushError);
-  }
-}
-
-/**
- * Flush any pending debounced AutoResearch writes BEFORE the window
- * actually closes.
- *
- * AUDIT-FIX [audit-2-ar#3]: Tauri onCloseRequested as a reliable flush
- * trigger. The browser's `beforeunload` is unreliable in Tauri webviews
- * (the WebView may be torn down before the JS handler finishes), so we
- * additionally listen to Tauri's native `onCloseRequested` event. The
- * handler performs a synchronous flush (localStorage.setItem) before
- * letting the close proceed.
- *
- * Lazy-imported and wrapped in try/catch so this module remains safe to
- * load in a non-Tauri (e.g. unit test) environment. Falls back to
- * `beforeunload` if the Tauri API isn't available.
- */
-if (typeof window !== 'undefined') {
-  void (async () => {
-    try {
-      const { getCurrentWindow } = await import('@tauri-apps/api/window');
-      await getCurrentWindow().onCloseRequested(async (event) => {
-        flushAutoResearchPersistOnClose();
-        // Do NOT preventDefault — let the close proceed. The flush above is
-        // synchronous (localStorage.setItem) so the webview can tear down
-        // safely immediately after. If we ever migrate to an async store
-        // (Tauri Store plugin / Rust command), re-evaluate: the flush
-        // would need to complete before destroy.
-        void event; // explicit no-op; included for future async flush.
-      });
-    } catch (error) {
-      // Non-Tauri environment (tests, SSR) — fall back to beforeunload below.
-      // Errors here are expected and not actionable.
-      if (process.env.NODE_ENV !== 'test') {
-        console.debug('Tauri onCloseRequested unavailable, using beforeunload fallback:', error);
-      }
-    }
-  })();
-}
-
-if (typeof window !== 'undefined') {
-  // Flush any pending write when the page is being unloaded so users don't
-  // lose the last few seconds of AutoResearch progress on tab close / reload.
-  // NOTE: `beforeunload` is not 100% reliable in Tauri webviews (the
-  // webview may be torn down before the JS handler finishes). The
-  // P1#3 fix adds a `tauri://close-requested` listener as a more
-  // reliable alternative.
-  // AUDIT-FIX [R5-13]: Always flush — see flushAutoResearchPersistOnClose.
-  window.addEventListener('beforeunload', () => {
-    flushAutoResearchPersistOnClose();
-  });
-
-  // Surface localStorage quota / persist failures as a visible run event so
-  // users aren't silently losing iteration data.
-  setHistoryPersistListener((message) => {
-    const state = useAutoResearchStore.getState();
-    state.addRunEvent({
-      level: 'error',
-      phase: 'system',
-      message,
-      summary: message,
-    });
-  });
-}

@@ -19,8 +19,10 @@ export class FileWriteTool extends BaseTool<FileWriteInput, FileWriteOutput> {
       // Check if file already exists
       let isUpdate = false;
       try {
-        await invoke<boolean>('path_exists', { path: input.file_path, workDir: context.cwd || undefined });
-        isUpdate = true;
+        isUpdate = await invoke<boolean>('path_exists', {
+          path: input.file_path,
+          workDir: context.cwd || undefined,
+        });
       } catch {
         isUpdate = false;
       }
