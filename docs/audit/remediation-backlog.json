@@ -1697,6 +1697,34 @@
     "recommendedPr": null
   },
   {
+    "id": "AG-21",
+    "title": "Split web/cdp.rs extract Chrome debug launch helpers",
+    "lane": "I. Architecture Governance",
+    "severity": "Governance",
+    "status": "fixed",
+    "fixNote": "2026-09-24: AG-21 closed by #197. Mechanical, behavior-preserving extract of src-tauri/src/commands/web/cdp.rs (526→361 LOC, live wc -l) into a child submodule src-tauri/src/commands/web/cdp/chrome_launch.rs (192; ChromeDebugLaunchOutcome, chrome_debug_port_ready, linux_chrome_debug_args, ensure_chrome_debug_process — the Chrome remote-debugging port probe / Linux launch args / platform spawn + readiness poll, moved verbatim, token-identical, script-verified; only visibility qualifiers added (pub(super) on the enum and ensure_chrome_debug_process, pub(super)→pub(in crate::commands::web) on linux_chrome_debug_args so it can be re-exported) plus one rustfmt signature wrap/trailing comma; new file passes rustfmt --check). cdp.rs declares mod chrome_launch; and re-imports the helpers with a private static use, plus a #[cfg(test)] pub(super) re-export so web/tests.rs keeps calling super::cdp::linux_chrome_debug_args unchanged. All 24 cdp::* command bodies web.rs delegates to stay in cdp.rs with the same names/signatures/paths; all 34 #[tauri::command] fns stay in web.rs; the R3-06 cdp_execute_script policy gate is untouched. Same await points (52 = 48 in cdp.rs + 4 in chrome_launch.rs; none added/removed; web.rs unchanged), same error strings and #[cfg] attributes; no serde attributes in the moved code; no new dependencies, no new cargo warnings. Validation: cargo check --locked --lib, cargo test --locked --lib (388 passed), commands::web live Chrome harness tests (--ignored, 3 passed). Source guards in src/__tests__/webCdpRustExtract.test.ts.",
+    "whyItMatters": "Was over the 500 LOC watch line (526 on main e504d6b, 2026-09-24, after AG-10 #196); now 361 LOC after #197, under 500; launch helpers isolated from the CDP command bodies and R3-06 policy gate",
+    "files": [
+      "src-tauri/src/commands/web/cdp.rs",
+      "src-tauri/src/commands/web/cdp/chrome_launch.rs",
+      "src-tauri/src/commands/web/tests.rs"
+    ],
+    "smallestPrScope": "Done — #197 Chrome debug launch helpers extract (526→361)",
+    "tests": [
+      "cargo test --lib commands::web",
+      "cargo test --lib commands::web -- --ignored",
+      "src/__tests__/webCdpRustExtract.test.ts"
+    ],
+    "dependencies": [
+      "AG-10",
+      "R3-06"
+    ],
+    "runtimeBehavior": false,
+    "uiBehavior": false,
+    "splitPrs": false,
+    "recommendedPr": null
+  },
+  {
     "id": "INFRA-01",
     "title": "Add @testing-library/react devDependency",
     "lane": "H. Test Infrastructure",

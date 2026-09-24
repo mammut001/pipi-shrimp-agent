@@ -32,7 +32,7 @@ Earlier post-audit fixes (still need regression tests): R1-01–03, R4-01–03, 
 | **High — security** | R7-04 artifact sandbox ✅, R7-06 outputDir, R7-12 Telegram Rust parity ✅ |
 | **High — AutoResearch** | R5-02 preflight abort controller leak ✅ |
 | **Test infra** | INFRA-01 `@testing-library/react`, TOP-15 regression suites |
-| **Architecture** | AG-01–AG-15 **all fixed** (all ≤800 LOC on main 2026-09-24; AG-14 `Settings.tsx` 729→459 via #191; AG-12 `chatAdapter.ts` 762→418 via #192; AG-07 `nativeBrowserAgent.ts` 757→463 via #193; AG-11 `workflowStore.ts` 712→362 via #194; AG-05 `browserAgentStore.ts` 606→373 via #195; AG-10 `web.rs` 514→397 via #196). No open architecture items |
+| **Architecture** | AG-01–AG-15 **all fixed** (all ≤800 LOC on main 2026-09-24; AG-14 `Settings.tsx` 729→459 via #191; AG-12 `chatAdapter.ts` 762→418 via #192; AG-07 `nativeBrowserAgent.ts` 757→463 via #193; AG-11 `workflowStore.ts` 712→362 via #194; AG-05 `browserAgentStore.ts` 606→373 via #195; AG-10 `web.rs` 514→397 via #196); AG-21 `web/cdp.rs` 526→361 via #197. No open architecture items |
 | **Rust High (round-02)** | R2-05 typst resolve_path ✅, R2-06 backup sibling-prefix ✅, R2-07 blocked exact roots ✅, R2-08 Autoresearch bypass network ✅, R2-09 SSHPASS env-not-cmdline ✅, R2-10 CDP navigate scheme allowlist ✅, R2-11 MCP stdio cwd sandbox ✅, R2-12 mcp_call_tool policy ✅ |
 
 **Open P0/Critical in backlog:** 0.
@@ -670,6 +670,7 @@ LOC column = live `wc -l` on `main` (`b6c811a`, 2026-09-24). Original audit base
 | AG-13 | `src/components/ChatInput.tsx` | ~406 | **Fixed** — PR1 draft/goal chips; PR2 folder bar + action toolbar; PR3 `blockComposerWiring` + density + image/goal hooks; PR4 `useChatInputSubmission` + `useSessionFolderBindings` (2026-09-22); under `<500` safe | No | Done — PR1-PR4 landed |
 | AG-14 | `src/pages/Settings.tsx` | **459** | **Fixed** — #191 extracted display-only `settings/settingsSections.tsx` (141) + pure `settings/settingsFormHelpers.ts` (210) (729→459; under 500 component threshold) (2026-09-24) | No | Done — #191 |
 | AG-15 | `src/components/ChatBrowserWorkspaceShell.tsx` | ~244 | **Fixed** — PR1 dock/split/swarm (#147) + PR2 `ChatWorkspacePanel`/`PreviewWorkspaceShell` (#148); shell layout/orchestration only; under `<300` safe | No | Done |
+| AG-21 | `src-tauri/src/commands/web/cdp.rs` | **361** | **Fixed** — #197 extracted Chrome remote-debugging launch helpers into child module `web/cdp/chrome_launch.rs` (192; `ChromeDebugLaunchOutcome`/`chrome_debug_port_ready`/`linux_chrome_debug_args`/`ensure_chrome_debug_process`, verbatim, token-identical) (526→361; under 500; all 24 `cdp::*` command bodies + R3-06 `cdp_execute_script` policy gate stay in `cdp.rs`; `super::cdp::linux_chrome_debug_args` test path, await points (52) + error strings unchanged) (2026-09-24) | No | Done — #197 |
 
 ### Concept doc alignment (governance)
 
@@ -689,19 +690,19 @@ LOC column = live `wc -l` on `main` (`b6c811a`, 2026-09-24). Original audit base
 
 ## Summary counts
 
-Recomputed from `docs/audit/remediation-backlog.json` by `status` / `severity` / `lane` — **as of 2026-09-24, main `b6c811a` + PR #189** (AG-01/03/04/06/08 open → fixed) **+ PR #191** (AG-14 open → fixed) **+ PR #192** (AG-12 open → fixed) **+ PR #193** (AG-07 open → fixed) **+ PR #194** (AG-11 open → fixed) **+ PR #195** (AG-05 open → fixed) **+ PR #196** (AG-10 open → fixed). Items tracked only in round docs are not counted here.
+Recomputed from `docs/audit/remediation-backlog.json` by `status` / `severity` / `lane` — **as of 2026-09-24, main `b6c811a` + PR #189** (AG-01/03/04/06/08 open → fixed) **+ PR #191** (AG-14 open → fixed) **+ PR #192** (AG-12 open → fixed) **+ PR #193** (AG-07 open → fixed) **+ PR #194** (AG-11 open → fixed) **+ PR #195** (AG-05 open → fixed) **+ PR #196** (AG-10 open → fixed) **+ PR #197** (AG-21 added as fixed: `web/cdp.rs` 526→361). Items tracked only in round docs are not counted here.
 
 | Category | Count |
 | -------- | ----- |
-| **Total tracked in backlog JSON** | 100 |
-| **Fixed** (`status: fixed`; many still need regression tests) | 86 |
+| **Total tracked in backlog JSON** | 101 |
+| **Fixed** (`status: fixed`; many still need regression tests) | 87 |
 | **Open** (`status: open`) | 0 |
 | **Partially fixed** (`status: partially fixed`) | 5 — R5-14, R5-15, R7-15, TOP-15-08, TOP-15-09 |
 | **Test gap only** (`status: test gap only`) | 9 — TOP-15-03/04/05/06/07/10/11/14/15 |
 | **Open P0 / Critical** (`status: open`) | 0 |
 | **Open High+** (`status: open`, severity P0/Critical/High) | 0 |
 | **Not fixed with P0/Critical/High severity** (partially fixed / test gap only) | 10 — all TOP-15 regression-suite items in lane H (TOP-15-04/05/06/07/08/09/10/11/14/15): P0 ×2, Critical ×5, High ×3 |
-| **Architecture governance lane (I)** | 20 — 20 fixed, 0 open |
+| **Architecture governance lane (I)** | 21 — 21 fixed, 0 open |
 | **Test infrastructure lane (H)** | 19 — 6 fixed, 4 partially fixed, 9 test gap only |
 
 Previous snapshot (before this refresh): Fixed 24, Total 95 — stale vs JSON (main `b6c811a` JSON had 100 items: 75 fixed / 11 open / 5 partially fixed / 9 test gap only).
