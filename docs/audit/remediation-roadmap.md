@@ -32,7 +32,7 @@ Earlier post-audit fixes (still need regression tests): R1-01–03, R4-01–03, 
 | **High — security** | R7-04 artifact sandbox ✅, R7-06 outputDir, R7-12 Telegram Rust parity ✅ |
 | **High — AutoResearch** | R5-02 preflight abort controller leak ✅ |
 | **Test infra** | INFRA-01 `@testing-library/react`, TOP-15 regression suites |
-| **Architecture** | AG-02 `loopEngine.ts` (**PR2a+PR2b** shipped 2026-09-17 — loopEngine.ts & iterationPhase split modules all ≤800 LOC), AG-05 `browserAgentStore.ts`, AG-10 `web.rs` splits |
+| **Architecture** | AG-01/02/03/04/06/08/09/13/15 **fixed** (all ≤800 LOC on main 2026-09-24). Still open (under 800 hard limit, split-soon / component watch): AG-05 `browserAgentStore.ts` (606), AG-07 `nativeBrowserAgent.ts` (757), AG-10 `web.rs` (514), AG-11 `workflowStore.ts` (712), AG-12 `chatAdapter.ts` (762), AG-14 `Settings.tsx` (729, >500 component) |
 | **Rust High (round-02)** | R2-05 typst resolve_path ✅, R2-06 backup sibling-prefix ✅, R2-07 blocked exact roots ✅, R2-08 Autoresearch bypass network ✅, R2-09 SSHPASS env-not-cmdline ✅, R2-10 CDP navigate scheme allowlist ✅, R2-11 MCP stdio cwd sandbox ✅, R2-12 mcp_call_tool policy ✅ |
 
 **Open P0/Critical in backlog:** 0.
@@ -651,22 +651,24 @@ Per [complexity-governance.md](../architecture/complexity-governance.md) and `np
 
 ### Requires refactor plan (>800 LOC) — priority source files
 
+LOC column = live `wc -l` on `main` (`b6c811a`, 2026-09-24). Original audit baselines were all >800; open rows are now under the 800 hard limit but remain split-soon (500–800) or >500 component.
+
 | ID | File | LOC | Suggested action | Block feature work? | Split PRs? |
 | --- | ---- | --- | ---------------- | ------------------- | ---------- |
-| AG-01 | `src-tauri/src/database.rs` | 2473 | Extract backup/restore/migration modules | Yes | Yes — 3+ PRs |
+| AG-01 | `src-tauri/src/database.rs` | **388** | **Fixed** — #172 split into `database/` modules (2811→388; largest `schema.rs` 735, `sessions.rs` 523; all ≤800) (2026-09-24) | No | Done — #172 |
 | AG-02 | `src/services/autoresearch/loopEngine.ts` | ~370 | Extract preflight, iteration, metrics phases — **PR2a+PR2b** shipped 2026-09-17; follow-up split iterationPhase under 800 LOC (every extracted .ts ≤800) | No | Done — PR2a/PR2b; aligns with R5-02 |
-| AG-03 | `src-tauri/src/commands/chat.rs` | 1514 | Remove legacy path (R2-01) then split handlers | Yes | Yes — fix before split |
-| AG-04 | `src/components/Sidebar.tsx` | 1499 | Extract session list, bulk actions, settings link | Yes | Yes |
-| AG-05 | `src/store/browserAgentStore.ts` | 1413 | Extract CDP task runner (R3-05) | Yes | Yes — aligns with browser lane |
-| AG-06 | `src/store/autoresearchStore.ts` | 1340 | Extract persistence, loop wiring | Yes | Yes |
-| AG-07 | `src/utils/nativeBrowserAgent.ts` | 1267 | Extract action executor, observation | Yes | Yes |
-| AG-08 | `src/store/createChatStore.ts` | 1261 | Extract session lifecycle | Yes | Yes |
+| AG-03 | `src-tauri/src/commands/chat.rs` | **214** | **Fixed** — R2-01 fixed, then #173 extracted `chat/legacy_tool_dispatch.rs` (309) + test modules (1408→214) (2026-09-24) | No | Done — #173 |
+| AG-04 | `src/components/Sidebar.tsx` | **357** | **Fixed** — #174 extracted `sidebar/` lists, modals, bulk actions, controllers (1488→357; all extracted files <500) (2026-09-24) | No | Done — #174 |
+| AG-05 | `src/store/browserAgentStore.ts` | 606 | Extract CDP task runner (R3-05) — open; under 800, split-soon band (live 2026-09-24) | No (<800) | Yes — aligns with browser lane |
+| AG-06 | `src/store/autoresearchStore.ts` | **304** | **Fixed** — #177 types/records/persistence (1389→799) + #188 `autoresearchStoreRunActions.ts` (246) / `autoresearchStoreIterationActions.ts` (305) (799→304) (2026-09-24) | No | Done — #177 + #188 |
+| AG-07 | `src/utils/nativeBrowserAgent.ts` | 757 | Extract action executor, observation — open; under 800, split-soon band (live 2026-09-24) | No (<800) | Yes |
+| AG-08 | `src/store/createChatStore.ts` | **497** | **Fixed** — #180 extracted `chatSessionActions` / `chatStreamActions` / `sessionLifecycle` (1258→497) (2026-09-24) | No | Done — #180 |
 | AG-09 | `src/store/chat/chatActions.ts` / `sendMessageAction.ts` | chatActions ~693; sendMessageAction **781** | **Fixed** — #180 session/stream extract; #186 `sendMessagePreparation.ts` (1013→781, 2026-09-24); under ~800 hard limit | No | Done — #180 + #186 |
-| AG-10 | `src-tauri/src/commands/web.rs` | 1219 | Extract CDP + policy (R3-06) | Yes | Yes |
-| AG-11 | `src/store/workflowStore.ts` | 1211 | Extract run history, engine bridge | Yes | Yes |
-| AG-12 | `src/services/autoresearch/chatAdapter.ts` | 1117 | Extract headless bridge | Yes | Yes |
+| AG-10 | `src-tauri/src/commands/web.rs` | 514 | Extract CDP + policy (R3-06) — open; under 800, split-soon band (live 2026-09-24) | No (<800) | Yes |
+| AG-11 | `src/store/workflowStore.ts` | 712 | Extract run history, engine bridge — open; under 800, split-soon band (live 2026-09-24) | No (<800) | Yes |
+| AG-12 | `src/services/autoresearch/chatAdapter.ts` | 762 | Extract headless bridge — open; under 800, split-soon band (live 2026-09-24) | No (<800) | Yes |
 | AG-13 | `src/components/ChatInput.tsx` | ~406 | **Fixed** — PR1 draft/goal chips; PR2 folder bar + action toolbar; PR3 `blockComposerWiring` + density + image/goal hooks; PR4 `useChatInputSubmission` + `useSessionFolderBindings` (2026-09-22); under `<500` safe | No | Done — PR1-PR4 landed |
-| AG-14 | `src/pages/Settings.tsx` | 1131 | Extract provider panels | Yes | Yes |
+| AG-14 | `src/pages/Settings.tsx` | 729 | Extract provider panels — open; under 800 but >500 component threshold (live 2026-09-24) | No (<800) | Yes |
 | AG-15 | `src/components/ChatBrowserWorkspaceShell.tsx` | ~244 | **Fixed** — PR1 dock/split/swarm (#147) + PR2 `ChatWorkspacePanel`/`PreviewWorkspaceShell` (#148); shell layout/orchestration only; under `<300` safe | No | Done |
 
 ### Concept doc alignment (governance)
@@ -681,7 +683,7 @@ Per [complexity-governance.md](../architecture/complexity-governance.md) and `np
 
 ### Split soon (500–800 LOC) — sample
 
-`engine.ts` (~450 after split-soon **PR2** #154 merge `b47bf66`; under `<500` watch), `BootstrapChatView.tsx` (**Fixed** — split-soon PR1 helpers #155 + PR2 handoff/start/panels #156 merge `c900329`; ~367 LOC, cleared below `<500` watch; was ~871), `QueryEngine.ts` (~50 after prior runtime extract; cleared), `AutoResearchSetupModal.tsx` (**Fixed** — split-soon PR1 Ui helpers #157 + PR2 section panels #158 merge `d389f5e`; ~801 → ~417 LOC, cleared below `<500` watch), `StreamingToolExecutor.ts` (**Fixed** — split-soon PR1 helpers #159 + PR2 frontend/native batches toward `<500`; ~800 → ~325 LOC, cleared below `<500` watch), `BrowserDebugPanel.tsx` (**Fixed** — split-soon PR1 Ui helpers #161 + PR2 section panels toward `<500`; ~799 → ~163 LOC, cleared below `<500` watch; was ~800), `AgentPanel.tsx` (**Fixed** — split-soon PR1 Ui helpers #163 + PR2 section panels toward `<500`; ~759 → ~320 LOC, cleared below `<500` watch), `AgentConfigPanel.tsx` (**Fixed** — split-soon PR1 Ui helpers #165 + PR2 section panels toward `<500`; ~755 → ~261 LOC, cleared below `<500` watch), `AutoResearchPanel.tsx` (**In progress** — split-soon PR1 Ui helpers on this branch: 741 → 582 LOC toward <500; section extract deferred to PR2) — full list in complexity report output. AG-13 ChatInput (~406) and AG-15 shell (~244) cleared below watch. No dedicated AG id for workflowEngine / BootstrapChatView / SetupModal / StreamingToolExecutor / BrowserDebugPanel / AgentPanel / AgentConfigPanel / AutoResearchPanel — tracked as split-soon / >800 sample only.
+`engine.ts` (~450 after split-soon **PR2** #154 merge `b47bf66`; under `<500` watch), `BootstrapChatView.tsx` (**Fixed** — split-soon PR1 helpers #155 + PR2 handoff/start/panels #156 merge `c900329`; ~367 LOC, cleared below `<500` watch; was ~871), `QueryEngine.ts` (~50 after prior runtime extract; cleared), `AutoResearchSetupModal.tsx` (**Fixed** — split-soon PR1 Ui helpers #157 + PR2 section panels #158 merge `d389f5e`; ~801 → ~417 LOC, cleared below `<500` watch), `StreamingToolExecutor.ts` (**Fixed** — split-soon PR1 helpers #159 + PR2 frontend/native batches toward `<500`; ~800 → ~325 LOC, cleared below `<500` watch), `BrowserDebugPanel.tsx` (**Fixed** — split-soon PR1 Ui helpers #161 + PR2 section panels toward `<500`; ~799 → ~163 LOC, cleared below `<500` watch; was ~800), `AgentPanel.tsx` (**Fixed** — split-soon PR1 Ui helpers #163 + PR2 section panels toward `<500`; ~759 → ~320 LOC, cleared below `<500` watch), `AgentConfigPanel.tsx` (**Fixed** — split-soon PR1 Ui helpers #165 + PR2 section panels toward `<500`; ~755 → ~261 LOC, cleared below `<500` watch), `AutoResearchPanel.tsx` (**Partial** — split-soon PR1 Ui helpers #167 merged `fbf2d59` on main: 741 → 582 LOC (`autoResearchPanelUi.tsx` 180); PR2 section extract toward <500 still open) — full list in complexity report output. AG-13 ChatInput (~406) and AG-15 shell (~244) cleared below watch. No dedicated AG id for workflowEngine / BootstrapChatView / SetupModal / StreamingToolExecutor / BrowserDebugPanel / AgentPanel / AgentConfigPanel / AutoResearchPanel — tracked as split-soon / >800 sample only.
 
 ---
 
