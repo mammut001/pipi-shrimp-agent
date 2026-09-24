@@ -23,7 +23,6 @@ import {
   getToolRoundLimit,
   isAutoResearchAbortError,
   isToolRoundLimitError,
-  type AutoResearchFailureKind,
 } from './errors';
 import {
   AutoResearchReflectionFailureError,
@@ -53,16 +52,38 @@ import {
   getToolBudgetSummaryFromUnknown,
   type ToolBudgetSummary,
 } from '@/services/tools/toolBudget';
-import { extractErrorDetails } from '@/utils/errorFormat';
 import { emitAutoResearchRuntimeEvent, setAutoResearchPhase } from './runtimeEvents';
+import { parseToolCommand, parseToolResult } from './chatAdapterHelpers';
+import {
+  TOOL_BUDGET_EXHAUSTED_MARKER,
+  truncateTranscriptResult,
+  appendIterationTranscript,
+  buildAutoResearchRetryConstraintState,
+  buildConvergenceRetryPrompt,
+  buildIterationFailureOutput,
+  buildRecoveryPrompt,
+  emitBudgetNearLimitEvent,
+  getLatestExperimentFailure,
+  getRecentEventSummaries,
+  isApiRequestFailure,
+  isExperimentRunCommand,
+  isReflectionParserFailure,
+  previewFirstLines,
+  readToolPath,
+  recordDisabledToolAttempts,
+  summarizeToolInput,
+  writeIterationTranscriptHeader,
+} from './chatAdapterSupport';
+export { buildAutoResearchRetryConstraintState } from './chatAdapterSupport';
+export type { AutoResearchRetryConstraintState } from './chatAdapterSupport';
+
+export { parseToolResult };
 
 let adapterSessionCounter = 0;
 const MAX_HISTORY = 20;
 const MAX_RECOVERY_RETRIES = 1;
 const MAX_REFLECTION_PASSES = 2;
 const MAX_CONSECUTIVE_API_REQUEST_FAILURES = 3;
-const TOOL_BUDGET_RESERVE = 4;
-const TOOL_BUDGET_EXHAUSTED_MARKER = '__AUTORESEARCH_TOOL_BUDGET_EXHAUSTED__';
 const TOOL_BUDGET_EXHAUSTION_FAIL_REASON = 'tool budget exhausted before evaluation completed';
 
 export interface AutoResearchSendMessageOptions {
@@ -79,403 +100,7 @@ export interface AutoResearchSendMessageOptions {
   signal?: AbortSignal;
 }
 
-export interface AutoResearchRetryConstraintState {
-  allowedTools: string[];
-  retryMessages: Array<{ role: 'user'; content: string }>;
-  hardConstraintLines: string[];
-}
 
-function truncateTranscriptResult(result: string, limit = 4000): string {
-  if (result.length <= limit) {
-    return result;
-  }
-  return `${result.slice(0, limit)}\n...[truncated ${result.length - limit} chars]`;
-}
-
-function previewFirstLines(text: string, maxLines = 10): string {
-  return text
-    .split('\n')
-    .slice(0, maxLines)
-    .join('\n')
-    .trim();
-}
-
-function summarizeToolInput(argumentsText: string): string {
-  try {
-    const parsed = JSON.parse(argumentsText) as Record<string, unknown>;
-    const command = typeof parsed.command === 'string' ? parsed.command : null;
-    const path = typeof parsed.path === 'string' ? parsed.path : null;
-    const filePath = typeof parsed.filePath === 'string' ? parsed.filePath : null;
-    return command || filePath || path || truncateTranscriptResult(JSON.stringify(parsed), 240);
-  } catch {
-    return truncateTranscriptResult(argumentsText || '{}', 240);
-  }
-}
-
-function readToolPath(argumentsText: string): string | undefined {
-  try {
-    const parsed = JSON.parse(argumentsText) as Record<string, unknown>;
-    const path = typeof parsed.path === 'string' ? parsed.path : null;
-    const filePath = typeof parsed.filePath === 'string' ? parsed.filePath : null;
-    return filePath || path || undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function isNearToolBudgetLimit(summary: ToolBudgetSummary | undefined): boolean {
-  if (!summary) {
-    return false;
-  }
-  return summary.toolBudgetUsedRaw >= Math.max(0, summary.toolBudgetMax - TOOL_BUDGET_RESERVE);
-}
-
-function emitBudgetNearLimitEvent(summary: ToolBudgetSummary | undefined): void {
-  if (!isNearToolBudgetLimit(summary)) {
-    return;
-  }
-
-  useAutoResearchStore.getState().addRunEvent?.({
-    level: 'warn',
-    phase: 'agent_execution',
-    message: `budget_near_limit: ${summary!.toolBudgetUsed}/${summary!.toolBudgetMax} used; reserving ${TOOL_BUDGET_RESERVE} tool calls for evaluation and cleanup.`,
-    metadata: {
-      tool_budget_used: summary!.toolBudgetUsed,
-      tool_budget_max: summary!.toolBudgetMax,
-      reserve: TOOL_BUDGET_RESERVE,
-      remaining: getRemainingToolBudget(summary!),
-    },
-  });
-}
-
-function isExperimentRunCommand(command: string | undefined, environmentSummary?: AutoResearchEnvironmentSummary): boolean {
-  const normalized = command?.trim();
-  if (!normalized) {
-    return false;
-  }
-
-  const recommended = environmentSummary?.recommendedRunCommand?.trim();
-  if (recommended && (normalized.includes(recommended) || recommended.includes(normalized))) {
-    return true;
-  }
-
-  const runScriptPath = environmentSummary?.runScriptPath?.trim();
-  if (runScriptPath && normalized.includes(runScriptPath)) {
-    return true;
-  }
-
-  return /\brun_experiment\.py\b/.test(normalized);
-}
-
-function getLatestExperimentFailure(
-  toolResults: AutoResearchObservedToolResult[],
-  environmentSummary?: AutoResearchEnvironmentSummary,
-): AutoResearchObservedToolResult | null {
-  for (let index = toolResults.length - 1; index >= 0; index -= 1) {
-    const result = toolResults[index];
-    const failed = Boolean(result.stderr) || (typeof result.exitCode === 'number' && result.exitCode !== 0);
-    if (!failed) {
-      continue;
-    }
-    if (
-      isExperimentRunCommand(result.command, environmentSummary)
-      || /\brun_experiment\.py\b/.test(result.command ?? '')
-    ) {
-      return result;
-    }
-  }
-  return null;
-}
-
-function isReflectionParserFailure(result: AutoResearchReflectionDecisionResult | null): boolean {
-  return Boolean(result && result.parserPath === null && result.parseFailedAttempts.length > 0);
-}
-
-function isDisabledToolFailure(result: AutoResearchObservedToolResult): boolean {
-  return (result.stderr ?? '').includes('disabled for this AutoResearch run');
-}
-
-function recordDisabledToolAttempts(
-  toolResults: AutoResearchObservedToolResult[],
-  counts: Map<string, number>,
-): string[] {
-  const newlyBlocked: string[] = [];
-
-  for (const result of toolResults) {
-    if (!isDisabledToolFailure(result)) {
-      continue;
-    }
-
-    const nextCount = (counts.get(result.tool) ?? 0) + 1;
-    counts.set(result.tool, nextCount);
-    if (nextCount === 2) {
-      newlyBlocked.push(result.tool);
-    }
-  }
-
-  return newlyBlocked;
-}
-
-function isApiRequestFailure(error: unknown): boolean {
-  const envelope = extractErrorDetails(error);
-  const message = envelope.message.toLowerCase();
-
-  return Boolean(envelope.httpCode)
-    || message.includes('chat request failed')
-    || message.includes('streaming request failed')
-    || message.includes('invalid request')
-    || message.includes('reasoning_content')
-    || message.includes('response_format');
-}
-
-export function buildAutoResearchRetryConstraintState(input: {
-  allowedTools: string[];
-  blockedTools: Iterable<string>;
-  decision?: Pick<AutoResearchReflectionDecision, 'nextCommand' | 'nextPlan'> | null;
-  environmentSummary?: AutoResearchEnvironmentSummary;
-}): AutoResearchRetryConstraintState {
-  const blockedTools = Array.from(new Set([...input.blockedTools].filter(Boolean)));
-  const blockedToolSet = new Set(blockedTools);
-  const allowedTools = input.allowedTools.filter((tool) => !blockedToolSet.has(tool));
-  const hardConstraintLines = blockedTools.map((tool) => `HARD CONSTRAINT: do not call ${tool}.`);
-
-  if (blockedToolSet.has('list_files')) {
-    if (allowedTools.includes('execute_command')) {
-      hardConstraintLines.push('Use execute_command with `ls -la` or `ls -la <path>` instead.');
-    } else if (allowedTools.includes('ssh_exec')) {
-      hardConstraintLines.push('Use ssh_exec with `ls -la` or `ls -la <path>` instead.');
-    }
-  }
-
-  if (hardConstraintLines.length > 0) {
-    if (input.decision?.nextCommand) {
-      hardConstraintLines.push(`Use this exact recovery command instead: ${input.decision.nextCommand}`);
-    } else if (input.decision?.nextPlan) {
-      hardConstraintLines.push(`Follow this recovery plan instead: ${input.decision.nextPlan}`);
-    } else if (input.environmentSummary?.recommendedRunCommand) {
-      hardConstraintLines.push(`Use this exact recovery command instead: ${input.environmentSummary.recommendedRunCommand}`);
-    }
-  }
-
-  return {
-    allowedTools,
-    retryMessages: hardConstraintLines.length > 0
-      ? [{ role: 'user', content: hardConstraintLines.join(' ') }]
-      : [],
-    hardConstraintLines,
-  };
-}
-
-function buildIterationFailureOutput(input: {
-  metricName: string;
-  failReason: string;
-  hypothesis: string;
-  reasoning: string;
-  budgetExhausted?: boolean;
-}): string {
-  const payload = {
-    schemaVersion: 1,
-    sessionId: useAutoResearchStore.getState().id,
-    runId: useAutoResearchStore.getState().id,
-    iteration: useAutoResearchStore.getState().currentIteration,
-    primaryMetric: input.metricName,
-    direction: useAutoResearchStore.getState().metricDirection,
-    timestamp: new Date().toISOString(),
-    generator: 'agent',
-    metricName: input.metricName,
-    metricValue: null,
-    status: 'FAILED',
-    hypothesis: input.hypothesis,
-    change: '',
-    reasoning: input.reasoning,
-    artifactPaths: [],
-    failReason: input.failReason,
-  };
-
-  return input.budgetExhausted
-    ? `${TOOL_BUDGET_EXHAUSTED_MARKER}\n${JSON.stringify(payload, null, 2)}`
-    : JSON.stringify(payload, null, 2);
-}
-
-async function writeIterationTranscriptHeader(userMessage: string): Promise<void> {
-  const state = useAutoResearchStore.getState();
-  const runDir = getCurrentRunDir();
-  if (!state.sshConfig || !runDir) {
-    return;
-  }
-
-  await writeTargetText(
-    state.sshConfig,
-    runDir.transcriptPath,
-    `# AutoResearch Iteration ${runDir.iter}\n\n## User Message\n${userMessage}\n`,
-  );
-}
-
-async function appendIterationTranscript(section: string): Promise<void> {
-  const state = useAutoResearchStore.getState();
-  const runDir = getCurrentRunDir();
-  if (!state.sshConfig || !runDir) {
-    return;
-  }
-
-  await appendTargetText(state.sshConfig, runDir.transcriptPath, section);
-}
-
-function buildConvergenceRetryPrompt(
-  systemPrompt: string,
-  maxRounds: number | null,
-  allowedToolsOverride?: string[],
-  hardConstraintLines: string[] = [],
-): string {
-  const store = useAutoResearchStore.getState();
-  const allowedTools = allowedToolsOverride ?? buildAutoResearchToolCatalog(store.sshConfig);
-  const limitLine = maxRounds
-    ? `The previous attempt failed because it exceeded the tool-round budget (${maxRounds}).`
-    : 'The previous attempt failed because it exceeded the tool-round budget.';
-  const toolDetourGuard = store.sshConfig?.mode === 'local'
-    ? 'Do not switch to SSH-only tools.'
-    : 'Do not switch to local file tools.';
-  const hardConstraintBlock = hardConstraintLines.length > 0
-    ? `\n- ${hardConstraintLines.join('\n- ')}`
-    : '';
-
-  return `${systemPrompt}
-
-## Strict Convergence Retry
-- ${limitLine}
-- Restart this SAME iteration from scratch.
-- Use only these tools: ${allowedTools.join(', ')}.
-- Do at most one batched inspection step before editing or running the experiment.
-- Reserve the last ${TOOL_BUDGET_RESERVE} tool calls for reading metrics/logs, writing the final result, and cleanup.
-- Run the expensive experiment command at most once in this iteration. If it fails, read logs/metrics and emit FAILED instead of retrying.
-- If the environment is still unclear after that inspection step, immediately write ${getCurrentRunDir()?.metricsPath ?? 'metrics.json'} with status FAILED and failReason "Exceeded tool-round budget while inspecting environment", then emit EXPERIMENT_RESULT and stop.
-- Do not keep exploring, do not ask for help, and ${toolDetourGuard}${hardConstraintBlock}`;
-}
-
-function buildRecoveryPrompt(
-  systemPrompt: string,
-  decision: AutoResearchReflectionDecision,
-  failureKind: AutoResearchFailureKind,
-  allowedToolsOverride?: string[],
-  hardConstraintLines: string[] = [],
-): string {
-  const store = useAutoResearchStore.getState();
-  const allowedTools = allowedToolsOverride ?? buildAutoResearchToolCatalog(store.sshConfig);
-  const metricsPath = getCurrentRunDir()?.metricsPath ?? 'metrics.json';
-  const nextCommand = decision.nextCommand ? `- If you run the experiment again, use this exact command: ${decision.nextCommand}` : '';
-  const nextPlan = decision.nextPlan ? `- Recovery plan: ${decision.nextPlan}` : '';
-  const toolLaneGuard = store.sshConfig?.mode === 'local'
-    ? 'Stay on the local tool lane only: execute_command, read_file, write_file, create_directory, get_current_workspace. On Windows, respect the active shell profile: use PowerShell for Windows paths, npm/Cargo/Tauri Windows builds, and WSL only for WSL/Linux workspaces or explicit bash workflows. Do not call ssh_exec, ssh_read_file, or ssh_upload_file.'
-    : 'Stay on the SSH tool lane only: ssh_exec, ssh_read_file, ssh_upload_file. Do not call execute_command, read_file, write_file, or create_directory.';
-  const hardConstraintBlock = hardConstraintLines.length > 0
-    ? `\n- ${hardConstraintLines.join('\n- ')}`
-    : '';
-
-  return `${systemPrompt}
-
-## AutoResearch Recovery Plan
-- Failure kind: ${failureKind}
-- Reflection decision: ${decision.action}
-- Summary: ${decision.summary}
-${decision.rootCause ? `- Root cause: ${decision.rootCause}` : ''}
-- Allowed tools for this retry: ${allowedTools.join(', ')}.
-${nextCommand}
-${nextPlan}
-- Before finishing the retry, write ${metricsPath} with a single valid JSON object matching the metrics contract, even on FAILED/null-metric outcomes.
-- Do not repeat the failed command/tool choice if a better recovery path is already specified above.
-- Reserve the last ${TOOL_BUDGET_RESERVE} tool calls for metrics/log reads, final result writing, and rollback/cleanup.
-- If the expensive experiment command already failed once in this iteration, do not patch and rerun it. Read logs/metrics and finalize FAILED.
-- ${toolLaneGuard}${hardConstraintBlock}
-- Keep the retry bounded: one focused recovery attempt only.`;
-}
-
-function parseToolCommand(call: { name: string; arguments: string }): string | undefined {
-  try {
-    const parsed = JSON.parse(call.arguments) as Record<string, unknown>;
-    return typeof parsed.command === 'string' ? parsed.command : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function parsePlainToolResult(
-  toolName: string,
-  result: string,
-): Pick<AutoResearchObservedToolResult, 'stdout' | 'stderr' | 'exitCode'> {
-  const trimmed = result.trim();
-  if (!trimmed) {
-    return { stdout: undefined, stderr: undefined, exitCode: null };
-  }
-
-  if (trimmed.startsWith('Error:')) {
-    return { stdout: undefined, stderr: result, exitCode: 1 };
-  }
-
-  if (toolName === 'write_file' && /^Successfully wrote \d+ bytes to /i.test(trimmed)) {
-    return { stdout: result, stderr: undefined, exitCode: 0 };
-  }
-
-  if (toolName === 'create_directory' && /^Directory created successfully:/i.test(trimmed)) {
-    return { stdout: result, stderr: undefined, exitCode: 0 };
-  }
-
-  if (toolName === 'read_file' || toolName === 'list_files' || toolName === 'path_exists') {
-    return { stdout: result, stderr: undefined, exitCode: 0 };
-  }
-
-  return { stdout: result, stderr: undefined, exitCode: null };
-}
-
-export function parseToolResult(
-  call: { id: string; name: string; result: string; durationMs: number },
-  toolCommand?: string,
-): AutoResearchObservedToolResult {
-  let stdout: string | undefined;
-  let stderr: string | undefined;
-  let exitCode: number | null | undefined;
-
-  try {
-    const parsed = JSON.parse(call.result) as Record<string, unknown>;
-    stdout = typeof parsed.stdout === 'string' ? parsed.stdout : undefined;
-    stderr = typeof parsed.stderr === 'string' ? parsed.stderr : undefined;
-    if (!stderr && parsed.error === true) {
-      const message = typeof parsed.message === 'string' ? parsed.message : null;
-      const cause = typeof parsed.cause === 'string' ? parsed.cause : null;
-      stderr = [message, cause].filter((value): value is string => Boolean(value)).join(' | ') || call.result;
-    }
-    const rawExitCode = parsed.exitCode ?? parsed.exit_code;
-    exitCode = typeof rawExitCode === 'number'
-      ? rawExitCode
-      : parsed.error === true
-        ? 1
-        : null;
-  } catch {
-    return {
-      tool: call.name,
-      command: toolCommand,
-      ...parsePlainToolResult(call.name, call.result),
-    };
-  }
-
-  return {
-    tool: call.name,
-    command: toolCommand,
-    stdout,
-    stderr,
-    exitCode,
-  };
-}
-
-function getRecentEventSummaries(): string[] {
-  const state = useAutoResearchStore.getState() as ReturnType<typeof useAutoResearchStore.getState> & {
-    runHistory?: Array<{ id: string; events: Array<{ phase: string; message: string }> }>;
-    id?: string;
-  };
-  const currentRun = state.runHistory?.find((run) => run.id === state.id);
-  return (currentRun?.events ?? [])
-    .slice(-6)
-    .map((event) => `${event.phase}: ${event.message}`);
-}
 
 function emitToolBudgetEvent(summary: ToolBudgetSummary | undefined): void {
   if (!summary || (summary.successfulCalls === 0 && summary.failedCalls === 0)) {

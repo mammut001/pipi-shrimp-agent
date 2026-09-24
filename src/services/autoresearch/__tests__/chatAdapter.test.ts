@@ -731,6 +731,25 @@ describe('createAutoResearchSendMessage', () => {
     );
   });
 
+  it('propagates AbortSignal to the headless turn and stops on mid-turn abort', async () => {
+    const controller = new AbortController();
+    mockRunHeadlessAgentTurn.mockImplementationOnce(async (input) => {
+      expect(input.signal).toBe(controller.signal);
+      controller.abort();
+      throw Object.assign(new Error('headless turn aborted'), { name: 'AbortError' });
+    });
+
+    const { createAutoResearchSendMessage } = await import('../chatAdapter');
+    const sendMessage = createAutoResearchSendMessage('/tmp/research', activeConfig, {
+      signal: controller.signal,
+    });
+
+    await expect(sendMessage('system prompt', 'run iteration')).rejects.toMatchObject({
+      name: 'AutoResearchAbortedError',
+    });
+    expect(mockRunHeadlessAgentTurn).toHaveBeenCalledTimes(1);
+  });
+
   it('aborts the iteration after three consecutive API request failures', async () => {
     mockRunHeadlessAgentTurn
       .mockRejectedValueOnce(new Error('Streaming request failed: reasoning_content parameter error'))
