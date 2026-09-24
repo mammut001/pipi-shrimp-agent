@@ -661,7 +661,7 @@ Per [complexity-governance.md](../architecture/complexity-governance.md) and `np
 | AG-06 | `src/store/autoresearchStore.ts` | 1340 | Extract persistence, loop wiring | Yes | Yes |
 | AG-07 | `src/utils/nativeBrowserAgent.ts` | 1267 | Extract action executor, observation | Yes | Yes |
 | AG-08 | `src/store/createChatStore.ts` | 1261 | Extract session lifecycle | Yes | Yes |
-| AG-09 | `src/store/chat/chatActions.ts` | 1250 | Extract streaming, tool, send paths | Yes | Yes — after R1 regression tests |
+| AG-09 | `src/store/chat/chatActions.ts` / `sendMessageAction.ts` | chatActions ~693; sendMessageAction **781** | **Fixed** — #180 session/stream extract; #186 `sendMessagePreparation.ts` (1013→781, 2026-09-24); under ~800 hard limit | No | Done — #180 + #186 |
 | AG-10 | `src-tauri/src/commands/web.rs` | 1219 | Extract CDP + policy (R3-06) | Yes | Yes |
 | AG-11 | `src/store/workflowStore.ts` | 1211 | Extract run history, engine bridge | Yes | Yes |
 | AG-12 | `src/services/autoresearch/chatAdapter.ts` | 1117 | Extract headless bridge | Yes | Yes |
