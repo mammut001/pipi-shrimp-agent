@@ -6,15 +6,45 @@
  */
 
 import { create } from 'zustand';
+import { connectAutoResearchPersistence } from './autoresearchPersistence';
+import type { AutoResearchStore } from './autoresearchStoreTypes';
+import {
+  buildRunRecordFromInit,
+  createEmptySession, defaultTelegramConfig,
+  createRunEvent,
+  getFallbackSelectedRunId,
+  isBetterMetric,
+  sanitizeOptionalText,
+  toIterationRecord,
+  updateRunRecord,
+  upsertRunRecord,
+  withActiveRunUpdate,
+} from './autoresearchStoreRecords';
+export {
+  getActiveAutoResearchRun,
+  getAutoResearchRunReason,
+  getSelectedAutoResearchRun,
+  getSelectedAutoResearchRunContext,
+  getSortedAutoResearchRuns,
+  isAutoResearchTerminalState,
+  updateRunRecord,
+} from './autoresearchStoreRecords';
+export type {
+  AutoResearchSelectedRunContext,
+  AutoResearchStore,
+  ExperimentEntry,
+  ExperimentSession,
+  ExperimentStatus,
+  LoopState,
+  TelegramNotifyConfig,
+} from './autoresearchStoreTypes';
 import type { AutoResearchAgentConfigSnapshot } from '@/services/autoresearch/errors';
 import {
   clipLiveOutputBuffer,
   clipLiveOutputExcerpt,
   clipLiveOutputExcerptInMemory,
   loadPersistedAutoResearchHistory,
-  persistAutoResearchHistory,
   redactAutoResearchSensitiveText,
-  setHistoryPersistListener,
   toHistoryConfigSnapshot,
   type AutoResearchIterationRecord,
   type AutoResearchRecoveryAction,
@@ -37,6 +67,7 @@ import {
 } from '@/services/autoresearch/resumeToken';
 import { withSshConfigDefaults } from '@/types/ssh';
 import type { ExecMode, SshAuthMode, SshConfig } from '@/types/ssh';
+export { flushAutoResearchPersistOnClose } from './autoresearchPersistence';
 
 export type { AutoResearchIterationRecord, AutoResearchRunRecord, AutoResearchRunStatus } from '@/services/autoresearch/history';
 
@@ -47,497 +78,8 @@ export { withSshConfigDefaults };
 
 // ============== Types ==============
 
-export type ExperimentStatus = 'IMPROVED' | 'NOT_IMPROVED' | 'FAILED';
-export type LoopState = 'idle' | 'running' | 'paused' | 'stopped' | 'error';
-
-export interface ExperimentEntry {
-  iteration: number;
-  hypothesis: string;
-  change: string;
-  metricValue: number | null;
-  status: ExperimentStatus;
-  failReason?: string;
-  reasoning: string;
-  timestamp: string;
-  durationMs: number;
-}
-
-export interface TelegramNotifyConfig {
-  enabled: boolean;
-  chatId: number | null;
-  notifyOnImproved: boolean;
-  notifyOnFailed: boolean;
-  trendReportInterval: number;
-}
-
-export interface ExperimentSession {
-  id: string;
-  loopState: LoopState;
-  currentIteration: number;
-  maxIterations: number;
-  bestMetric: number | null;
-  metricDirection: 'lower' | 'higher';
-  metricName: string;
-  successCriteria: string;
-  bootstrapKind: 'conversational' | 'manual' | null;
-  consecutiveFailures: number;
-  experimentDir: string;
-  sessionFilePath: string;
-  livingDocPath: string;
-  startedAt: string;
-  experiments: ExperimentEntry[];
-  sshConfig: SshConfig | null;
-  telegramConfig: TelegramNotifyConfig;
-  liveOutput: string;
-  selectedExperiment: number;
-  errorMessage?: string;
-  statusMessage?: string;
-  reason?: string;
-  agentConfigSnapshot?: AutoResearchAgentConfigSnapshot;
-  terminalVisible: boolean;
-  terminalReady: boolean;
-  terminalSessionId: string | null;
-  terminalCwd: string;
-  runHistory: AutoResearchRunRecord[];
-  selectedRunId: string | null;
-  lastUsedConfig: AutoResearchDefaultConfig | null;
-}
-
-const defaultTelegramConfig: TelegramNotifyConfig = {
-  enabled: false,
-  chatId: null,
-  notifyOnImproved: true,
-  notifyOnFailed: true,
-  trendReportInterval: 10,
-};
-
 const persistedHistory = loadPersistedAutoResearchHistory();
 const persistedLastUsedConfig = loadPersistedAutoResearchLastUsedConfig();
-
-function createEmptySession(): Omit<ExperimentSession, 'runHistory' | 'selectedRunId' | 'lastUsedConfig'> {
-  return {
-    id: '',
-    loopState: 'idle',
-    currentIteration: 0,
-    maxIterations: 50,
-    bestMetric: null,
-    metricDirection: 'lower',
-    metricName: 'val_bpb',
-    successCriteria: '',
-    bootstrapKind: null,
-    consecutiveFailures: 0,
-    experimentDir: '',
-    sessionFilePath: '',
-    livingDocPath: '',
-    startedAt: '',
-    experiments: [],
-    sshConfig: null,
-    telegramConfig: { ...defaultTelegramConfig },
-    liveOutput: '',
-    selectedExperiment: -1,
-    statusMessage: undefined,
-    reason: undefined,
-    agentConfigSnapshot: undefined,
-    terminalVisible: false,
-    terminalReady: false,
-    terminalSessionId: null,
-    terminalCwd: '',
-    errorMessage: undefined,
-  };
-}
-
-function sortRuns(runs: AutoResearchRunRecord[]): AutoResearchRunRecord[] {
-  return [...runs].sort((a, b) => {
-    const byUpdated = b.updatedAt.localeCompare(a.updatedAt);
-    return byUpdated !== 0 ? byUpdated : b.createdAt.localeCompare(a.createdAt);
-  });
-}
-
-function upsertRunRecord(runs: AutoResearchRunRecord[], record: AutoResearchRunRecord): AutoResearchRunRecord[] {
-  const next = runs.some((run) => run.id === record.id)
-    ? runs.map((run) => (run.id === record.id ? record : run))
-    : [record, ...runs];
-  return sortRuns(next);
-}
-
-export function updateRunRecord(
-  runs: AutoResearchRunRecord[],
-  runId: string,
-  updater: (run: AutoResearchRunRecord) => AutoResearchRunRecord,
-): AutoResearchRunRecord[] {
-  let updated = false;
-  const next = runs.map((run) => {
-    if (run.id !== runId) {
-      return run;
-    }
-    updated = true;
-    return updater(run);
-  });
-  return updated ? sortRuns(next) : runs;
-}
-
-function createRunEvent(
-  runId: string,
-  input: Omit<AutoResearchRunEvent, 'id' | 'runId' | 'timestamp'> & { timestamp?: string },
-): AutoResearchRunEvent {
-  const timestamp = input.timestamp ?? new Date().toISOString();
-  return {
-    id: `${runId}-event-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    runId,
-    iterationId: input.iterationId,
-    timestamp,
-    level: input.level,
-    phase: input.phase,
-    type: input.type,
-    message: redactAutoResearchSensitiveText(input.message),
-    summary: sanitizeOptionalText(input.summary),
-    detail: input.detail,
-    metadata: input.metadata,
-  };
-}
-
-function sanitizeOptionalText(value: string | undefined): string | undefined {
-  return value === undefined ? undefined : redactAutoResearchSensitiveText(value);
-}
-
-function mapExperimentStatusToIterationStatus(status: ExperimentStatus): AutoResearchIterationRecord['status'] {
-  switch (status) {
-    case 'FAILED':
-      return 'failed';
-    case 'IMPROVED':
-    case 'NOT_IMPROVED':
-    default:
-      return 'completed';
-  }
-}
-
-function toIterationRecord(entry: ExperimentEntry, existing?: AutoResearchIterationRecord): AutoResearchIterationRecord {
-  return {
-    id: existing?.id ?? `iter-${entry.iteration}`,
-    index: entry.iteration,
-    status: mapExperimentStatusToIterationStatus(entry.status),
-    hypothesis: redactAutoResearchSensitiveText(entry.hypothesis),
-    change: redactAutoResearchSensitiveText(entry.change),
-    reasoning: entry.reasoning ? redactAutoResearchSensitiveText(entry.reasoning) : existing?.reasoning,
-    metricValue: entry.metricValue,
-    error: entry.failReason ? redactAutoResearchSensitiveText(entry.failReason) : existing?.error ?? null,
-    commitHash: existing?.commitHash,
-    startedAt: existing?.startedAt,
-    endedAt: entry.timestamp,
-    artifactPaths: existing?.artifactPaths,
-    improvement: existing?.improvement,
-  };
-}
-
-function isBetterMetric(direction: 'lower' | 'higher', candidate: number, current: number | null | undefined): boolean {
-  if (current === null || current === undefined) {
-    return true;
-  }
-  return direction === 'lower' ? candidate < current : candidate > current;
-}
-
-function buildRunRecordFromInit(opts: {
-  id: string;
-  createdAt: string;
-  maxIterations: number;
-  metricName: string;
-  metricDirection: 'lower' | 'higher';
-  sshConfig: SshConfig;
-  experimentDir?: string;
-  sessionFilePath?: string;
-  livingDocPath?: string;
-  baseline?: number | null;
-  agentConfigSnapshot?: AutoResearchAgentConfigSnapshot;
-  preferredPythonCommand?: string;
-  repoStatus?: 'clean' | 'dirty';
-  dirtyFileCount?: number;
-  gpuTelemetryAvailable?: boolean;
-  gpuSummary?: string;
-  gpuTemperatureC?: number | null;
-  gpuFanSpeedPercent?: number | null;
-  gpuUtilizationPercent?: number | null;
-  gpuMemoryUsedMb?: number | null;
-  gpuMemoryTotalMb?: number | null;
-}): AutoResearchRunRecord {
-  return {
-    id: opts.id,
-    title: `${opts.metricName} · ${opts.experimentDir || opts.sshConfig.remoteWorkDir || 'AutoResearch'}`,
-    status: 'running',
-    createdAt: opts.createdAt,
-    updatedAt: opts.createdAt,
-    startedAt: opts.createdAt,
-    currentPhase: 'INIT',
-    config: {
-      experimentDir: opts.experimentDir || opts.sshConfig.remoteWorkDir || '',
-      workdir: opts.sshConfig.remoteWorkDir || '',
-      sessionFilePath: opts.sessionFilePath || undefined,
-      livingDocPath: opts.livingDocPath || undefined,
-      metric: opts.metricName,
-      direction: opts.metricDirection,
-      iterations: opts.maxIterations,
-      baseline: opts.baseline ?? null,
-      preferredPythonCommand: opts.preferredPythonCommand,
-      repoStatus: opts.repoStatus,
-      dirtyFileCount: opts.dirtyFileCount,
-      gpuTelemetryAvailable: opts.gpuTelemetryAvailable,
-      gpuSummary: opts.gpuSummary,
-      gpuTemperatureC: opts.gpuTemperatureC,
-      gpuFanSpeedPercent: opts.gpuFanSpeedPercent,
-      gpuUtilizationPercent: opts.gpuUtilizationPercent,
-      gpuMemoryUsedMb: opts.gpuMemoryUsedMb,
-      gpuMemoryTotalMb: opts.gpuMemoryTotalMb,
-      configSnapshot: toHistoryConfigSnapshot(opts.agentConfigSnapshot),
-    },
-    currentIteration: 0,
-    bestMetricValue: opts.baseline ?? null,
-    bestIteration: opts.baseline !== null && opts.baseline !== undefined ? 0 : null,
-    failureCount: 0,
-    iterations: [],
-    events: [],
-    summary: undefined,
-    reason: undefined,
-    liveOutputExcerpt: '',
-    resumeToken: createAutoResearchResumeToken({
-      sessionId: opts.id,
-      sshConfig: opts.sshConfig,
-      experimentDir: opts.experimentDir || opts.sshConfig.remoteWorkDir || '',
-      sessionFilePath: opts.sessionFilePath,
-      livingDocPath: opts.livingDocPath,
-      metricName: opts.metricName,
-      metricDirection: opts.metricDirection,
-      maxIterations: opts.maxIterations,
-      baseline: opts.baseline ?? null,
-      createdAt: opts.createdAt,
-    }),
-  };
-}
-
-function getFallbackSelectedRunId(runs: AutoResearchRunRecord[], currentId?: string | null): string | null {
-  return currentId || runs[0]?.id || null;
-}
-
-export function getSortedAutoResearchRuns(state: Pick<ExperimentSession, 'runHistory'>): AutoResearchRunRecord[] {
-  return sortRuns(state.runHistory);
-}
-
-export function getSelectedAutoResearchRun(
-  state: Pick<ExperimentSession, 'runHistory' | 'selectedRunId' | 'id'>,
-): AutoResearchRunRecord | null {
-  const targetId = state.selectedRunId || state.id;
-  if (!targetId) {
-    return state.runHistory[0] ?? null;
-  }
-  return state.runHistory.find((run) => run.id === targetId) ?? state.runHistory[0] ?? null;
-}
-
-export function getActiveAutoResearchRun(
-  state: Pick<ExperimentSession, 'runHistory' | 'id'>,
-): AutoResearchRunRecord | null {
-  if (!state.id) {
-    return null;
-  }
-  return state.runHistory.find((run) => run.id === state.id) ?? null;
-}
-
-export function isAutoResearchTerminalState(status: AutoResearchRunStatus | null | undefined): boolean {
-  return Boolean(status && ['reflection_failed', 'failed', 'completed', 'stopped', 'interrupted'].includes(status));
-}
-
-export function getAutoResearchRunReason(
-  state: Pick<ExperimentSession, 'runHistory' | 'id' | 'reason' | 'errorMessage'>,
-): string | undefined {
-  return getActiveAutoResearchRun(state)?.reason ?? state.reason ?? state.errorMessage;
-}
-
-function mapRunStatusToLoopState(status: AutoResearchRunStatus | undefined): LoopState {
-  switch (status) {
-    case 'running':
-    case 'waiting_rate_limit':
-      return 'running';
-    case 'paused':
-      return 'paused';
-    case 'reflection_failed':
-    case 'failed':
-      return 'error';
-    case 'stopped':
-    case 'completed':
-    case 'interrupted':
-      return 'stopped';
-    case 'draft':
-    default:
-      return 'idle';
-  }
-}
-
-export interface AutoResearchSelectedRunContext {
-  run: AutoResearchRunRecord | null;
-  isActive: boolean;
-  liveOutput: string;
-  reason?: string;
-  statusMessage?: string;
-  loopState: LoopState;
-  selectedIterationIndex: number;
-}
-
-export function getSelectedAutoResearchRunContext(
-  state: Pick<ExperimentSession, 'runHistory' | 'selectedRunId' | 'id' | 'liveOutput' | 'errorMessage' | 'reason' | 'statusMessage' | 'loopState' | 'selectedExperiment'>,
-): AutoResearchSelectedRunContext {
-  const run = getSelectedAutoResearchRun(state);
-  const isActive = Boolean(run && state.id && run.id === state.id);
-  const iterations = run?.iterations ?? [];
-  const selectedIterationIndex = state.selectedExperiment >= 0 && state.selectedExperiment < iterations.length
-    ? state.selectedExperiment
-    : -1;
-
-  return {
-    run,
-    isActive,
-    liveOutput: isActive ? state.liveOutput : (run?.liveOutputExcerpt || ''),
-    reason: isActive ? (run?.reason ?? state.reason ?? state.errorMessage) : run?.reason,
-    statusMessage: isActive ? state.statusMessage : undefined,
-    loopState: isActive ? state.loopState : mapRunStatusToLoopState(run?.status),
-    selectedIterationIndex,
-  };
-}
-
-interface AutoResearchStore extends ExperimentSession {
-  initSession: (opts: {
-    id: string;
-    maxIterations: number;
-    metricName: string;
-    metricDirection: 'lower' | 'higher';
-    sshConfig: SshConfig;
-    experimentDir?: string;
-    sessionFilePath?: string;
-    livingDocPath?: string;
-    baseline?: number | null;
-    agentConfigSnapshot?: AutoResearchAgentConfigSnapshot;
-    preferredPythonCommand?: string;
-    repoStatus?: 'clean' | 'dirty';
-    dirtyFileCount?: number;
-    gpuTelemetryAvailable?: boolean;
-    gpuSummary?: string;
-    gpuTemperatureC?: number | null;
-    gpuFanSpeedPercent?: number | null;
-    gpuUtilizationPercent?: number | null;
-    gpuMemoryUsedMb?: number | null;
-    gpuMemoryTotalMb?: number | null;
-    telegramConfig?: Partial<TelegramNotifyConfig>;
-  }) => void;
-  resetSession: () => void;
-  selectRun: (runId: string) => void;
-  deleteRun: (runId: string) => void;
-  deleteRuns: (runIds: string[]) => void;
-  setLoopState: (state: LoopState) => void;
-  setCurrentPhase: (phase?: AutoResearchRunPhase) => void;
-  setRunStatus: (status: AutoResearchRunStatus, options?: { summary?: string; endedAt?: string; reason?: string }) => void;
-  setReflectionFailed: (reason: string, options?: { summary?: string; endedAt?: string }) => void;
-  acknowledgeReflectionFailure: () => void;
-  setError: (msg: string) => void;
-  patchActiveRunResumeToken: (patch: Partial<Omit<AutoResearchResumeToken, 'schemaVersion' | 'sessionId' | 'createdAt'>>) => void;
-  clearActiveRunResumeToken: () => void;
-  setStatusMessage: (msg?: string) => void;
-  updateRunPaths: (paths: { sshConfig?: SshConfig; experimentDir?: string; sessionFilePath?: string; livingDocPath?: string; terminalCwd?: string }) => void;
-  incrementIteration: () => void;
-  addExperiment: (entry: ExperimentEntry) => void;
-  startIterationRecord: (input: { iteration: number; startedAt: string; artifactPaths: string[] }) => void;
-  completeIterationRecord: (input: {
-    iteration: number;
-    status: AutoResearchIterationRecord['status'];
-    phase?: AutoResearchIterationRecord['phase'];
-    hypothesis?: string;
-    change?: string;
-    reasoning?: string;
-    narrative?: string;
-    codeChangesSummary?: string;
-    executionCommand?: string;
-    exitCode?: number | null;
-    durationMs?: number | null;
-    parsedMetrics?: Record<string, number | string | boolean | null>;
-    reflectionSummary?: string;
-    metricValue?: number | null;
-    improvement?: number | null;
-    commitHash?: string;
-    error?: string | null;
-    endedAt?: string;
-    artifactPaths?: string[];
-    recoveryActions?: AutoResearchRecoveryAction[];
-  }) => void;
-  patchIterationRecord: (input: {
-    iteration: number;
-    status?: AutoResearchIterationRecord['status'];
-    phase?: AutoResearchIterationRecord['phase'];
-    hypothesis?: string;
-    change?: string;
-    reasoning?: string;
-    narrative?: string;
-    codeChangesSummary?: string;
-    executionCommand?: string;
-    exitCode?: number | null;
-    durationMs?: number | null;
-    parsedMetrics?: Record<string, number | string | boolean | null>;
-    reflectionSummary?: string;
-    metricValue?: number | null;
-    improvement?: number | null;
-    commitHash?: string;
-    error?: string | null;
-    endedAt?: string;
-    artifactPaths?: string[];
-    recoveryActions?: AutoResearchRecoveryAction[];
-  }) => void;
-  addRunEvent: (input: Omit<AutoResearchRunEvent, 'id' | 'runId' | 'timestamp'> & { timestamp?: string }) => void;
-  updateBestMetric: (value: number) => void;
-  setBestMetric: (value: number | null) => void;
-  setPrimaryMetric: (metricName: string) => void;
-  setSuccessCriteria: (successCriteria: string) => void;
-  setBootstrapKind: (bootstrapKind: ExperimentSession['bootstrapKind']) => void;
-  setCurrentIterationValue: (iteration: number) => void;
-  incrementConsecutiveFailures: () => void;
-  resetConsecutiveFailures: () => void;
-  setExperiments: (entries: ExperimentEntry[]) => void;
-  setLiveOutput: (output: string) => void;
-  appendLiveOutput: (chunk: string) => void;
-  setSelectedExperiment: (idx: number) => void;
-  openTerminalPanel: (sessionId: string, cwd: string) => void;
-  setTerminalReady: (ready: boolean) => void;
-  setTerminalVisible: (visible: boolean) => void;
-  setTerminalCwd: (cwd: string) => void;
-  setSshConfig: (cfg: SshConfig) => void;
-  setLastUsedConfig: (config: AutoResearchDefaultConfig) => void;
-  clearLastUsedConfig: () => void;
-  setTelegramConfig: (cfg: Partial<TelegramNotifyConfig>) => void;
-  activateHistoricalRun: (input: {
-    runId: string;
-    sshConfig: SshConfig;
-    experimentDir: string;
-    sessionFilePath?: string;
-    livingDocPath?: string;
-    metricName: string;
-    metricDirection: 'lower' | 'higher';
-    maxIterations: number;
-    baseline?: number | null;
-    pendingIteration: number;
-    agentConfigSnapshot?: AutoResearchAgentConfigSnapshot;
-    resumeToken?: AutoResearchResumeToken;
-    experiments?: ExperimentEntry[];
-    liveOutput?: string;
-    telegramConfig?: Partial<TelegramNotifyConfig>;
-  }) => void;
-  showSetupModal: boolean;
-  setShowSetupModal: (show: boolean) => void;
-}
-
-function withActiveRunUpdate(
-  state: AutoResearchStore,
-  updater: (run: AutoResearchRunRecord) => AutoResearchRunRecord,
-): Pick<AutoResearchStore, 'runHistory'> {
-  if (!state.id) {
-    return { runHistory: state.runHistory };
-  }
-  return {
-    runHistory: updateRunRecord(state.runHistory, state.id, updater),
-  };
-}
 
 export const useAutoResearchStore = create<AutoResearchStore>((set, get) => ({
   ...createEmptySession(),
@@ -1250,140 +792,8 @@ export const useAutoResearchStore = create<AutoResearchStore>((set, get) => ({
   setShowSetupModal: (showSetupModal) => set({ showSetupModal }),
 }));
 
-/**
- * AUDIT-FIX [audit-1-ar#3]: Persist debounce.
- * A single AutoResearch iteration can trigger 5-20 `set()` calls
- * (addRunEvent, setStatusMessage, appendLiveOutput, etc.). Persisting on
- * every change was wasteful and could stall the UI thread when
- * `runHistory` is large — `JSON.stringify` over tens of MB is not free.
- * Coalesce writes within a 500ms window. The actual read of the latest
- * state happens inside the timer callback (see AUDIT-FIX [audit-3-ar#1]
- * in `schedulePersist` below) so we never persist a stale snapshot.
- *
- * `beforeunload` + Tauri's `onCloseRequested` (also added in audit-2)
- * are the synchronous flush paths that guarantee no writes are lost
- * when the user closes the window.
- */
-let persistTimer: ReturnType<typeof setTimeout> | null = null;
-const PERSIST_DEBOUNCE_MS = 500;
 
-// AUDIT-FIX [audit-3-ar#1]: Persist debounce closure bug.
-// `schedulePersist(state)` captured the state at subscribe-time into a
-// setTimeout closure. With multiple `set()` calls per iteration (addRunEvent,
-// setStatusMessage, appendLiveOutput, …) only the snapshot from the FIRST
-// set would be persisted; everything from the rest of the 500ms window was
-// dropped on reload. Fixed by re-reading state via `getState()` inside the
-// timer callback, so the latest authoritative state is what gets written.
-const schedulePersist = (_state: ExperimentSession): void => {
-  if (typeof window === 'undefined') return;
-  if (persistTimer) {
-    clearTimeout(persistTimer);
-  }
-  // Re-read state inside the timer callback. Subscribing captures the state
-  // at the moment the `set()` fires; between that fire and the 500ms timer
-  // expiring, additional `set()` calls (addRunEvent, setStatusMessage,
-  // appendLiveOutput, …) may have advanced runHistory/statusMessage/etc.
-  // Writing the snapshot from the first `set` would discard those updates
-  // on the next reload. Calling `getState()` at flush time captures the
-  // current authoritative state instead.
-  persistTimer = setTimeout(() => {
-    persistTimer = null;
-    const latest = useAutoResearchStore.getState();
-    persistAutoResearchHistory(latest.runHistory, latest.selectedRunId);
-    persistAutoResearchLastUsedConfig(latest.lastUsedConfig);
-  }, PERSIST_DEBOUNCE_MS);
-};
-
-useAutoResearchStore.subscribe((state) => {
-  schedulePersist(state);
+connectAutoResearchPersistence({
+  getState: () => useAutoResearchStore.getState(),
+  subscribe: (listener) => useAutoResearchStore.subscribe((state) => listener(state)),
 });
-
-/**
- * AUDIT-FIX [R5-13]: Flush current AutoResearch history/config on close
- * regardless of debounce timer state.
- *
- * Previously both `onCloseRequested` and `beforeunload` only flushed when
- * `persistTimer` was non-null. After a debounced persist attempt failed
- * (quota / storage-broken), the timer was already cleared to null, so
- * close skipped the retry and in-memory metrics were lost. Always clear
- * any pending timer, then write the latest `getState()` snapshot.
- */
-export function flushAutoResearchPersistOnClose(): void {
-  // No `window` guard: unit tests run in node with a localStorage mock, and
-  // persistAutoResearchHistory / persistAutoResearchLastUsedConfig already
-  // no-op when storage is unavailable (SSR / broken webview).
-  if (persistTimer) {
-    clearTimeout(persistTimer);
-    persistTimer = null;
-  }
-  try {
-    const state = useAutoResearchStore.getState();
-    persistAutoResearchHistory(state.runHistory, state.selectedRunId);
-    persistAutoResearchLastUsedConfig(state.lastUsedConfig);
-  } catch (flushError) {
-    console.error('Failed to flush AutoResearch history on close:', flushError);
-  }
-}
-
-/**
- * Flush any pending debounced AutoResearch writes BEFORE the window
- * actually closes.
- *
- * AUDIT-FIX [audit-2-ar#3]: Tauri onCloseRequested as a reliable flush
- * trigger. The browser's `beforeunload` is unreliable in Tauri webviews
- * (the WebView may be torn down before the JS handler finishes), so we
- * additionally listen to Tauri's native `onCloseRequested` event. The
- * handler performs a synchronous flush (localStorage.setItem) before
- * letting the close proceed.
- *
- * Lazy-imported and wrapped in try/catch so this module remains safe to
- * load in a non-Tauri (e.g. unit test) environment. Falls back to
- * `beforeunload` if the Tauri API isn't available.
- */
-if (typeof window !== 'undefined') {
-  void (async () => {
-    try {
-      const { getCurrentWindow } = await import('@tauri-apps/api/window');
-      await getCurrentWindow().onCloseRequested(async (event) => {
-        flushAutoResearchPersistOnClose();
-        // Do NOT preventDefault — let the close proceed. The flush above is
-        // synchronous (localStorage.setItem) so the webview can tear down
-        // safely immediately after. If we ever migrate to an async store
-        // (Tauri Store plugin / Rust command), re-evaluate: the flush
-        // would need to complete before destroy.
-        void event; // explicit no-op; included for future async flush.
-      });
-    } catch (error) {
-      // Non-Tauri environment (tests, SSR) — fall back to beforeunload below.
-      // Errors here are expected and not actionable.
-      if (process.env.NODE_ENV !== 'test') {
-        console.debug('Tauri onCloseRequested unavailable, using beforeunload fallback:', error);
-      }
-    }
-  })();
-}
-
-if (typeof window !== 'undefined') {
-  // Flush any pending write when the page is being unloaded so users don't
-  // lose the last few seconds of AutoResearch progress on tab close / reload.
-  // NOTE: `beforeunload` is not 100% reliable in Tauri webviews (the
-  // webview may be torn down before the JS handler finishes). The
-  // P1#3 fix adds a `tauri://close-requested` listener as a more
-  // reliable alternative.
-  // AUDIT-FIX [R5-13]: Always flush — see flushAutoResearchPersistOnClose.
-  window.addEventListener('beforeunload', () => {
-    flushAutoResearchPersistOnClose();
-  });
-
-  // Surface localStorage quota / persist failures as a visible run event so
-  // users aren't silently losing iteration data.
-  setHistoryPersistListener((message) => {
-    const state = useAutoResearchStore.getState();
-    state.addRunEvent({
-      level: 'error',
-      phase: 'system',
-      message,
-      summary: message,
-    });
-  });
-}

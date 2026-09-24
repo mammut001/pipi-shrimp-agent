@@ -1,4 +1,10 @@
-import { beforeEach, describe, expect, it } from '@jest/globals';
+import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+
+const mockStopExperimentLoop = jest.fn();
+
+jest.mock('@/services/autoresearch/loopEngine', () => ({
+  stopExperimentLoop: (...args: unknown[]) => mockStopExperimentLoop(...args),
+}));
 import { AUTORESEARCH_LAST_USED_CONFIG_STORAGE_KEY } from '@/services/autoresearch/defaultConfig';
 import { AUTORESEARCH_HISTORY_STORAGE_KEY } from '@/services/autoresearch/history';
 import {
@@ -28,10 +34,42 @@ Object.defineProperty(globalThis, 'localStorage', {
 
 describe('autoresearchStore history behavior', () => {
   beforeEach(() => {
+    mockStopExperimentLoop.mockReset();
     const store = useAutoResearchStore.getState();
     store.resetSession();
     useAutoResearchStore.setState({ runHistory: [], selectedRunId: null, lastUsedConfig: null });
     storage.data = {};
+  });
+
+  it('stops an active loop before deleting its run', () => {
+    const store = useAutoResearchStore.getState();
+    store.initSession({
+      id: 'run-delete-active',
+      maxIterations: 3,
+      metricName: 'accuracy',
+      metricDirection: 'higher',
+      sshConfig: {
+        mode: 'local',
+        host: '',
+        user: '',
+        keyPath: '',
+        port: 22,
+        remoteWorkDir: '/tmp/workdir',
+        authMode: 'agent',
+        password: '',
+      },
+    });
+    store.setLoopState('running');
+    mockStopExperimentLoop.mockClear();
+
+    store.deleteRun('run-delete-active');
+
+    expect(mockStopExperimentLoop).toHaveBeenCalledTimes(1);
+    expect(useAutoResearchStore.getState()).toMatchObject({
+      id: '',
+      loopState: 'idle',
+      runHistory: [],
+    });
   });
 
   it('creates a persistent run record when a session starts', () => {
