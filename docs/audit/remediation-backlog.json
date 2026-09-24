@@ -1921,8 +1921,8 @@
     "title": "Split utils/typst.rs (Typst world + compile helpers)",
     "lane": "I. Architecture Governance",
     "severity": "Governance",
-    "status": "open",
-    "fixNote": "2026-09-24: Opened (not yet fixed). 1028 LOC live wc -l on main 99113a6, 2026-09-24 (442 production + 586 inline #[cfg(test)]). No AG item existed before this entry.",
+    "status": "fixed",
+    "fixNote": "2026-09-24: AG-30 closed by #200. Mechanical, behavior-preserving extract of src-tauri/src/utils/typst.rs (1028→443 LOC, live wc -l): the inline #[cfg(test)] mod tests { .. } block (L442-1028) moved verbatim into the file module utils/typst/tests.rs (113; use super::*; use std::io::Write; the 3 basic compile tests) with a nested utils/typst/tests/template_examples.rs (482; use super::*; the 5 template inline-example tests incl. the #[ignore] nabcv smoke). typst.rs now ends with #[cfg(test)] mod tests; — production code is token-identical (2351/2351 tokens, 0 diffs); test code is token-identical except one rustfmt trailing comma (fs::write(..) call wrap) and every string/raw-string literal is byte-identical (84/84), script-verified; new files pass rustfmt --check. 8 tests before = 8 after (7 run + 1 ignored); the 5 template tests' path gains ::template_examples. 0 awaits before/after (sync code). No production change, no new dependencies, no new cargo warnings. Validation: cargo check --locked --lib, cargo test --locked --lib (388 passed, 6 ignored), cargo test --lib utils::typst (7 passed, 1 ignored), commands::web --ignored Chrome harness (3 passed). Source guards in src/__tests__/typstRustTestsExtract.test.ts.",
     "whyItMatters": "Over the >800 'requires refactor plan' limit (1028 LOC on main 99113a6, 2026-09-24). Target: under 800 first, then under 500. Production code is only 442 LOC (fonts, TypstWorld, compile helpers, templates dir); the rest is the inline test module of template compile smoke tests.",
     "files": [
       "src-tauri/src/utils/typst.rs"
