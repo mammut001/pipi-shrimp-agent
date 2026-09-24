@@ -1725,6 +1725,288 @@
     "recommendedPr": null
   },
   {
+    "id": "AG-22",
+    "title": "Split tools/execution_policy.rs (tool execution policy gate)",
+    "lane": "I. Architecture Governance",
+    "severity": "Governance",
+    "status": "open",
+    "fixNote": "2026-09-24: Opened (not yet fixed). 1901 LOC live wc -l on main 99113a6, 2026-09-24 (1063 production + 838 inline #[cfg(test)]). No AG item existed before this entry. SECURITY-SENSITIVE: extra-careful plan — only pure data/table or verbatim test-module moves first; never alter decision logic, error strings, or ordering in one PR.",
+    "whyItMatters": "Over the >800 'requires refactor plan' limit (1901 LOC on main 99113a6, 2026-09-24). Target: under 800 first, then under 500. Central tool policy gate (approval store/TTL, workspace binding, command/SSH/CDP-script policy, preview + enforce entry points); every tool call and R3-06/R2-08/R2-12 depend on it.",
+    "files": [
+      "src-tauri/src/tools/execution_policy.rs"
+    ],
+    "smallestPrScope": "EXTRA-CAREFUL (security-sensitive). Step 1: move the inline tests (L1064-1901) verbatim into execution_policy/tests.rs (#[cfg(test)] mod tests; use super::* unchanged) → ~1065. Step 2: move pure data/table items only — WRITE_TOOLS / WORKSPACE_BOUND_TOOLS / APPROVAL_TTL consts, the is_*_tool name classifiers (is_mcp_tool, is_destructive_mcp_tool, is_ssh_tool, is_browser_mutation_tool, is_read_tool, is_write_tool, is_command_tool) and the command_uses_network / command_is_long_running token tables — into execution_policy/classify.rs with a private re-import → under 800. Step 3 (separate PR): SSH remote-path helpers (require_remote_work_dir, normalize_remote_path, validate_remote_path) → execution_policy/ssh_paths.rs. Keep evaluate_* / enforce_* / preview_request_policy, the APPROVALS store and consume/store_approval in the root; no logic edits, token-identical moves, policy tests unchanged.",
+    "tests": [
+      "cargo test --lib tools::execution_policy",
+      "src-tauri/src/tools/execution_policy.rs #[cfg(test)]"
+    ],
+    "dependencies": [
+      "R3-06",
+      "R2-08",
+      "R2-12",
+      "AG-17"
+    ],
+    "runtimeBehavior": false,
+    "uiBehavior": false,
+    "splitPrs": true,
+    "recommendedPr": null
+  },
+  {
+    "id": "AG-23",
+    "title": "Split commands/code.rs (bash/python/node execution + LSP)",
+    "lane": "I. Architecture Governance",
+    "severity": "Governance",
+    "status": "open",
+    "fixNote": "2026-09-24: Opened (not yet fixed). 1472 LOC live wc -l on main 99113a6, 2026-09-24 (1063 production + 409 inline #[cfg(test)]). No AG item existed before this entry. SECURITY-SENSITIVE: extra-careful plan — only pure data/table or verbatim test-module moves first; never alter decision logic, error strings, or ordering in one PR.",
+    "whyItMatters": "Over the >800 'requires refactor plan' limit (1472 LOC on main 99113a6, 2026-09-24). Target: under 800 first, then under 500. Hosts execute_bash (+ check_command_safety, run_with_timeout), Python session pool, execute_node and lsp_operation; the test module sits mid-file (L966-1374) before the LSP section.",
+    "files": [
+      "src-tauri/src/commands/code.rs"
+    ],
+    "smallestPrScope": "EXTRA-CAREFUL (security-sensitive). Step 1: move the mid-file #[cfg(test)] mod tests (L966-1374) verbatim into code/tests.rs → ~1065. Step 2: move the Python session pool (PYTHON_SESSIONS, PythonSession + Drop, create_python_session) and the pure cwd/WSL path helpers (resolve_command_cwd, resolve_windows_command_cwd, normalize_wsl_style_path, join_wsl_paths) into code/python_session.rs / code/cwd.rs; keep every #[tauri::command] fn in code.rs (thin delegation like web.rs → web/cdp.rs if a body moves) → under 800. check_command_safety / execute_bash_for_tool are command-safety code: move only verbatim, never edit.",
+    "tests": [
+      "cargo test --lib commands::code"
+    ],
+    "dependencies": [
+      "R2-09"
+    ],
+    "runtimeBehavior": false,
+    "uiBehavior": false,
+    "splitPrs": true,
+    "recommendedPr": null
+  },
+  {
+    "id": "AG-24",
+    "title": "Split store/chat/chatToolExecution.ts (tool batch execution + permissions)",
+    "lane": "I. Architecture Governance",
+    "severity": "Governance",
+    "status": "open",
+    "fixNote": "2026-09-24: Opened (not yet fixed). 1348 LOC live wc -l on main 99113a6, 2026-09-24 (1348 production, no inline tests). No AG item existed before this entry. SECURITY-SENSITIVE: extra-careful plan — only pure data/table or verbatim test-module moves first; never alter decision logic, error strings, or ordering in one PR.",
+    "whyItMatters": "Over the >800 'requires refactor plan' limit (1348 LOC on main 99113a6, 2026-09-24). Target: under 800 first, then under 500. Frontend tool-batch executor: workspace preflight, permission resolution (waitForPermission / swarm enqueuePermissionInUI), concurrent vs serial batches, agent tool, terminal status mapping.",
+    "files": [
+      "src/store/chat/chatToolExecution.ts"
+    ],
+    "smallestPrScope": "EXTRA-CAREFUL (security-sensitive). Step 1 (pure): move the status mapping (ToolTerminalStatus / ToolStepStatus types, mapTerminalStatusToStepStatus, resolveToolStepStatus) and the session trace emitters (emitSessionToolTrace / emitSessionToolTerminal) into chatToolStatus.ts / chatToolTrace.ts, re-exported from chatToolExecution.ts. Step 2: move executeAgentTool (L715-841) and executeConcurrentTools (L382-597) whole into sibling modules with the same deps injection → under 800; later executeSerialTool → under 500. Permission resolution (resolveSerialToolPermission, buildPermissionContext, previewBackendToolPolicy, resolveWorkspaceToolPreflight) is a permission gate: move verbatim only, static imports, same await count per function, no microtask changes.",
+    "tests": [
+      "src/store/chat/__tests__/chatToolExecution.test.ts",
+      "src/store/chat/__tests__/chatStoreSendMessage.test.ts"
+    ],
+    "dependencies": [
+      "R2-01",
+      "R2-02",
+      "R7-06"
+    ],
+    "runtimeBehavior": false,
+    "uiBehavior": false,
+    "splitPrs": true,
+    "recommendedPr": null
+  },
+  {
+    "id": "AG-25",
+    "title": "Split tools/registry.rs (builtin tool registration + metadata)",
+    "lane": "I. Architecture Governance",
+    "severity": "Governance",
+    "status": "open",
+    "fixNote": "2026-09-24: Opened (not yet fixed). 1304 LOC live wc -l on main 99113a6, 2026-09-24 (1059 production + 245 inline #[cfg(test)]). No AG item existed before this entry. SECURITY-SENSITIVE: extra-careful plan — only pure data/table or verbatim test-module moves first; never alter decision logic, error strings, or ordering in one PR.",
+    "whyItMatters": "Over the >800 'requires refactor plan' limit (1304 LOC on main 99113a6, 2026-09-24). Target: under 800 first, then under 500. register_builtin_tools is a single ~700-line fn (L351-1059) registering read/write/list/search/execute_command/glob/grep/test-barrier tools; ToolMetadata is_read_only / is_concurrency_safe flags feed execution policy and concurrency.",
+    "files": [
+      "src-tauri/src/tools/registry.rs"
+    ],
+    "smallestPrScope": "EXTRA-CAREFUL (security-sensitive). Step 1: move the inline tests (L1060-1304) verbatim into registry/tests.rs → ~1060. Step 2: move the per-tool registration blocks, grouped by family and called in the SAME order, into registry/builtin_fs.rs (read_file…path_exists), registry/builtin_search.rs (search_files, glob_search, grep_files) and registry/builtin_command.rs (execute_command) as pub(super) fns invoked from register_builtin_tools → under 500. ToolMetadata literals (descriptions, is_read_only, is_concurrency_safe, input_schema) must stay byte-identical — policy-relevant, extra care.",
+    "tests": [
+      "cargo test --lib tools::registry",
+      "src/__tests__/tauriCommandParity.test.ts"
+    ],
+    "dependencies": [
+      "R2-01"
+    ],
+    "runtimeBehavior": false,
+    "uiBehavior": false,
+    "splitPrs": true,
+    "recommendedPr": null
+  },
+  {
+    "id": "AG-26",
+    "title": "Split tools/autoresearch_bootstrap/mod.rs (bootstrap tools)",
+    "lane": "I. Architecture Governance",
+    "severity": "Governance",
+    "status": "open",
+    "fixNote": "2026-09-24: Opened (not yet fixed). 1268 LOC live wc -l on main 99113a6, 2026-09-24 (1225 production + 43 inline #[cfg(test)]). No AG item existed before this entry.",
+    "whyItMatters": "Over the >800 'requires refactor plan' limit (1268 LOC on main 99113a6, 2026-09-24). Target: under 800 first, then under 500. Paper/arXiv/baseline extraction, scaffold templating, git init and bootstrap finalize in one module root; already a directory module, so child files are cheap.",
+    "files": [
+      "src-tauri/src/tools/autoresearch_bootstrap/mod.rs"
+    ],
+    "smallestPrScope": "Step 1: move the serde model structs (PaperReference…ScaffoldRenderResult, L36-186, incl. deserialize_optional_json_map) verbatim into autoresearch_bootstrap/types.rs. Step 2: move template tables + rendering (PYTHON_/NODE_ template consts L187-298, normalize_template_id, template_definition, normalize_project_name, normalize_scaffold_vars, render_value, render_template_string, render_known_scaffold_template) into autoresearch_bootstrap/scaffold_template.rs → under 800; then arXiv parsing (extract_arxiv_tag, parse_arxiv_atom_feed, execute_arxiv_search_tool) → arxiv.rs → under 500. Keep serde attributes verbatim; is_safe_scaffold_relative_path / write paths move verbatim only.",
+    "tests": [
+      "cargo test --lib tools::autoresearch_bootstrap"
+    ],
+    "dependencies": [],
+    "runtimeBehavior": false,
+    "uiBehavior": false,
+    "splitPrs": true,
+    "recommendedPr": null
+  },
+  {
+    "id": "AG-27",
+    "title": "Split pages/AutoResearch.tsx (AutoResearch page)",
+    "lane": "I. Architecture Governance",
+    "severity": "Governance",
+    "status": "open",
+    "fixNote": "2026-09-24: Opened (not yet fixed). 1131 LOC live wc -l on main 99113a6, 2026-09-24 (1131 production, no inline tests). No AG item existed before this entry.",
+    "whyItMatters": "Over the >800 'requires refactor plan' limit (1131 LOC on main 99113a6, 2026-09-24). Target: under 800 first, then under 500. Page component: persisted SSH setup loading, ExperimentDetailPanel, AutoResearchView (lifecycle lock, setup/start/test-connection handlers, ~500 lines of JSX).",
+    "files": [
+      "src/pages/AutoResearch.tsx"
+    ],
+    "smallestPrScope": "Step 1: move loadPersistedSetup + AUTORESEARCH_CONFIG_STORAGE_KEY + RawBashResult / ConnectionTestState types (L70-130) into pages/autoResearch/autoResearchSetupPersistence.ts, and ExperimentDetailPanel (L131-207) into pages/autoResearch/ExperimentDetailPanel.tsx. Step 2: extract the AutoResearchView JSX sections (run controls, setup panel, run list / batch selection, terminal) into display-only section components → under 800, then under 500. Handlers stay in the page (same useCallback deps, same awaits); static imports only.",
+    "tests": [
+      "src/components/__tests__/autoResearchPanelSections.test.tsx",
+      "npm test -- AutoResearch"
+    ],
+    "dependencies": [
+      "R5-04"
+    ],
+    "runtimeBehavior": false,
+    "uiBehavior": true,
+    "splitPrs": true,
+    "recommendedPr": null
+  },
+  {
+    "id": "AG-28",
+    "title": "Split commands/browser.rs (embedded surface / browser window commands)",
+    "lane": "I. Architecture Governance",
+    "severity": "Governance",
+    "status": "open",
+    "fixNote": "2026-09-24: Opened (not yet fixed). 1098 LOC live wc -l on main 99113a6, 2026-09-24 (1098 production, no inline tests). No AG item existed before this entry. SECURITY-SENSITIVE: extra-careful plan — only pure data/table or verbatim test-module moves first; never alter decision logic, error strings, or ordering in one PR.",
+    "whyItMatters": "Over the >800 'requires refactor plan' limit (1098 LOC on main 99113a6, 2026-09-24). Target: under 800 first, then under 500. 26 #[tauri::command] fns for the browser window, embedded surfaces, agent task, HTTP proxy, devtools, navigation and screenshots, plus BrowserState; no inline tests.",
+    "files": [
+      "src-tauri/src/commands/browser.rs"
+    ],
+    "smallestPrScope": "EXTRA-CAREFUL (security-sensitive). Use the web.rs pattern: keep every #[tauri::command] wrapper in browser.rs (same names/signatures so generate_handler! paths are unchanged) and move bodies into browser/embedded_surface.rs (open/move/visibility/url/execute/inspect/navigate/reload/close embedded surface) and browser/window.rs (open/show/close window, go_back, navigate, reload, screenshot, dimensions) → under 800 then under 500; BrowserState + ActiveSurface → browser/state.rs. proxy_http_request forwards arbitrary URLs (SSRF-relevant): move verbatim only, no behavior edits.",
+    "tests": [
+      "cargo test --lib commands::browser",
+      "src/__tests__/tauriCommandParity.test.ts"
+    ],
+    "dependencies": [],
+    "runtimeBehavior": false,
+    "uiBehavior": false,
+    "splitPrs": true,
+    "recommendedPr": null
+  },
+  {
+    "id": "AG-29",
+    "title": "Split components/chatInput/BlockComposer.tsx (prompt block composer)",
+    "lane": "I. Architecture Governance",
+    "severity": "Governance",
+    "status": "open",
+    "fixNote": "2026-09-24: Opened (not yet fixed). 1047 LOC live wc -l on main 99113a6, 2026-09-24 (1047 production, no inline tests). No AG item existed before this entry.",
+    "whyItMatters": "Over the >800 'requires refactor plan' limit (1047 LOC on main 99113a6, 2026-09-24). Target: under 800 first, then under 500. One component (L29-1047) with 5 temp-input state maps, createBlock factory, and inline editors for 7 block types (context L354-487, constraints L516-645, verification L714-816, safety L816-940 are the largest).",
+    "files": [
+      "src/components/chatInput/BlockComposer.tsx"
+    ],
+    "smallestPrScope": "Step 1: move the createBlock switch (pure given defaultMode) into blocks/createComposerBlock.ts. Step 2: extract per-type editors into display components under chatInput/blocks/ (ContextBlockEditor, ConstraintsBlockEditor, VerificationBlockEditor, SafetyBlockEditor, OutputBlockEditor) receiving block + updateBlock + the temp-input map/setter as props → under 800 then under 500. Keep block-type label chips, picker toolbar and preview in the shell; no state moves across components.",
+    "tests": [
+      "src/components/chatInput/__tests__/BlockComposer.test.tsx",
+      "src/components/chatInput/blocks/__tests__/BlockComposer.interaction.test.tsx",
+      "src/components/chatInput/blocks/__tests__/BlockComposer.modeSync.test.tsx"
+    ],
+    "dependencies": [
+      "AG-13"
+    ],
+    "runtimeBehavior": false,
+    "uiBehavior": true,
+    "splitPrs": true,
+    "recommendedPr": null
+  },
+  {
+    "id": "AG-30",
+    "title": "Split utils/typst.rs (Typst world + compile helpers)",
+    "lane": "I. Architecture Governance",
+    "severity": "Governance",
+    "status": "open",
+    "fixNote": "2026-09-24: Opened (not yet fixed). 1028 LOC live wc -l on main 99113a6, 2026-09-24 (442 production + 586 inline #[cfg(test)]). No AG item existed before this entry.",
+    "whyItMatters": "Over the >800 'requires refactor plan' limit (1028 LOC on main 99113a6, 2026-09-24). Target: under 800 first, then under 500. Production code is only 442 LOC (fonts, TypstWorld, compile helpers, templates dir); the rest is the inline test module of template compile smoke tests.",
+    "files": [
+      "src-tauri/src/utils/typst.rs"
+    ],
+    "smallestPrScope": "Move the inline #[cfg(test)] mod tests (L442-1028) verbatim into utils/typst/tests.rs (basic compile tests) + utils/typst/tests/template_examples.rs (template inline-example tests), each under 500 → typst.rs ~442, under 500. No production tokens change.",
+    "tests": [
+      "cargo test --lib utils::typst"
+    ],
+    "dependencies": [],
+    "runtimeBehavior": false,
+    "uiBehavior": false,
+    "splitPrs": true,
+    "recommendedPr": null
+  },
+  {
+    "id": "AG-31",
+    "title": "Split services/autoresearch/history.ts (run history types, normalization, persistence)",
+    "lane": "I. Architecture Governance",
+    "severity": "Governance",
+    "status": "open",
+    "fixNote": "2026-09-24: Opened (not yet fixed). 1016 LOC live wc -l on main 99113a6, 2026-09-24 (1016 production, no inline tests). No AG item existed before this entry.",
+    "whyItMatters": "Over the >800 'requires refactor plan' limit (1016 LOC on main 99113a6, 2026-09-24). Target: under 800 first, then under 500. Run/iteration/event types (L1-190), caps + sanitizers/redaction (L191-590), live-output clipping, compaction and localStorage load/persist with quota fallback (L687-1016).",
+    "files": [
+      "src/services/autoresearch/history.ts"
+    ],
+    "smallestPrScope": "Step 1: move the exported types/interfaces (L1-190) into historyTypes.ts, re-exported from history.ts (export type {…}) so imports are unchanged. Step 2: move normalizers (normalizeResumeToken, normalizeConfigSnapshot, normalizeIterationRecord, normalizeEvent, normalizeRunRecord + helpers) into historyNormalize.ts → under 800, then compaction/persistence into historyPersistence.ts → under 500. Redaction (redactAutoResearchSensitiveText, isSensitiveMetadataKey, sanitizeMetadataValue) and the MAX_* caps must move verbatim (privacy-relevant); no await changes.",
+    "tests": [
+      "src/services/autoresearch/__tests__/history.test.ts"
+    ],
+    "dependencies": [
+      "AG-06"
+    ],
+    "runtimeBehavior": false,
+    "uiBehavior": false,
+    "splitPrs": true,
+    "recommendedPr": null
+  },
+  {
+    "id": "AG-32",
+    "title": "Split commands/telegram.rs (Telegram Bot API commands)",
+    "lane": "I. Architecture Governance",
+    "severity": "Governance",
+    "status": "open",
+    "fixNote": "2026-09-24: Opened (not yet fixed). 1012 LOC live wc -l on main 99113a6, 2026-09-24 (948 production + 64 inline #[cfg(test)]). No AG item existed before this entry. SECURITY-SENSITIVE: extra-careful plan — only pure data/table or verbatim test-module moves first; never alter decision logic, error strings, or ordering in one PR.",
+    "whyItMatters": "Over the >800 'requires refactor plan' limit (1012 LOC on main 99113a6, 2026-09-24). Target: under 800 first, then under 500. Bot API types, token redaction, telegram_api_request, 18 #[tauri::command] fns (connect, send, updates, files, webhooks, allowed chats).",
+    "files": [
+      "src-tauri/src/commands/telegram.rs"
+    ],
+    "smallestPrScope": "EXTRA-CAREFUL (security-sensitive). Step 1: move the serde types (TelegramBotInfo…TelegramUpdate, GetMe/GetUpdates responses, webhook response types) into telegram/types.rs with pub use re-exports at the same paths → under 800. Step 2: move webhook + file command bodies into telegram/webhook.rs / telegram/files.rs behind thin #[tauri::command] wrappers kept in telegram.rs → under 500. Token redaction (redact_token_in_str / redact_token_in_error, build_api_url / build_file_url) and telegram_set_allowed_chats are security-relevant: verbatim moves only.",
+    "tests": [
+      "cargo test --lib commands::telegram",
+      "src/__tests__/tauriCommandParity.test.ts"
+    ],
+    "dependencies": [
+      "R7-10",
+      "R7-12"
+    ],
+    "runtimeBehavior": false,
+    "uiBehavior": false,
+    "splitPrs": true,
+    "recommendedPr": null
+  },
+  {
+    "id": "AG-33",
+    "title": "Split claude/http/request_builder.rs (provider request formatting)",
+    "lane": "I. Architecture Governance",
+    "severity": "Governance",
+    "status": "open",
+    "fixNote": "2026-09-24: Opened (not yet fixed). 1009 LOC live wc -l on main 99113a6, 2026-09-24 (638 production + 371 inline #[cfg(test)]). No AG item existed before this entry. SECURITY-SENSITIVE: extra-careful plan — only pure data/table or verbatim test-module moves first; never alter decision logic, error strings, or ordering in one PR.",
+    "whyItMatters": "Over the >800 'requires refactor plan' limit (1009 LOC on main 99113a6, 2026-09-24). Target: under 800 first, then under 500. Anthropic/OpenAI message formatting, history sanitization, artifacts detection, URL/header/body builders and token estimation.",
+    "files": [
+      "src-tauri/src/claude/http/request_builder.rs"
+    ],
+    "smallestPrScope": "EXTRA-CAREFUL (security-sensitive). Step 1: move the inline tests (L639-1009) verbatim into request_builder/tests.rs → ~638 (under 800). Step 2: move artifact detection (ARTIFACT_* regexes + detect_artifacts) and OpenAI history sanitization (sanitize_openai_history_messages, remove_hidden_reasoning_fields, sanitize_assistant_message_for_openai_record) into sibling modules with pub use at the same paths → under 500. sanitize_header_value / build_*_headers carry the API key: verbatim moves only.",
+    "tests": [
+      "cargo test --lib claude::http::request_builder"
+    ],
+    "dependencies": [],
+    "runtimeBehavior": false,
+    "uiBehavior": false,
+    "splitPrs": true,
+    "recommendedPr": null
+  },
+  {
     "id": "INFRA-01",
     "title": "Add @testing-library/react devDependency",
     "lane": "H. Test Infrastructure",
