@@ -649,6 +649,7 @@ export function Settings() {
             errors={errors}
             isSaving={isSaving}
             isTesting={isTesting}
+            testResult={testResult}
             isFetchingModels={isFetchingModels}
             currentProviderModelEntries={currentProviderModelEntries}
             showPricingSection={showPricingSection}

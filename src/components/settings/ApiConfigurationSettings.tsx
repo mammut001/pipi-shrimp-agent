@@ -53,6 +53,7 @@ interface ApiConfigurationSettingsProps {
   errors: Record<string, string>;
   isSaving: boolean;
   isTesting: boolean;
+  testResult: { success: boolean; message: string } | null;
   isFetchingModels: boolean;
   currentProviderModelEntries: ModelEntry[];
   showPricingSection: boolean;
@@ -70,6 +71,7 @@ export function ApiConfigurationSettings({
   errors,
   isSaving,
   isTesting,
+  testResult,
   isFetchingModels,
   currentProviderModelEntries,
   showPricingSection,
