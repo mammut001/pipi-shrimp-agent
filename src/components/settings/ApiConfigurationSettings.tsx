@@ -8,6 +8,7 @@ import {
   supportsCustomModel,
 } from '@/shared/providers';
 import { formatCost } from '@/utils/pricing';
+import { formatApiKeyLengthHint, sanitizeApiKeyValue } from '@/services/agentConfig';
 import { t } from '@/i18n';
 
 type SettingsFormData = {
