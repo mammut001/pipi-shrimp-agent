@@ -30,7 +30,7 @@
 | T-13 | Store | `StreamingToolExecutor` requiresConfirmation 路径 | R4-07 |
 | T-14 | Workflow | `engine.stop()` 后 `getIsRunning()` 与 restart | R4-02, R6-02 |
 | T-15 | Telegram | `telegramService` invoke 与 `lib.rs` 注册表 parity ✅ Fixed 2026-09-17 | R7-12, R9-01, R10-05 |
-| T-16 | Telegram | `allowedChats` 在 commandRouter 执行 | R7-11 |
+| T-16 | Telegram | `allowedChats` 在 commandRouter 执行 ✅ Fixed 2026-09-24（chatAuthorization 拒绝未列入的 chat；commandRouter 在分发前拒绝未授权聊天） | R7-11 |
 | T-17 | Browser | `stopTask` 停止 CDP loop | R3-05 |
 | T-18 | Rust | legacy `execute_tool` 与 batch 策略一致 | R2-01 |
 
