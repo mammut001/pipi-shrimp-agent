@@ -20,7 +20,6 @@ import {
   buildAutoResearchAgentErrorMessage,
   classifyAutoResearchFailure,
   formatError,
-  getToolRoundLimit,
   isAutoResearchAbortError,
   isToolRoundLimitError,
 } from './errors';
@@ -32,48 +31,47 @@ import {
   isAutoResearchReflectionFailureError,
   requestReflectionDecision,
   type AutoResearchObservedToolResult,
-  type AutoResearchReflectionDecision,
   type AutoResearchReflectionDecisionResult,
 } from './reflection';
-import { appendTargetText, writeTargetText } from './runDir';
 import { getCurrentRunDir } from './terminalRunner';
 import { rewriteAutoResearchToolArguments } from './experimentPathRewrite';
 import type { AutoResearchEnvironmentSummary } from './preflight';
 import { buildAutoResearchToolCatalog } from './toolCatalog';
 import type { AutoResearchRunPhase } from './history';
 import {
-  buildAutoResearchToolLaneError,
-  classifyAutoResearchToolPhase,
-  getAutoResearchAllowedToolsForPhase,
-  isAutoResearchToolLaneTransitionAllowed,
-} from './toolLanes';
-import {
   getRemainingToolBudget,
   getToolBudgetSummaryFromUnknown,
-  type ToolBudgetSummary,
 } from '@/services/tools/toolBudget';
 import { emitAutoResearchRuntimeEvent, setAutoResearchPhase } from './runtimeEvents';
-import { parseToolCommand, parseToolResult } from './chatAdapterHelpers';
+import { parseToolResult } from './chatAdapterHelpers';
 import {
-  TOOL_BUDGET_EXHAUSTED_MARKER,
-  truncateTranscriptResult,
   appendIterationTranscript,
   buildAutoResearchRetryConstraintState,
-  buildConvergenceRetryPrompt,
   buildIterationFailureOutput,
-  buildRecoveryPrompt,
   emitBudgetNearLimitEvent,
   getLatestExperimentFailure,
   getRecentEventSummaries,
   isApiRequestFailure,
-  isExperimentRunCommand,
   isReflectionParserFailure,
-  previewFirstLines,
-  readToolPath,
   recordDisabledToolAttempts,
-  summarizeToolInput,
   writeIterationTranscriptHeader,
 } from './chatAdapterSupport';
+import {
+  emitReflectionParseFailureEvents,
+  emitToolBudgetEvent,
+  persistReflectionArtifacts,
+  persistReflectionDecision,
+} from './chatAdapterReflectionEvents';
+import { createReasoningBuffer } from './chatAdapterReasoning';
+import {
+  createAutoResearchToolHooks,
+  type AutoResearchToolCallRecord,
+} from './chatAdapterToolHooks';
+import {
+  buildIterationFailureExplanation,
+  selectRecoveryAttemptPrompt,
+} from './chatAdapterRecoveryPrompt';
+
 export { buildAutoResearchRetryConstraintState } from './chatAdapterSupport';
 export type { AutoResearchRetryConstraintState } from './chatAdapterSupport';
 
@@ -84,7 +82,6 @@ const MAX_HISTORY = 20;
 const MAX_RECOVERY_RETRIES = 1;
 const MAX_REFLECTION_PASSES = 2;
 const MAX_CONSECUTIVE_API_REQUEST_FAILURES = 3;
-const TOOL_BUDGET_EXHAUSTION_FAIL_REASON = 'tool budget exhausted before evaluation completed';
 
 export interface AutoResearchSendMessageOptions {
   environmentSummary?: AutoResearchEnvironmentSummary;
@@ -98,121 +95,6 @@ export interface AutoResearchSendMessageOptions {
    * cancel an in-flight AutoResearch run from the UI (e.g. on page unmount).
    */
   signal?: AbortSignal;
-}
-
-
-
-function emitToolBudgetEvent(summary: ToolBudgetSummary | undefined): void {
-  if (!summary || (summary.successfulCalls === 0 && summary.failedCalls === 0)) {
-    return;
-  }
-
-  useAutoResearchStore.getState().addRunEvent?.({
-    level: summary.failedCalls > 0 ? 'warn' : 'info',
-    phase: 'agent_execution',
-    message: `Tool budget ${summary.toolBudgetUsed}/${summary.toolBudgetMax} used (${summary.successfulCalls} successful, ${summary.failedCalls} failed).`,
-    metadata: {
-      tool_budget_used: summary.toolBudgetUsed,
-      tool_budget_max: summary.toolBudgetMax,
-      failed_calls: summary.failedCalls,
-      successful_calls: summary.successfulCalls,
-      category_counts: summary.categoryCounts,
-    },
-  });
-}
-
-async function persistReflectionDecision(
-  decision: AutoResearchReflectionDecision,
-  toolBudgetSummary?: ToolBudgetSummary,
-): Promise<void> {
-  setAutoResearchPhase('REFLECT', {
-    summary: `Reflection generated a ${decision.action} decision.`,
-  });
-  emitAutoResearchRuntimeEvent({
-    level: decision.shouldRetry ? 'info' : 'warn',
-    phase: 'REFLECT',
-    type: 'reflection_generated',
-    message: `Reflection decision: ${decision.action} — ${decision.summary}`,
-    summary: decision.summary,
-    metadata: {
-      action: decision.action,
-      rootCause: decision.rootCause,
-      confidence: decision.confidence,
-      ...(toolBudgetSummary ? {
-        tool_budget_used: toolBudgetSummary.toolBudgetUsed,
-        tool_budget_max: toolBudgetSummary.toolBudgetMax,
-        failed_calls: toolBudgetSummary.failedCalls,
-        successful_calls: toolBudgetSummary.successfulCalls,
-      } : {}),
-    },
-  });
-  useAutoResearchStore.getState().patchIterationRecord({
-    iteration: useAutoResearchStore.getState().currentIteration,
-    reflectionSummary: decision.summary,
-  });
-  useAutoResearchStore.getState().appendLiveOutput(
-    `[status] Reflection decision: ${decision.action} — ${decision.summary}\n`,
-  );
-  await appendIterationTranscript(
-    `\n## Reflection Decision\n\`\`\`json\n${JSON.stringify({
-      action: decision.action,
-      summary: decision.summary,
-      rootCause: decision.rootCause,
-      nextCommand: decision.nextCommand,
-      nextPlan: decision.nextPlan,
-      userMessage: decision.userMessage,
-      shouldRetry: decision.shouldRetry,
-      confidence: decision.confidence,
-    }, null, 2)}\n\`\`\`\n`,
-  );
-}
-
-async function persistReflectionArtifacts(result: AutoResearchReflectionDecisionResult): Promise<void> {
-  const state = useAutoResearchStore.getState();
-  const runDir = getCurrentRunDir();
-  if (!state.sshConfig || !runDir) {
-    return;
-  }
-
-  await Promise.all([
-    writeTargetText(
-      state.sshConfig,
-      runDir.reflectionInputPath,
-      `${JSON.stringify(result.request, null, 2)}\n`,
-    ),
-    writeTargetText(
-      state.sshConfig,
-      runDir.reflectionRawPath,
-      result.rawText,
-    ),
-    writeTargetText(
-      state.sshConfig,
-      runDir.reflectionParsedPath,
-      `${JSON.stringify({
-        decision: result.decision.action,
-        summary: result.decision.summary,
-        next_action: result.decision.nextPlan ?? '',
-        parser_path: result.parserPath,
-        retry_count: result.retryCount,
-      }, null, 2)}\n`,
-    ),
-  ]);
-}
-
-function emitReflectionParseFailureEvents(result: AutoResearchReflectionDecisionResult): void {
-  result.parseFailedAttempts.forEach((attempt) => {
-    emitAutoResearchRuntimeEvent({
-      level: 'warn',
-      phase: 'REFLECT',
-      type: 'raw',
-      message: `Reflection parse failed (${attempt.retryCount + 1}/${result.retryCount + 1}): ${attempt.preview}`,
-      summary: `Reflection parse failed on retry ${attempt.retryCount + 1}.`,
-      metadata: {
-        retryCount: attempt.retryCount,
-        preview: attempt.preview,
-      },
-    });
-  });
 }
 
 /**
@@ -264,7 +146,7 @@ export function createAutoResearchSendMessage(
     let reflectionPasses = 0;
     let attemptPrompt = systemPrompt;
     const baseAllowedTools = buildAutoResearchToolCatalog(store.sshConfig);
-    let toolLanePhase: AutoResearchRunPhase = 'READ_CONTEXT';
+    const toolLane: { phase: AutoResearchRunPhase } = { phase: 'READ_CONTEXT' };
     const currentRunDir = getCurrentRunDir();
     const effectiveWorkDir = store.sshConfig?.mode === 'local'
       ? (currentRunDir?.iterDir || workDir)
@@ -286,51 +168,22 @@ export function createAutoResearchSendMessage(
     let consecutiveApiRequestFailures = 0;
 
     while (true) {
-      const toolCallsById = new Map<string, {
-        name: string;
-        command?: string;
-        argumentsText: string;
-        path?: string;
-        phase?: AutoResearchRunPhase;
-      }>();
+      const toolCallsById = new Map<string, AutoResearchToolCallRecord>();
       const toolResults: AutoResearchObservedToolResult[] = [];
       const failedCommands: string[] = [];
-      let reasoningBuffer = '';
-      let reasoningFlushed = false;
-
-      const flushBufferedReasoning = (fallbackReasoning?: string) => {
-        if (!reasoningBuffer && fallbackReasoning) {
-          reasoningBuffer = fallbackReasoning;
-        }
-
-        const reasoningText = reasoningBuffer.trim();
-        if (!reasoningText || reasoningFlushed) {
-          return;
-        }
-
-        useAutoResearchStore.getState().appendLiveOutput(`[thinking]\n${reasoningText}\n`);
-        emitAutoResearchRuntimeEvent({
-          level: 'debug',
-          phase: 'PLAN_HYPOTHESIS',
-          type: 'thinking',
-          message: reasoningText,
-          summary: previewFirstLines(reasoningText, 2) || 'Thinking',
-          detail: reasoningText,
-        });
-        emitAutoResearchRuntimeEvent({
-          level: 'info',
-          phase: 'PLAN_HYPOTHESIS',
-          type: 'agent_plan',
-          message: previewFirstLines(reasoningText, 6) || 'Agent plan recorded.',
-          summary: previewFirstLines(reasoningText, 2) || 'Agent plan recorded.',
-          detail: reasoningText,
-        });
-        reasoningFlushed = true;
-      };
+      const reasoning = createReasoningBuffer();
 
       try {
         adapterSessionCounter++;
         const attemptSessionId = `autoresearch-${adapterSessionCounter}-${Date.now()}`;
+        const toolHooks = createAutoResearchToolHooks({
+          toolLane,
+          toolCallsById,
+          toolResults,
+          failedCommands,
+          environmentSummary: options.environmentSummary,
+        });
+
         const result = await runHeadlessAgentTurn({
           sessionId: attemptSessionId,
           initialMessages: [...turnMessages, ...retryConstraintState.retryMessages],
@@ -353,7 +206,7 @@ export function createAutoResearchSendMessage(
             useAutoResearchStore.getState().appendLiveOutput(chunk);
           },
           onReasoningDelta: (chunk) => {
-            reasoningBuffer += chunk;
+            reasoning.append(chunk);
           },
           onStatus: (message) => {
             useAutoResearchStore.getState().appendLiveOutput(`[status] ${message}\n`);
@@ -367,184 +220,12 @@ export function createAutoResearchSendMessage(
             }
             await appendIterationTranscript(`\n## Assistant\n${text.trim()}\n`);
           },
-          allowToolExecution: (call) => {
-            const command = parseToolCommand(call);
-            const nextPhase = classifyAutoResearchToolPhase({
-              currentPhase: toolLanePhase,
-              toolName: call.name,
-              isExperimentRun: isExperimentRunCommand(command, options.environmentSummary),
-              config: useAutoResearchStore.getState().sshConfig,
-            });
-            const phaseAllowedTools = getAutoResearchAllowedToolsForPhase(
-              useAutoResearchStore.getState().sshConfig,
-              nextPhase,
-            );
-
-            if (!phaseAllowedTools.includes(call.name)) {
-              return {
-                allowed: false,
-                reason: buildAutoResearchToolLaneError(call.name, nextPhase, phaseAllowedTools),
-              };
-            }
-
-            if (!isAutoResearchToolLaneTransitionAllowed(toolLanePhase, nextPhase)) {
-              return {
-                allowed: false,
-                reason: `Tool lane transition ${toolLanePhase} -> ${nextPhase} is not allowed in the same iteration.`,
-              };
-            }
-
-            toolLanePhase = nextPhase;
-            return { allowed: true };
-          },
-          onToolCall: async (call) => {
-            const command = parseToolCommand(call);
-            const path = readToolPath(call.arguments);
-            const parameterSummary = summarizeToolInput(call.arguments);
-            const toolPhase = classifyAutoResearchToolPhase({
-              currentPhase: toolLanePhase,
-              toolName: call.name,
-              isExperimentRun: isExperimentRunCommand(command, options.environmentSummary),
-              config: useAutoResearchStore.getState().sshConfig,
-            });
-            toolCallsById.set(call.id, {
-              name: call.name,
-              command,
-              argumentsText: call.arguments,
-              path,
-              phase: toolPhase,
-            });
-            if (toolPhase === 'RUN_EXPERIMENT') {
-              setAutoResearchPhase('RUN_EXPERIMENT', {
-                summary: `Running experiment command for iteration ${useAutoResearchStore.getState().currentIteration}.`,
-              });
-              useAutoResearchStore.getState().patchIterationRecord({
-                iteration: useAutoResearchStore.getState().currentIteration,
-                executionCommand: command,
-              });
-              emitAutoResearchRuntimeEvent({
-                level: 'info',
-                phase: 'RUN_EXPERIMENT',
-                type: 'experiment_command_started',
-                message: command ?? '',
-                summary: parameterSummary,
-                metadata: {
-                  toolName: call.name,
-                  command,
-                },
-              });
-            } else {
-              setAutoResearchPhase(toolPhase, {
-                summary: `Tool ${call.name} is running in ${toolPhase}.`,
-              });
-            }
-            emitAutoResearchRuntimeEvent({
-              level: 'info',
-              phase: toolPhase,
-              type: 'tool_call_started',
-              message: `${call.name} started.`,
-              summary: parameterSummary,
-              metadata: {
-                toolName: call.name,
-                arguments: call.arguments,
-                command,
-                path,
-                phase: toolPhase,
-                parameterSummary,
-              },
-            });
-            await appendIterationTranscript(
-              `\n## Tool Call: ${call.name}\n\`\`\`json\n${call.arguments || '{}'}\n\`\`\`\n`,
-            );
-          },
-          onToolResult: async (call) => {
-            const toolCall = toolCallsById.get(call.id);
-            const observed = parseToolResult(call, toolCall?.command);
-            toolResults.push(observed);
-            if (observed.command && ((typeof observed.exitCode === 'number' && observed.exitCode !== 0) || observed.stderr)) {
-              failedCommands.push(observed.command);
-            }
-            const toolFailed = (typeof observed.exitCode === 'number' && observed.exitCode !== 0) || Boolean(observed.stderr);
-            const toolPhase = toolCall?.phase ?? classifyAutoResearchToolPhase({
-              currentPhase: toolLanePhase,
-              toolName: call.name,
-              isExperimentRun: isExperimentRunCommand(observed.command, options.environmentSummary),
-              config: useAutoResearchStore.getState().sshConfig,
-            });
-            emitAutoResearchRuntimeEvent({
-              level: toolFailed ? 'warn' : 'info',
-              phase: toolPhase,
-              type: toolFailed ? 'tool_call_failed' : 'tool_call_completed',
-              message: `${call.name} ${toolFailed ? 'failed' : 'completed'}.`,
-              summary: toolFailed
-                ? (observed.stderr || `Exit code ${observed.exitCode ?? 'unknown'}`)
-                : `${call.name} completed in ${call.durationMs} ms.`,
-              metadata: {
-                toolName: call.name,
-                command: observed.command,
-                durationMs: call.durationMs,
-                exitCode: observed.exitCode,
-                phase: toolPhase,
-                path: toolCall?.path,
-              },
-            });
-            emitAutoResearchRuntimeEvent({
-              level: toolFailed ? 'warn' : 'debug',
-              phase: toolPhase,
-              type: 'tool_result',
-              message: previewFirstLines(call.result, 10) || '(empty tool result)',
-              summary: `${call.name} output`,
-              detail: call.result,
-              metadata: {
-                toolName: call.name,
-                durationMs: call.durationMs,
-                exitCode: observed.exitCode,
-              },
-            });
-            if (toolCall?.path && !toolFailed && ['write_file', 'ssh_upload_file'].includes(call.name)) {
-              emitAutoResearchRuntimeEvent({
-                level: 'info',
-                phase: 'EDIT_CODE',
-                type: 'file_changed',
-                message: toolCall.path,
-                summary: `Updated ${toolCall.path}`,
-                metadata: {
-                  toolName: call.name,
-                  path: toolCall.path,
-                },
-              });
-            }
-            if (observed.command && isExperimentRunCommand(observed.command, options.environmentSummary)) {
-              useAutoResearchStore.getState().patchIterationRecord({
-                iteration: useAutoResearchStore.getState().currentIteration,
-                executionCommand: observed.command,
-                exitCode: observed.exitCode,
-                durationMs: call.durationMs,
-              });
-              emitAutoResearchRuntimeEvent({
-                level: toolFailed ? 'warn' : 'info',
-                phase: 'RUN_EXPERIMENT',
-                type: 'experiment_command_completed',
-                message: observed.command,
-                summary: toolFailed
-                  ? `Experiment command failed${typeof observed.exitCode === 'number' ? ` with exit code ${observed.exitCode}` : ''}.`
-                  : 'Experiment command completed.',
-                metadata: {
-                  toolName: call.name,
-                  command: observed.command,
-                  durationMs: call.durationMs,
-                  exitCode: observed.exitCode,
-                  stderrPreview: observed.stderr ? previewFirstLines(observed.stderr, 10) : undefined,
-                },
-              });
-            }
-            await appendIterationTranscript(
-              `\n## Tool Result: ${call.name} (${call.durationMs}ms)\n\`\`\`text\n${truncateTranscriptResult(call.result)}\n\`\`\`\n`,
-            );
-          },
+          allowToolExecution: toolHooks.allowToolExecution,
+          onToolCall: toolHooks.onToolCall,
+          onToolResult: toolHooks.onToolResult,
         });
 
-        flushBufferedReasoning(result.finalReasoning);
+        reasoning.flush(result.finalReasoning);
         emitToolBudgetEvent(result.toolBudgetSummary);
         emitBudgetNearLimitEvent(result.toolBudgetSummary);
         consecutiveApiRequestFailures = 0;
@@ -552,7 +233,7 @@ export function createAutoResearchSendMessage(
         lastError = undefined;
         break;
       } catch (error) {
-        flushBufferedReasoning();
+        reasoning.flush();
         if (isAutoResearchAbortError(error) || signal?.aborted) {
           const abortError = new Error('sendMessage aborted by user.') as Error & { name: string };
           abortError.name = 'AutoResearchAbortedError';
@@ -619,7 +300,7 @@ export function createAutoResearchSendMessage(
             : (isToolRoundLimitError(error) ? 0 : undefined),
         });
         const failureKind = classifyAutoResearchFailure(error);
-          const experimentFailure = getLatestExperimentFailure(toolResults, options.environmentSummary);
+        const experimentFailure = getLatestExperimentFailure(toolResults, options.environmentSummary);
 
         let decision = getDeterministicRecoveryDecision(reflectionInput);
         let reflectionResult: AutoResearchReflectionDecisionResult | null = null;
@@ -667,24 +348,19 @@ export function createAutoResearchSendMessage(
             || decision.action === 'stop_tool_exhausted';
 
           if (shouldFinalizeAsIterationFailure) {
-            const failReason = isToolRoundLimitError(error)
-              ? TOOL_BUDGET_EXHAUSTION_FAIL_REASON
-              : experimentFailure?.stderr?.trim()
-                || decision.userMessage
-                || decision.summary;
-            const reasoning = isToolRoundLimitError(error)
-              ? `${decision.summary}${decision.rootCause ? ` Root cause: ${decision.rootCause}` : ''}`.trim()
-              : experimentFailure?.stderr?.trim()
-                || decision.summary
-                || formatError(error);
+            const failureExplanation = buildIterationFailureExplanation({
+              error,
+              decision,
+              experimentFailure,
+            });
 
             assistantText = buildIterationFailureOutput({
               metricName: options.metricName ?? storeState.metricName,
-              failReason,
+              failReason: failureExplanation.failReason,
               hypothesis: isToolRoundLimitError(error)
                 ? 'tool budget exhausted before evaluation completed'
                 : 'experiment command failed before evaluation completed',
-              reasoning,
+              reasoning: failureExplanation.reasoning,
               budgetExhausted: isToolRoundLimitError(error),
             });
             lastError = undefined;
@@ -699,34 +375,14 @@ export function createAutoResearchSendMessage(
               decision,
               environmentSummary: options.environmentSummary,
             });
-            attemptPrompt = decision.action === 'switch_command'
-              ? buildRecoveryPrompt(
-                systemPrompt,
-                decision,
-                failureKind,
-                retryConstraintState.allowedTools,
-                retryConstraintState.hardConstraintLines,
-              )
-              : (isToolRoundLimitError(error)
-                ? buildRecoveryPrompt(
-                  buildConvergenceRetryPrompt(
-                    systemPrompt,
-                    getToolRoundLimit(error),
-                    retryConstraintState.allowedTools,
-                    retryConstraintState.hardConstraintLines,
-                  ),
-                  decision,
-                  failureKind,
-                  retryConstraintState.allowedTools,
-                  retryConstraintState.hardConstraintLines,
-                )
-                : buildRecoveryPrompt(
-                  systemPrompt,
-                  decision,
-                  failureKind,
-                  retryConstraintState.allowedTools,
-                  retryConstraintState.hardConstraintLines,
-                ));
+            attemptPrompt = selectRecoveryAttemptPrompt({
+              systemPrompt,
+              decision,
+              failureKind,
+              allowedTools: retryConstraintState.allowedTools,
+              hardConstraintLines: retryConstraintState.hardConstraintLines,
+              error,
+            });
             continue;
           }
 
