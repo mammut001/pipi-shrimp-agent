@@ -74,6 +74,32 @@ describe('listenerGuard (TOP-15-04 / T-12)', () => {
     expect(cleanupCalls).toBe(1);
   });
 
+  it('keeps listeners active until the last concurrent cleanup, regardless of order', async () => {
+    let setupCalls = 0;
+    let cleanupCalls = 0;
+    const setup = () => {
+      setupCalls += 1;
+      return Promise.resolve(() => {
+        cleanupCalls += 1;
+      });
+    };
+    const firstRegistration = registerWithRefCount(setup);
+    const secondRegistration = registerWithRefCount(setup);
+    const cleanupFirst = await firstRegistration;
+    const cleanupSecond = await secondRegistration;
+
+    await cleanupSecond();
+    expect(getListenerRefCount()).toBe(1);
+    expect(hasListeners()).toBe(true);
+    expect(cleanupCalls).toBe(0);
+
+    await cleanupFirst();
+    expect(setupCalls).toBe(1);
+    expect(getListenerRefCount()).toBe(0);
+    expect(hasListeners()).toBe(false);
+    expect(cleanupCalls).toBe(1);
+  });
+
   it('re-register after full cleanup re-runs setup', async () => {
     let setupCalls = 0;
     const setup = () => {
