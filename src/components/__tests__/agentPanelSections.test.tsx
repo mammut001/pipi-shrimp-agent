@@ -70,6 +70,7 @@ describe('agentPanelSections', () => {
       const buttons = container.querySelectorAll('button');
       // Main, Browser, Goal buttons
       expect(buttons.length).toBe(3);
+      expect(buttons[2].getAttribute('title')).toBe('goal.panelTitle');
 
       act(() => {
         buttons[0].dispatchEvent(new MouseEvent('click', { bubbles: true }));
