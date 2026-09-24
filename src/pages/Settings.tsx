@@ -648,6 +648,7 @@ export function Settings() {
             formData={formData}
             errors={errors}
             isSaving={isSaving}
+            isFetchingModels={isFetchingModels}
             currentProviderModelEntries={currentProviderModelEntries}
             showPricingSection={showPricingSection}
             setShowPricingSection={setShowPricingSection}
