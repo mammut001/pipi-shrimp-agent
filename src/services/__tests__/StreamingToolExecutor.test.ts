@@ -160,6 +160,48 @@ describe('StreamingToolExecutor.executeBatch', () => {
     expect(result.results[0]?.content.trim().length).toBeGreaterThan(0);
   });
 
+  it('requires frontend hook confirmation even when backend preview allows the tool', async () => {
+    mockRunPreToolUseHooks.mockResolvedValue({ approved: true, requiresConfirmation: true });
+    mockInvoke.mockImplementation(async (command: string) => {
+      if (command === 'get_available_tools') return [];
+      if (command === 'preview_tool_policy') {
+        return {
+          toolCallId: 'tool-hook-confirm',
+          toolName: 'execute_command',
+          decision: 'allowed',
+        };
+      }
+      throw new Error(`Unexpected command: ${command}`);
+    });
+
+    const requestPermission = jest.fn(async () => false);
+    const executor = new StreamingToolExecutor({ timeoutMs: 5000 });
+    const result = await executor.executeBatch([
+      { id: 'tool-hook-confirm', name: 'execute_command', arguments: { command: 'rm -rf /tmp/example' } },
+    ], {
+      sessionId: 'session-1',
+      source: 'assistant_tool_call',
+      permissionMode: 'standard',
+      requestPermission,
+    });
+
+    expect(requestPermission).toHaveBeenCalledWith({
+      id: 'tool-hook-confirm',
+      name: 'execute_command',
+      arguments: '{"command":"rm -rf /tmp/example","windowsShellProfile":"auto"}',
+      reason: 'A frontend tool policy requires explicit approval.',
+      source: 'assistant_tool_call',
+      workDir: undefined,
+    });
+    expect(mockInvoke).not.toHaveBeenCalledWith('execute_tool_batch', expect.anything());
+    expect(result.results[0]).toEqual(expect.objectContaining({
+      id: 'tool-hook-confirm',
+      is_error: true,
+      error_message: 'Tool execution was denied by the user.',
+    }));
+    expect(result.results[0]?.content).toContain('"error_kind":"permission_denied"');
+  });
+
   it('requires backend-approved confirmation before executing destructive MCP tools', async () => {
     mockInvoke.mockImplementation(async (command: string) => {
       if (command === 'preview_tool_policy') {
