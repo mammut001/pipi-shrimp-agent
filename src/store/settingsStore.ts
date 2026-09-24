@@ -546,7 +546,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
 
 // ========== Initialize from localStorage ==========
 
-const initializeSettings = async () => {
+export const initializeSettings = async () => {
   if (typeof localStorage === 'undefined') {
     return;
   }
@@ -623,14 +623,20 @@ const initializeSettings = async () => {
     // secure storage provider may be the OS keychain
     // (AUDIT-FIX [R7-15]); awaiting them in the boot path lets the
     // token be hydrated from whichever backend is in use.
-    const telegramToken = await loadSecret('telegram-token');
-    if (!telegramToken) {
-      const migrated = await migrateLegacySecret(SETTINGS_STORAGE_KEYS.telegramToken, 'telegram-token');
-      if (migrated) {
-        useSettingsStore.setState({ telegramToken: migrated });
+    // Isolate keychain failures so imported files / budget / agent /
+    // vision settings still hydrate when secret load rejects.
+    try {
+      const telegramToken = await loadSecret('telegram-token');
+      if (!telegramToken) {
+        const migrated = await migrateLegacySecret(SETTINGS_STORAGE_KEYS.telegramToken, 'telegram-token');
+        if (migrated) {
+          useSettingsStore.setState({ telegramToken: migrated });
+        }
+      } else {
+        useSettingsStore.setState({ telegramToken });
       }
-    } else {
-      useSettingsStore.setState({ telegramToken });
+    } catch (error) {
+      console.error('Failed to load Telegram token from secure storage:', error);
     }
 
     // Load imported files
