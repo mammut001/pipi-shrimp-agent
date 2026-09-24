@@ -43,7 +43,7 @@ describe('AutoResearch controlled profile', () => {
     const fs = await import('node:fs');
     const path = await import('node:path');
     const source = fs.readFileSync(
-      path.resolve(process.cwd(), 'src/services/autoresearch/chatAdapter.ts'),
+      path.resolve(process.cwd(), 'src/services/autoresearch/chatAdapterSupport.ts'),
       'utf8',
     );
     // Every call site that invokes runHeadlessAgentTurn must use the

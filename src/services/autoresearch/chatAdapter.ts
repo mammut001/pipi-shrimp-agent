@@ -46,13 +46,15 @@ import {
   getAutoResearchAllowedToolsForPhase,
   isAutoResearchToolLaneTransitionAllowed,
 } from './toolLanes';
-import {  getToolBudgetSummaryFromUnknown,
+import {  getRemainingToolBudget,
+  getToolBudgetSummaryFromUnknown,
   type ToolBudgetSummary,
 } from '@/services/tools/toolBudget';
 import { emitAutoResearchRuntimeEvent, setAutoResearchPhase } from './runtimeEvents';
 import { parseToolCommand, parseToolResult } from './chatAdapterHelpers';
 import {
   TOOL_BUDGET_EXHAUSTED_MARKER,
+  truncateTranscriptResult,
   appendIterationTranscript,
   buildAutoResearchRetryConstraintState,
   buildConvergenceRetryPrompt,
