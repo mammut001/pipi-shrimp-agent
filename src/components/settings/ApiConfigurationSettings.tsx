@@ -1,6 +1,7 @@
 import type { Dispatch, SetStateAction } from 'react';
-import type { ApiConfig, ModelEntry, ModelPricing } from '@/types/settings';
+import type { ApiConfig, AutoResearchLlmSettings, ModelEntry, ModelPricing } from '@/types/settings';
 import { DEFAULT_MODEL_PRICING } from '@/types/settings';
+import { AutoResearchLlmSettingsSection } from '@/components/settings/AutoResearchLlmSettings';
 import {
   canFetchModels,
   getProvider,
@@ -55,6 +56,8 @@ interface ApiConfigurationSettingsProps {
   isTesting: boolean;
   testResult: { success: boolean; message: string } | null;
   isFetchingModels: boolean;
+  autoResearchLlmSettings: AutoResearchLlmSettings;
+  updateAutoResearchLlmSettings: (settings: Partial<AutoResearchLlmSettings>) => void;
   currentProviderModelEntries: ModelEntry[];
   showPricingSection: boolean;
   setShowPricingSection: Dispatch<SetStateAction<boolean>>;
@@ -73,6 +76,8 @@ export function ApiConfigurationSettings({
   isTesting,
   testResult,
   isFetchingModels,
+  autoResearchLlmSettings,
+  updateAutoResearchLlmSettings,
   currentProviderModelEntries,
   showPricingSection,
   setShowPricingSection,

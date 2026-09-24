@@ -41,7 +41,6 @@ import { ApiConfigurationSettings } from '@/components/settings/ApiConfiguration
 import { TelegramSettings } from '@/components/settings/TelegramSettings';
 import { MCPSettingsSection } from '@/components/settings/MCPSettingsSection';
 import { AgentBehaviorSettings } from '@/components/settings/AgentBehaviorSettings';
-import { AutoResearchLlmSettingsSection } from '@/components/settings/AutoResearchLlmSettings';
 import { AppearanceSettings } from '@/components/settings/AppearanceSettings';
 import { DatabaseHealthSection } from '@/components/settings/DatabaseHealthSection';
 import { TerminalSettings } from '@/components/settings/TerminalSettings';
@@ -651,6 +650,8 @@ export function Settings() {
             isTesting={isTesting}
             testResult={testResult}
             isFetchingModels={isFetchingModels}
+            autoResearchLlmSettings={autoResearchLlmSettings}
+            updateAutoResearchLlmSettings={updateAutoResearchLlmSettings}
             currentProviderModelEntries={currentProviderModelEntries}
             showPricingSection={showPricingSection}
             setShowPricingSection={setShowPricingSection}
