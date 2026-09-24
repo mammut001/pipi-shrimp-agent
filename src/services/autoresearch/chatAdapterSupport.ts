@@ -25,7 +25,7 @@ function truncateTranscriptResult(result: string, limit = 4000): string {
   return `${result.slice(0, limit)}\n...[truncated ${result.length - limit} chars]`;
 }
 
-function previewFirstLines(text: string, maxLines = 10): string {
+export function previewFirstLines(text: string, maxLines = 10): string {
   return text
     .split('\n')
     .slice(0, maxLines)
@@ -33,7 +33,7 @@ function previewFirstLines(text: string, maxLines = 10): string {
     .trim();
 }
 
-function summarizeToolInput(argumentsText: string): string {
+export function summarizeToolInput(argumentsText: string): string {
   try {
     const parsed = JSON.parse(argumentsText) as Record<string, unknown>;
     const command = typeof parsed.command === 'string' ? parsed.command : null;
@@ -45,7 +45,7 @@ function summarizeToolInput(argumentsText: string): string {
   }
 }
 
-function readToolPath(argumentsText: string): string | undefined {
+export function readToolPath(argumentsText: string): string | undefined {
   try {
     const parsed = JSON.parse(argumentsText) as Record<string, unknown>;
     const path = typeof parsed.path === 'string' ? parsed.path : null;
@@ -63,7 +63,7 @@ function isNearToolBudgetLimit(summary: ToolBudgetSummary | undefined): boolean 
   return summary.toolBudgetUsedRaw >= Math.max(0, summary.toolBudgetMax - TOOL_BUDGET_RESERVE);
 }
 
-function emitBudgetNearLimitEvent(summary: ToolBudgetSummary | undefined): void {
+export function emitBudgetNearLimitEvent(summary: ToolBudgetSummary | undefined): void {
   if (!isNearToolBudgetLimit(summary)) {
     return;
   }
@@ -81,7 +81,7 @@ function emitBudgetNearLimitEvent(summary: ToolBudgetSummary | undefined): void 
   });
 }
 
-function isExperimentRunCommand(command: string | undefined, environmentSummary?: AutoResearchEnvironmentSummary): boolean {
+export function isExperimentRunCommand(command: string | undefined, environmentSummary?: AutoResearchEnvironmentSummary): boolean {
   const normalized = command?.trim();
   if (!normalized) {
     return false;
@@ -100,7 +100,7 @@ function isExperimentRunCommand(command: string | undefined, environmentSummary?
   return /\brun_experiment\.py\b/.test(normalized);
 }
 
-function getLatestExperimentFailure(
+export function getLatestExperimentFailure(
   toolResults: AutoResearchObservedToolResult[],
   environmentSummary?: AutoResearchEnvironmentSummary,
 ): AutoResearchObservedToolResult | null {
@@ -120,7 +120,7 @@ function getLatestExperimentFailure(
   return null;
 }
 
-function isReflectionParserFailure(result: AutoResearchReflectionDecisionResult | null): boolean {
+export function isReflectionParserFailure(result: AutoResearchReflectionDecisionResult | null): boolean {
   return Boolean(result && result.parserPath === null && result.parseFailedAttempts.length > 0);
 }
 
@@ -128,7 +128,7 @@ function isDisabledToolFailure(result: AutoResearchObservedToolResult): boolean 
   return (result.stderr ?? '').includes('disabled for this AutoResearch run');
 }
 
-function recordDisabledToolAttempts(
+export function recordDisabledToolAttempts(
   toolResults: AutoResearchObservedToolResult[],
   counts: Map<string, number>,
 ): string[] {
@@ -149,7 +149,7 @@ function recordDisabledToolAttempts(
   return newlyBlocked;
 }
 
-function isApiRequestFailure(error: unknown): boolean {
+export function isApiRequestFailure(error: unknown): boolean {
   const envelope = extractErrorDetails(error);
   const message = envelope.message.toLowerCase();
 
@@ -199,7 +199,7 @@ export function buildAutoResearchRetryConstraintState(input: {
   };
 }
 
-function buildIterationFailureOutput(input: {
+export function buildIterationFailureOutput(input: {
   metricName: string;
   failReason: string;
   hypothesis: string;
@@ -230,7 +230,7 @@ function buildIterationFailureOutput(input: {
     : JSON.stringify(payload, null, 2);
 }
 
-async function writeIterationTranscriptHeader(userMessage: string): Promise<void> {
+async export function writeIterationTranscriptHeader(userMessage: string): Promise<void> {
   const state = useAutoResearchStore.getState();
   const runDir = getCurrentRunDir();
   if (!state.sshConfig || !runDir) {
@@ -244,7 +244,7 @@ async function writeIterationTranscriptHeader(userMessage: string): Promise<void
   );
 }
 
-async function appendIterationTranscript(section: string): Promise<void> {
+async export function appendIterationTranscript(section: string): Promise<void> {
   const state = useAutoResearchStore.getState();
   const runDir = getCurrentRunDir();
   if (!state.sshConfig || !runDir) {
@@ -254,7 +254,7 @@ async function appendIterationTranscript(section: string): Promise<void> {
   await appendTargetText(state.sshConfig, runDir.transcriptPath, section);
 }
 
-function buildConvergenceRetryPrompt(
+export function buildConvergenceRetryPrompt(
   systemPrompt: string,
   maxRounds: number | null,
   allowedToolsOverride?: string[],
@@ -285,7 +285,7 @@ function buildConvergenceRetryPrompt(
 - Do not keep exploring, do not ask for help, and ${toolDetourGuard}${hardConstraintBlock}`;
 }
 
-function buildRecoveryPrompt(
+export function buildRecoveryPrompt(
   systemPrompt: string,
   decision: AutoResearchReflectionDecision,
   failureKind: AutoResearchFailureKind,
@@ -322,7 +322,7 @@ ${nextPlan}
 - Keep the retry bounded: one focused recovery attempt only.`;
 }
 
-function getRecentEventSummaries(): string[] {
+export function getRecentEventSummaries(): string[] {
   const state = useAutoResearchStore.getState() as ReturnType<typeof useAutoResearchStore.getState> & {
     runHistory?: Array<{ id: string; events: Array<{ phase: string; message: string }> }>;
     id?: string;
