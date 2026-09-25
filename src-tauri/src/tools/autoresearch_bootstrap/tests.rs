@@ -1,5 +1,4 @@
 use super::*;
-use serde_json::json;
 
 #[test]
 fn grounds_metric_tokens_from_source_text() {
