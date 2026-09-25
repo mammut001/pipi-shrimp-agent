@@ -32,7 +32,7 @@ Earlier post-audit fixes (still need regression tests): R1-01–03, R4-01–03, 
 | **High — security** | R7-04 artifact sandbox ✅, R7-06 outputDir, R7-12 Telegram Rust parity ✅ |
 | **High — AutoResearch** | R5-02 preflight abort controller leak ✅ |
 | **Test infra** | INFRA-01 `@testing-library/react`, TOP-15 regression suites |
-| **Architecture** | AG-01–AG-15 **all fixed** (all ≤800 LOC on main 2026-09-24; AG-14 `Settings.tsx` 729→459 via #191; AG-12 `chatAdapter.ts` 762→418 via #192; AG-07 `nativeBrowserAgent.ts` 757→463 via #193; AG-11 `workflowStore.ts` 712→362 via #194; AG-05 `browserAgentStore.ts` 606→373 via #195; AG-10 `web.rs` 514→397 via #196); AG-21 `web/cdp.rs` 526→361 via #197. **AG-22–AG-33** added 2026-09-24 (12 production files >1000 LOC with no prior AG item; plans in §I): AG-26 `autoresearch_bootstrap/mod.rs` 697→493 via #208; AG-30 `utils/typst.rs` 1028→443 via #200; 9 open |
+| **Architecture** | AG-01–AG-15 **all fixed** (all ≤800 LOC on main 2026-09-24; AG-14 `Settings.tsx` 729→459 via #191; AG-12 `chatAdapter.ts` 762→418 via #192; AG-07 `nativeBrowserAgent.ts` 757→463 via #193; AG-11 `workflowStore.ts` 712→362 via #194; AG-05 `browserAgentStore.ts` 606→373 via #195; AG-10 `web.rs` 514→397 via #196); AG-21 `web/cdp.rs` 526→361 via #197. **AG-22–AG-33** added 2026-09-24 (12 production files >1000 LOC with no prior AG item; plans in §I): AG-26 `autoresearch_bootstrap/mod.rs` 697→493 via #208; AG-30 `utils/typst.rs` 1028→443 via #200; 8 open |
 | **Rust High (round-02)** | R2-05 typst resolve_path ✅, R2-06 backup sibling-prefix ✅, R2-07 blocked exact roots ✅, R2-08 Autoresearch bypass network ✅, R2-09 SSHPASS env-not-cmdline ✅, R2-10 CDP navigate scheme allowlist ✅, R2-11 MCP stdio cwd sandbox ✅, R2-12 mcp_call_tool policy ✅ |
 
 **Open P0/Critical in backlog:** 0.
@@ -689,7 +689,7 @@ LOC = live `wc -l` on `main` (`99113a6`, 2026-09-24), including inline Rust `#[c
 | AG-30 | `src-tauri/src/utils/typst.rs` | **443** | **Fixed** — #200 moved the inline `#[cfg(test)] mod tests` block (L442-1028) verbatim into `utils/typst/tests.rs` (113; 3 basic compile tests) + `utils/typst/tests/template_examples.rs` (482; 5 template inline-example tests) (1028→443; under 500; production tokens unchanged, 8 tests before/after, 0 awaits) (2026-09-24) | No | Done — #200 |
 | AG-31 | `src/services/autoresearch/history.ts` | **1016** | **Open — careful (redaction).** Types → `historyTypes.ts` (re-exported); normalizers → `historyNormalize.ts` (<800); compaction/persistence → `historyPersistence.ts` (<500); redaction + `MAX_*` caps verbatim | Yes | Yes |
 | AG-32 | `src-tauri/src/commands/telegram.rs` | **1012** | **Open — careful (token redaction / allowed chats).** Serde types → `telegram/types.rs` with `pub use` (<800); webhook/file bodies behind thin wrappers (<500); redaction + URL builders verbatim | Yes | Yes |
-| AG-33 | `src-tauri/src/claude/http/request_builder.rs` | **639** | **Open — careful (API-key headers).** Step 1 ✅ #201: inline tests (L638-1009) moved verbatim → `request_builder/tests.rs` (376) (1009→639, under 800; production byte-identical, 10 tests before/after). Next: artifact detection + OpenAI history sanitization → sibling modules (<500); header builders verbatim | Yes | Yes |
+| AG-33 | `src-tauri/src/claude/http/request_builder.rs` | **484** | **Fixed** — #209 moved artifact detection to `request_builder/artifacts.rs` and OpenAI history formatting/sanitization helpers to `request_builder/openai_history.rs` (639→484; `detect_artifacts` publicly re-exported at the same path; API-key headers and `sanitize_header_value` verbatim; 0 awaits changed; 10 Rust tests unchanged) (2026-09-25) | Yes | Yes |
 
 **Other production files >800 LOC with no AG item** (live `wc -l`, `99113a6`; not yet tracked): `src/store/browserObservabilityStore.ts` 958, `src/components/BrowserPanel.tsx` 932, `src-tauri/src/claude/http/tool_catalog.rs` 900, `src/components/autoresearch/AutoResearchDashboardView.tsx` 887, `src-tauri/src/claude/http/adapters/openai.rs` 873, `src/components/autoresearch/AdvancedWorkdirSetup.tsx` 868, `src-tauri/src/commands/file.rs` 864, `src-tauri/src/claude/adapter.rs` 806.
 
@@ -711,22 +711,22 @@ LOC = live `wc -l` on `main` (`99113a6`, 2026-09-24), including inline Rust `#[c
 
 ## Summary counts
 
-Recomputed from `docs/audit/remediation-backlog.json` by `status` / `severity` / `lane` — **as of 2026-09-25, main `68a7032` + PR #208** (AG-26 open → fixed: `autoresearch_bootstrap/mod.rs` 697→493) **+ PR #207** (AG-29 open → fixed: `BlockComposer.tsx` 503→466); prior updates through #200 remain listed above. Items tracked only in round docs are not counted here.
+Recomputed from `docs/audit/remediation-backlog.json` by `status` / `severity` / `lane` — **as of 2026-09-25, main `00d4b4f` + PR #209** (AG-33 `request_builder.rs` 639→484; artifact detection + OpenAI history helpers extracted, API-key headers untouched); AG-26 #208 and AG-29 #207 are already included in main. Items tracked only in round docs are not counted here.
 
 | Category | Count |
 | -------- | ----- |
 | **Total tracked in backlog JSON** | 113 |
-| **Fixed** (`status: fixed`; many still need regression tests) | 90 |
-| **Open** (`status: open`) | 9 — AG-22–AG-25, AG-27–AG-28, AG-31–AG-33 (architecture governance, severity Governance) |
+| **Fixed** (`status: fixed`; many still need regression tests) | 91 |
+| **Open** (`status: open`) | 8 — AG-22–AG-25, AG-27–AG-28, AG-31–AG-32 (architecture governance, severity Governance) |
 | **Partially fixed** (`status: partially fixed`) | 5 — R5-14, R5-15, R7-15, TOP-15-08, TOP-15-09 |
 | **Test gap only** (`status: test gap only`) | 9 — TOP-15-03/04/05/06/07/10/11/14/15 |
 | **Open P0 / Critical** (`status: open`) | 0 |
 | **Open High+** (`status: open`, severity P0/Critical/High) | 0 |
 | **Not fixed with P0/Critical/High severity** (partially fixed / test gap only) | 10 — all TOP-15 regression-suite items in lane H (TOP-15-04/05/06/07/08/09/10/11/14/15): P0 ×2, Critical ×5, High ×3 |
-| **Architecture governance lane (I)** | 33 — 24 fixed, 9 open |
+| **Architecture governance lane (I)** | 33 — 25 fixed, 8 open |
 | **Test infrastructure lane (H)** | 19 — 6 fixed, 4 partially fixed, 9 test gap only |
 
-Previous snapshot (before this refresh): Fixed 89, Total 113 — after #207 (main `68a7032` JSON had 113 items: 89 fixed / 10 open / 5 partially fixed / 9 test gap only).
+Previous snapshot (before this refresh): Fixed 90, Total 113 — after #208 was merged to main (AG-29 #207 already merged); backlog had 90 fixed / 9 open / 5 partially fixed / 9 test gap only.
 
 ---
 

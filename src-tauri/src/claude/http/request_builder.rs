@@ -1,19 +1,16 @@
-use once_cell::sync::Lazy;
-use regex::Regex;
-use serde_json::{Map, Value};
+use serde_json::Value;
 
 use super::error_mapping::ClaudeHttpError;
 use super::provider_adapter::{ProviderCapabilities, ProviderId, ResolvedProviderConfig};
 use super::telemetry::sanitize_endpoint;
 use super::tool_catalog::{convert_tools_to_openai_format, get_tools, merge_system_prompt};
-use crate::claude::message::{Artifact, Message, ToolCall};
+use crate::claude::message::{Message, ToolCall};
 
-static ARTIFACT_CODE_REGEX: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"```(\w+)?\n([\s\S]*?)\n```").unwrap());
-static ARTIFACT_HTML_REGEX: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"<html[\s\S]*?</html>").unwrap());
-static ARTIFACT_MERMAID_REGEX: Lazy<Regex> =
-    Lazy::new(|| Regex::new(r"```mermaid\n([\s\S]*?)\n```").unwrap());
+mod artifacts;
+mod openai_history;
+
+pub use artifacts::detect_artifacts;
+use openai_history::{build_openai_user_content, sanitize_openai_history_messages};
 
 const OPENAI_TOOL_CALL_PROTOCOL_ADDENDUM: &str = r#"## Tool Calling Protocol
 You MUST invoke tools via the OpenAI function-calling channel named tool_calls.
@@ -75,80 +72,11 @@ fn build_anthropic_user_content(message: &Message) -> Value {
     }
 }
 
-fn build_openai_user_content(message: &Message) -> Value {
-    let mut content = Vec::new();
-
-    if !message.content.is_empty() {
-        content.push(serde_json::json!({
-            "type": "text",
-            "text": message.content,
-        }));
-    }
-
-    if let Some(attachments) = &message.attachments {
-        for attachment in attachments {
-            content.push(serde_json::json!({
-                "type": "image_url",
-                "image_url": {
-                    "url": format!("data:{};base64,{}", attachment.mime, attachment.data),
-                }
-            }));
-        }
-    }
-
-    if content.is_empty() {
-        Value::String(message.content.clone())
-    } else {
-        Value::Array(content)
-    }
-}
-
 pub fn supports_thinking(model: &str) -> bool {
     model.contains("claude-3-7")
         || model.contains("claude-opus-4")
         || model.contains("claude-sonnet-4")
         || model.contains("claude-haiku-4")
-}
-
-pub fn detect_artifacts(content: &str) -> Vec<Artifact> {
-    let mut artifacts = Vec::new();
-
-    for captures in ARTIFACT_CODE_REGEX.captures_iter(content) {
-        let language = captures.get(1).map_or("plaintext", |value| value.as_str());
-        let code = captures.get(2).map_or("", |value| value.as_str());
-        if code.len() > 200 {
-            artifacts.push(Artifact {
-                artifact_type: "code".to_string(),
-                content: code.to_string(),
-                title: Some(format!("{} code", language)),
-                language: Some(language.to_string()),
-            });
-        }
-    }
-
-    if content.contains("<!DOCTYPE") || content.contains("<html") {
-        if let Some(html_match) = ARTIFACT_HTML_REGEX.find(content) {
-            artifacts.push(Artifact {
-                artifact_type: "html".to_string(),
-                content: html_match.as_str().to_string(),
-                title: Some("HTML Document".to_string()),
-                language: None,
-            });
-        }
-    }
-
-    for captures in ARTIFACT_MERMAID_REGEX.captures_iter(content) {
-        if let Some(diagram) = captures.get(1) {
-            artifacts.push(Artifact {
-                artifact_type: "mermaid".to_string(),
-                content: diagram.as_str().to_string(),
-                title: Some("Diagram".to_string()),
-                language: None,
-            });
-        }
-    }
-
-    artifacts
 }
 
 pub fn format_messages_for_anthropic(messages: &[Message]) -> Vec<Value> {
@@ -279,89 +207,6 @@ pub fn format_messages_for_openai(messages: &[Message]) -> Vec<Value> {
     }
 
     formatted
-}
-
-fn sanitize_openai_history_messages(messages: &mut [Value], capabilities: &ProviderCapabilities) {
-    for message in messages {
-        let Some(record) = message.as_object_mut() else {
-            continue;
-        };
-
-        let role = record
-            .get("role")
-            .and_then(|value| value.as_str())
-            .unwrap_or_default();
-        if role == "assistant" {
-            let sanitized = sanitize_assistant_message_for_openai_record(record, capabilities);
-            *record = sanitized;
-            continue;
-        }
-
-        if !capabilities.accepts_reasoning_param {
-            remove_hidden_reasoning_fields(record);
-        }
-    }
-}
-
-fn remove_hidden_reasoning_fields(record: &mut Map<String, Value>) {
-    record.remove("reasoning");
-    record.remove("reasoning_effort");
-    record.remove("reasoning_content");
-    record.remove("thinking");
-    record.remove("reasoning_trace");
-}
-
-fn sanitize_assistant_message_for_openai_record(
-    record: &Map<String, Value>,
-    capabilities: &ProviderCapabilities,
-) -> Map<String, Value> {
-    let mut sanitized = Map::new();
-    sanitized.insert("role".to_string(), Value::String("assistant".to_string()));
-    sanitized.insert(
-        "content".to_string(),
-        record
-            .get("content")
-            .cloned()
-            .unwrap_or_else(|| Value::String(String::new())),
-    );
-
-    if let Some(tool_calls) = record.get("tool_calls") {
-        sanitized.insert("tool_calls".to_string(), tool_calls.clone());
-    }
-    if let Some(name) = record.get("name") {
-        sanitized.insert("name".to_string(), name.clone());
-    }
-    if let Some(tool_call_id) = record.get("tool_call_id") {
-        sanitized.insert("tool_call_id".to_string(), tool_call_id.clone());
-    }
-
-    // DeepSeek (and similar OpenAI-compatible reasoners) require the prior
-    // assistant turn's reasoning_content to be passed back on tool continuation
-    // rounds. Preserve non-empty history passback even when supports_reasoning
-    // is false (e.g. Custom openai-compatible + deepseek-flash), distinct from
-    // request-level reasoning/reasoning_effort params gated by
-    // accepts_reasoning_param.
-    if let Some(reasoning_content) = record.get("reasoning_content") {
-        let keep = match reasoning_content {
-            Value::String(s) => !s.trim().is_empty(),
-            Value::Null => false,
-            _ => true,
-        };
-        if keep {
-            sanitized.insert("reasoning_content".to_string(), reasoning_content.clone());
-        }
-    }
-
-    if capabilities.accepts_reasoning_param {
-        if let Some(reasoning) = record.get("reasoning") {
-            sanitized.insert("reasoning".to_string(), reasoning.clone());
-        }
-        if let Some(reasoning_effort) = record.get("reasoning_effort") {
-            sanitized.insert("reasoning_effort".to_string(), reasoning_effort.clone());
-        }
-    }
-
-    sanitized
 }
 
 fn build_openai_system_prompt(
