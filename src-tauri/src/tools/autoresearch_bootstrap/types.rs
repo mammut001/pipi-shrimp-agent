@@ -156,7 +156,6 @@ pub(super) struct ScaffoldRenderResult {
     pub(super) rendered_files: Vec<RenderedScaffoldFile>,
 }
 
-
 pub(super) trait IfEmptyThen {
     fn if_empty_then(self, fallback: &str) -> String;
 }
@@ -169,3 +168,4 @@ impl IfEmptyThen for String {
             self
         }
     }
+}
