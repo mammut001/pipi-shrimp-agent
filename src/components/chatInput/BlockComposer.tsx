@@ -6,6 +6,12 @@ import {
   COMPOSER_PRESETS,
 } from './blocks/types';
 import { buildPromptFromBlocks, hasMeaningfulComposerContent } from './blocks/promptBuilder';
+import { createComposerBlock } from './blocks/createComposerBlock';
+import { ContextBlockEditor } from './blocks/ContextBlockEditor';
+import { ConstraintsBlockEditor } from './blocks/ConstraintsBlockEditor';
+import { OutputBlockEditor } from './blocks/OutputBlockEditor';
+import { VerificationBlockEditor } from './blocks/VerificationBlockEditor';
+import { SafetyBlockEditor } from './blocks/SafetyBlockEditor';
 import type { ExecutionModeId } from '@/services/executionMode';
 
 interface PromptContext {
@@ -48,60 +54,7 @@ export function BlockComposer({
   const [newForbiddens, setNewForbiddens] = useState<Record<string, string>>({});
   const [newConstraints, setNewConstraints] = useState<Record<string, string>>({});
 
-  const createBlock = (type: BlockType): ComposerBlock => {
-    const id = `block-${Math.random().toString(36).substring(2, 9)}`;
-    switch (type) {
-      case 'intent':
-        return { id, type: 'intent', intentType: 'implement', detail: '' };
-      case 'context':
-        return { id, type: 'context', paths: [], symbols: [], scope: 'selected_files' };
-      case 'mode':
-        return { id, type: 'mode', executionMode: defaultMode };
-      case 'constraints':
-        return {
-          id,
-          type: 'constraints',
-          noBroadRefactor: false,
-          preservePublicApi: false,
-          noDestructiveCommands: false,
-          readOnly: false,
-          customConstraints: [],
-        };
-      case 'output':
-        return {
-          id,
-          type: 'output',
-          outputType: 'patch',
-          includeFilesChanged: false,
-          includeCommandsRun: false,
-          includeRemainingRisks: false,
-          includeManualQA: false,
-        };
-      case 'verification':
-        return {
-          id,
-          type: 'verification',
-          commands: [],
-          requireBuild: false,
-          requireTests: false,
-          requireTypecheck: false,
-          requireI18nCheck: false,
-        };
-      case 'safety':
-        return {
-          id,
-          type: 'safety',
-          approvalMode: 'ask_on_risky',
-          forbiddenActions: [],
-          confirmBefore: {
-            delete: true,
-            network: true,
-            external_write: false,
-            dependency_install: false,
-          },
-        };
-    }
-  };
+  const createBlock = (type: BlockType): ComposerBlock => createComposerBlock(type, defaultMode);
 
   const handlePresetSelect = (presetId: string) => {
     const preset = COMPOSER_PRESETS.find((p) => p.id === presetId);
@@ -352,135 +305,15 @@ export function BlockComposer({
 
                   {/* CONTEXT BLOCK EDITOR */}
                   {block.type === 'context' && (
-                    <>
-                      <div className="flex gap-2 items-center">
-                        <label className="text-[10px] font-bold text-neutral-500 select-none">Scope:</label>
-                        <select
-                          value={block.scope}
-                          onChange={(e) => updateBlock(index, { ...block, scope: e.target.value as any })}
-                          className="flex-1 rounded-lg border border-neutral-200 px-2 py-0.5 text-xs text-neutral-800 focus:outline-none"
-                        >
-                          <option value="selected_files">Selected Files/Paths</option>
-                          <option value="whole_project">Whole Project</option>
-                          <option value="current_folder">Current Folder</option>
-                          <option value="manual_paths">Manual Paths / Symbols</option>
-                        </select>
-                      </div>
-
-                      {/* Paths Chip List Input */}
-                      <div className="flex gap-1.5">
-                        <input
-                          type="text"
-                          value={newPaths[block.id] || ''}
-                          onChange={(e) => setNewPaths({ ...newPaths, [block.id]: e.target.value })}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              const val = (newPaths[block.id] || '').trim();
-                              if (val && !block.paths.includes(val)) {
-                                updateBlock(index, { ...block, paths: [...block.paths, val] });
-                                setNewPaths({ ...newPaths, [block.id]: '' });
-                              }
-                            }
-                          }}
-                          placeholder="Target path (e.g. src/App.tsx)"
-                          className="flex-1 rounded-lg border border-neutral-200 px-2 py-1 text-xs focus:outline-none"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const val = (newPaths[block.id] || '').trim();
-                            if (val && !block.paths.includes(val)) {
-                              updateBlock(index, { ...block, paths: [...block.paths, val] });
-                              setNewPaths({ ...newPaths, [block.id]: '' });
-                            }
-                          }}
-                          className="rounded-lg border border-neutral-200 hover:bg-neutral-50 px-2 py-0.5 text-xs text-neutral-600 font-medium"
-                        >
-                          Add
-                        </button>
-                      </div>
-                      {block.paths.length > 0 && (
-                        <div className="flex flex-wrap gap-1 max-h-12 overflow-y-auto">
-                          {block.paths.map((p) => (
-                            <span
-                              key={p}
-                              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-neutral-100 border border-neutral-200 text-[10px] text-neutral-700 font-mono"
-                            >
-                              <span className="truncate max-w-[120px]">{p}</span>
-                              <button
-                                type="button"
-                                onClick={() => updateBlock(index, { ...block, paths: block.paths.filter((x) => x !== p) })}
-                                className="text-neutral-400 hover:text-neutral-600 font-bold px-0.5"
-                              >
-                                ×
-                              </button>
-                            </span>
-                          ))}
-                        </div>
-                      )}
-
-                      {/* Symbols Input */}
-                      <div className="flex gap-1.5">
-                        <input
-                          type="text"
-                          value={newSymbols[block.id] || ''}
-                          onChange={(e) => setNewSymbols({ ...newSymbols, [block.id]: e.target.value })}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              const val = (newSymbols[block.id] || '').trim();
-                              if (val && !block.symbols.includes(val)) {
-                                updateBlock(index, { ...block, symbols: [...block.symbols, val] });
-                                setNewSymbols({ ...newSymbols, [block.id]: '' });
-                              }
-                            }
-                          }}
-                          placeholder="Target Symbol (e.g. ChatInput)"
-                          className="flex-1 rounded-lg border border-neutral-200 px-2 py-1 text-xs focus:outline-none"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const val = (newSymbols[block.id] || '').trim();
-                            if (val && !block.symbols.includes(val)) {
-                              updateBlock(index, { ...block, symbols: [...block.symbols, val] });
-                              setNewSymbols({ ...newSymbols, [block.id]: '' });
-                            }
-                          }}
-                          className="rounded-lg border border-neutral-200 hover:bg-neutral-50 px-2 py-0.5 text-xs text-neutral-600 font-medium"
-                        >
-                          Add
-                        </button>
-                      </div>
-                      {block.symbols.length > 0 && (
-                        <div className="flex flex-wrap gap-1 max-h-12 overflow-y-auto">
-                          {block.symbols.map((s) => (
-                            <span
-                              key={s}
-                              className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-neutral-100 border border-neutral-200 text-[10px] text-neutral-700 font-mono"
-                            >
-                              <span className="truncate max-w-[120px]">{s}</span>
-                              <button
-                                type="button"
-                                onClick={() => updateBlock(index, { ...block, symbols: block.symbols.filter((x) => x !== s) })}
-                                className="text-neutral-400 hover:text-neutral-600 font-bold px-0.5"
-                              >
-                                ×
-                              </button>
-                            </span>
-                          ))}
-                        </div>
-                      )}
-
-                      <input
-                        type="text"
-                        value={block.notes || ''}
-                        onChange={(e) => updateBlock(index, { ...block, notes: e.target.value })}
-                        placeholder="Context Details / Notes..."
-                        className="w-full rounded-lg border border-neutral-200 px-2 py-1 text-xs focus:outline-none"
-                      />
-                    </>
+                    <ContextBlockEditor
+                      block={block}
+                      index={index}
+                      updateBlock={updateBlock}
+                      newPaths={newPaths}
+                      setNewPaths={setNewPaths}
+                      newSymbols={newSymbols}
+                      setNewSymbols={setNewSymbols}
+                    />
                   )}
 
                   {/* MODE BLOCK EDITOR */}
@@ -514,421 +347,44 @@ export function BlockComposer({
 
                   {/* CONSTRAINTS BLOCK EDITOR */}
                   {block.type === 'constraints' && (
-                    <>
-                      <div className="grid grid-cols-2 gap-1.5">
-                        <label className="flex items-center gap-1.5 cursor-pointer text-xs text-neutral-700 font-medium select-none">
-                          <input
-                            type="checkbox"
-                            checked={block.readOnly}
-                            onChange={(e) => updateBlock(index, { ...block, readOnly: e.target.checked })}
-                            className="h-3.5 w-3.5 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-500"
-                          />
-                          Read-Only
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer text-xs text-neutral-700 font-medium select-none">
-                          <input
-                            type="checkbox"
-                            checked={block.noBroadRefactor}
-                            onChange={(e) => updateBlock(index, { ...block, noBroadRefactor: e.target.checked })}
-                            className="h-3.5 w-3.5 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-500"
-                          />
-                          No Broad Refactor
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer text-xs text-neutral-700 font-medium select-none">
-                          <input
-                            type="checkbox"
-                            checked={block.preservePublicApi}
-                            onChange={(e) => updateBlock(index, { ...block, preservePublicApi: e.target.checked })}
-                            className="h-3.5 w-3.5 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-500"
-                          />
-                          Preserve Public API
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer text-xs text-neutral-700 font-medium select-none">
-                          <input
-                            type="checkbox"
-                            checked={block.noDestructiveCommands}
-                            onChange={(e) => updateBlock(index, { ...block, noDestructiveCommands: e.target.checked })}
-                            className="h-3.5 w-3.5 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-500"
-                          />
-                          No Destructive Cmds
-                        </label>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2 border-t border-neutral-100 pt-2">
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[10px] text-neutral-500">Max Files:</span>
-                          <input
-                            type="number"
-                            min={1}
-                            max={50}
-                            value={block.maxFiles || ''}
-                            onChange={(e) => updateBlock(index, { ...block, maxFiles: parseInt(e.target.value) || undefined })}
-                            placeholder="e.g. 5"
-                            className="w-12 rounded border border-neutral-200 px-1 py-0.5 text-xs text-center focus:outline-none"
-                          />
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-[10px] text-neutral-500">Max Rounds:</span>
-                          <input
-                            type="number"
-                            min={1}
-                            max={100}
-                            value={block.maxToolRounds || ''}
-                            onChange={(e) => updateBlock(index, { ...block, maxToolRounds: parseInt(e.target.value) || undefined })}
-                            placeholder="e.g. 15"
-                            className="w-12 rounded border border-neutral-200 px-1 py-0.5 text-xs text-center focus:outline-none"
-                          />
-                        </div>
-                      </div>
-
-                      <input
-                        type="text"
-                        value={block.language || ''}
-                        onChange={(e) => updateBlock(index, { ...block, language: e.target.value })}
-                        placeholder="Language Style / Details (e.g. TS, strict checks)"
-                        className="w-full rounded-lg border border-neutral-200 px-2 py-1 text-xs focus:outline-none"
-                      />
-
-                      {/* Custom constraint adder */}
-                      <div className="flex gap-1.5">
-                        <input
-                          type="text"
-                          value={newConstraints[block.id] || ''}
-                          onChange={(e) => setNewConstraints({ ...newConstraints, [block.id]: e.target.value })}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              const val = (newConstraints[block.id] || '').trim();
-                              if (val && !block.customConstraints.includes(val)) {
-                                updateBlock(index, { ...block, customConstraints: [...block.customConstraints, val] });
-                                setNewConstraints({ ...newConstraints, [block.id]: '' });
-                              }
-                            }
-                          }}
-                          placeholder="Custom Constraint rule..."
-                          className="flex-1 rounded-lg border border-neutral-200 px-2 py-1 text-xs focus:outline-none"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const val = (newConstraints[block.id] || '').trim();
-                            if (val && !block.customConstraints.includes(val)) {
-                              updateBlock(index, { ...block, customConstraints: [...block.customConstraints, val] });
-                              setNewConstraints({ ...newConstraints, [block.id]: '' });
-                            }
-                          }}
-                          className="rounded-lg border border-neutral-200 hover:bg-neutral-50 px-2 py-0.5 text-xs text-neutral-600 font-medium"
-                        >
-                          Add
-                        </button>
-                      </div>
-                      {block.customConstraints.length > 0 && (
-                        <div className="flex flex-col gap-1 max-h-16 overflow-y-auto">
-                          {block.customConstraints.map((c, cIdx) => (
-                            <div key={cIdx} className="flex justify-between items-center bg-neutral-50 border border-neutral-100 rounded px-1.5 py-0.5 text-[10px] text-neutral-600 font-sans group/c">
-                              <span className="truncate flex-1 pr-1">{c}</span>
-                              <button
-                                type="button"
-                                onClick={() => updateBlock(index, { ...block, customConstraints: block.customConstraints.filter((_, idx) => idx !== cIdx) })}
-                                className="text-neutral-400 hover:text-red-500 font-bold"
-                              >
-                                ×
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </>
+                    <ConstraintsBlockEditor
+                      block={block}
+                      index={index}
+                      updateBlock={updateBlock}
+                      newConstraints={newConstraints}
+                      setNewConstraints={setNewConstraints}
+                    />
                   )}
 
                   {/* OUTPUT BLOCK EDITOR */}
                   {block.type === 'output' && (
-                    <>
-                      <div className="flex gap-2 items-center">
-                        <label className="text-[10px] font-bold text-neutral-500 select-none">Output Type:</label>
-                        <select
-                          value={block.outputType}
-                          onChange={(e) => updateBlock(index, { ...block, outputType: e.target.value as any })}
-                          className="flex-1 rounded-lg border border-neutral-200 px-2 py-0.5 text-xs text-neutral-800 focus:outline-none"
-                        >
-                          <option value="patch">Code Patch (Diff)</option>
-                          <option value="answer">Direct Answer / Explanation</option>
-                          <option value="plan">Structured Plan Document</option>
-                          <option value="test_report">Test verification report</option>
-                          <option value="release_notes">Changelog / Release Notes</option>
-                          <option value="checklist">Post-change checklist</option>
-                          <option value="docs">Technical Documentation</option>
-                        </select>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-1.5 border-t border-neutral-100 pt-2">
-                        <label className="flex items-center gap-1.5 cursor-pointer text-xs text-neutral-700 font-medium select-none">
-                          <input
-                            type="checkbox"
-                            checked={block.includeFilesChanged}
-                            onChange={(e) => updateBlock(index, { ...block, includeFilesChanged: e.target.checked })}
-                            className="h-3.5 w-3.5 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-500"
-                          />
-                          Files Changed list
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer text-xs text-neutral-700 font-medium select-none">
-                          <input
-                            type="checkbox"
-                            checked={block.includeCommandsRun}
-                            onChange={(e) => updateBlock(index, { ...block, includeCommandsRun: e.target.checked })}
-                            className="h-3.5 w-3.5 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-500"
-                          />
-                          Commands Run log
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer text-xs text-neutral-700 font-medium select-none">
-                          <input
-                            type="checkbox"
-                            checked={block.includeRemainingRisks}
-                            onChange={(e) => updateBlock(index, { ...block, includeRemainingRisks: e.target.checked })}
-                            className="h-3.5 w-3.5 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-500"
-                          />
-                          Remaining Risks
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer text-xs text-neutral-700 font-medium select-none">
-                          <input
-                            type="checkbox"
-                            checked={block.includeManualQA}
-                            onChange={(e) => updateBlock(index, { ...block, includeManualQA: e.target.checked })}
-                            className="h-3.5 w-3.5 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-500"
-                          />
-                          Manual QA details
-                        </label>
-                      </div>
-
-                      <input
-                        type="text"
-                        value={block.customOutput || ''}
-                        onChange={(e) => updateBlock(index, { ...block, customOutput: e.target.value })}
-                        placeholder="Expected deliverable specifics..."
-                        className="w-full rounded-lg border border-neutral-200 px-2 py-1 text-xs focus:outline-none"
-                      />
-                    </>
+                    <OutputBlockEditor
+                      block={block}
+                      index={index}
+                      updateBlock={updateBlock}
+                    />
                   )}
 
                   {/* VERIFICATION BLOCK EDITOR */}
                   {block.type === 'verification' && (
-                    <>
-                      <div className="grid grid-cols-2 gap-1.5">
-                        <label className="flex items-center gap-1.5 cursor-pointer text-xs text-neutral-700 font-medium select-none">
-                          <input
-                            type="checkbox"
-                            checked={block.requireBuild}
-                            onChange={(e) => updateBlock(index, { ...block, requireBuild: e.target.checked })}
-                            className="h-3.5 w-3.5 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-500"
-                          />
-                          Require Build
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer text-xs text-neutral-700 font-medium select-none">
-                          <input
-                            type="checkbox"
-                            checked={block.requireTests}
-                            onChange={(e) => updateBlock(index, { ...block, requireTests: e.target.checked })}
-                            className="h-3.5 w-3.5 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-500"
-                          />
-                          Require Tests
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer text-xs text-neutral-700 font-medium select-none">
-                          <input
-                            type="checkbox"
-                            checked={block.requireTypecheck}
-                            onChange={(e) => updateBlock(index, { ...block, requireTypecheck: e.target.checked })}
-                            className="h-3.5 w-3.5 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-500"
-                          />
-                          Require Typecheck
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer text-xs text-neutral-700 font-medium select-none">
-                          <input
-                            type="checkbox"
-                            checked={block.requireI18nCheck}
-                            onChange={(e) => updateBlock(index, { ...block, requireI18nCheck: e.target.checked })}
-                            className="h-3.5 w-3.5 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-500"
-                          />
-                          Require i18n Check
-                        </label>
-                      </div>
-
-                      {/* Commands list */}
-                      <div className="flex gap-1.5">
-                        <input
-                          type="text"
-                          value={newVerifications[block.id] || ''}
-                          onChange={(e) => setNewVerifications({ ...newVerifications, [block.id]: e.target.value })}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              const val = (newVerifications[block.id] || '').trim();
-                              if (val && !block.commands.includes(val)) {
-                                updateBlock(index, { ...block, commands: [...block.commands, val] });
-                                setNewVerifications({ ...newVerifications, [block.id]: '' });
-                              }
-                            }
-                          }}
-                          placeholder="Verification command (e.g. npm test)"
-                          className="flex-1 rounded-lg border border-neutral-200 px-2 py-1 text-xs focus:outline-none"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const val = (newVerifications[block.id] || '').trim();
-                            if (val && !block.commands.includes(val)) {
-                              updateBlock(index, { ...block, commands: [...block.commands, val] });
-                              setNewVerifications({ ...newVerifications, [block.id]: '' });
-                            }
-                          }}
-                          className="rounded-lg border border-neutral-200 hover:bg-neutral-50 px-2 py-0.5 text-xs text-neutral-600 font-medium"
-                        >
-                          Add
-                        </button>
-                      </div>
-                      {block.commands.length > 0 && (
-                        <div className="flex flex-col gap-1 max-h-16 overflow-y-auto">
-                          {block.commands.map((cmd, cmdIdx) => (
-                            <div key={cmdIdx} className="flex justify-between items-center bg-neutral-50 border border-neutral-100 rounded px-1.5 py-0.5 text-[10px] text-neutral-600 font-mono group/c">
-                              <span className="truncate flex-1 pr-1">{cmd}</span>
-                              <button
-                                type="button"
-                                onClick={() => updateBlock(index, { ...block, commands: block.commands.filter((_, idx) => idx !== cmdIdx) })}
-                                className="text-neutral-400 hover:text-red-500 font-bold"
-                              >
-                                ×
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-
-                      <input
-                        type="text"
-                        value={block.customVerification || ''}
-                        onChange={(e) => updateBlock(index, { ...block, customVerification: e.target.value })}
-                        placeholder="Additional verification guidelines..."
-                        className="w-full rounded-lg border border-neutral-200 px-2 py-1 text-xs focus:outline-none"
-                      />
-                    </>
+                    <VerificationBlockEditor
+                      block={block}
+                      index={index}
+                      updateBlock={updateBlock}
+                      newVerifications={newVerifications}
+                      setNewVerifications={setNewVerifications}
+                    />
                   )}
 
                   {/* SAFETY BLOCK EDITOR */}
                   {block.type === 'safety' && (
-                    <>
-                      <div className="flex gap-2 items-center">
-                        <label className="text-[10px] font-bold text-neutral-500 select-none">Rule:</label>
-                        <select
-                          value={block.approvalMode}
-                          onChange={(e) => updateBlock(index, { ...block, approvalMode: e.target.value as any })}
-                          className="flex-1 rounded-lg border border-neutral-200 px-2 py-0.5 text-xs text-neutral-800 focus:outline-none"
-                        >
-                          <option value="ask_on_risky">Ask for Risky Actions</option>
-                          <option value="no_destructive">Prohibit Destructive Tools</option>
-                          <option value="bypass_normal_tools">Bypass approvals (Trust mode)</option>
-                        </select>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-1.5 border-t border-neutral-100 pt-2">
-                        <label className="flex items-center gap-1.5 cursor-pointer text-xs text-neutral-700 font-medium select-none">
-                          <input
-                            type="checkbox"
-                            checked={block.confirmBefore.delete}
-                            onChange={(e) => updateBlock(index, {
-                              ...block,
-                              confirmBefore: { ...block.confirmBefore, delete: e.target.checked },
-                            })}
-                            className="h-3.5 w-3.5 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-500"
-                          />
-                          Confirm Delete
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer text-xs text-neutral-700 font-medium select-none">
-                          <input
-                            type="checkbox"
-                            checked={block.confirmBefore.network}
-                            onChange={(e) => updateBlock(index, {
-                              ...block,
-                              confirmBefore: { ...block.confirmBefore, network: e.target.checked },
-                            })}
-                            className="h-3.5 w-3.5 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-500"
-                          />
-                          Confirm Network
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer text-xs text-neutral-700 font-medium select-none">
-                          <input
-                            type="checkbox"
-                            checked={block.confirmBefore.external_write}
-                            onChange={(e) => updateBlock(index, {
-                              ...block,
-                              confirmBefore: { ...block.confirmBefore, external_write: e.target.checked },
-                            })}
-                            className="h-3.5 w-3.5 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-500"
-                          />
-                          Confirm Ext Write
-                        </label>
-                        <label className="flex items-center gap-1.5 cursor-pointer text-xs text-neutral-700 font-medium select-none">
-                          <input
-                            type="checkbox"
-                            checked={block.confirmBefore.dependency_install}
-                            onChange={(e) => updateBlock(index, {
-                              ...block,
-                              confirmBefore: { ...block.confirmBefore, dependency_install: e.target.checked },
-                            })}
-                            className="h-3.5 w-3.5 rounded border-neutral-300 text-neutral-900 focus:ring-neutral-500"
-                          />
-                          Confirm Package Install
-                        </label>
-                      </div>
-
-                      {/* Forbidden list */}
-                      <div className="flex gap-1.5">
-                        <input
-                          type="text"
-                          value={newForbiddens[block.id] || ''}
-                          onChange={(e) => setNewForbiddens({ ...newForbiddens, [block.id]: e.target.value })}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') {
-                              e.preventDefault();
-                              const val = (newForbiddens[block.id] || '').trim();
-                              if (val && !block.forbiddenActions.includes(val)) {
-                                updateBlock(index, { ...block, forbiddenActions: [...block.forbiddenActions, val] });
-                                setNewForbiddens({ ...newForbiddens, [block.id]: '' });
-                              }
-                            }
-                          }}
-                          placeholder="Forbidden Action (e.g. Do not touch main.go)"
-                          className="flex-1 rounded-lg border border-neutral-200 px-2 py-1 text-xs focus:outline-none"
-                        />
-                        <button
-                          type="button"
-                          onClick={() => {
-                            const val = (newForbiddens[block.id] || '').trim();
-                            if (val && !block.forbiddenActions.includes(val)) {
-                              updateBlock(index, { ...block, forbiddenActions: [...block.forbiddenActions, val] });
-                              setNewForbiddens({ ...newForbiddens, [block.id]: '' });
-                            }
-                          }}
-                          className="rounded-lg border border-neutral-200 hover:bg-neutral-50 px-2 py-0.5 text-xs text-neutral-600 font-medium"
-                        >
-                          Add
-                        </button>
-                      </div>
-                      {block.forbiddenActions.length > 0 && (
-                        <div className="flex flex-col gap-1 max-h-16 overflow-y-auto">
-                          {block.forbiddenActions.map((forbidden, fIdx) => (
-                            <div key={fIdx} className="flex justify-between items-center bg-neutral-50 border border-neutral-100 rounded px-1.5 py-0.5 text-[10px] text-neutral-600 font-sans group/f">
-                              <span className="truncate flex-1 pr-1">{forbidden}</span>
-                              <button
-                                type="button"
-                                onClick={() => updateBlock(index, { ...block, forbiddenActions: block.forbiddenActions.filter((_, idx) => idx !== fIdx) })}
-                                className="text-neutral-400 hover:text-red-500 font-bold"
-                              >
-                                ×
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </>
+                    <SafetyBlockEditor
+                      block={block}
+                      index={index}
+                      updateBlock={updateBlock}
+                      newForbiddens={newForbiddens}
+                      setNewForbiddens={setNewForbiddens}
+                    />
                   )}
                 </div>
               </div>
