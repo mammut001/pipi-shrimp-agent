@@ -6,14 +6,9 @@
     "severity": "P0",
     "status": "fixed",
     "whyItMatters": "Session switch during streaming could corrupt another session's message history",
-    "files": [
-      "src/store/chat/chatActions.ts"
-    ],
+    "files": ["src/store/chat/chatActions.ts"],
     "smallestPrScope": "Regression tests only — behavior already fixed",
-    "tests": [
-      "T-01",
-      "src/store/chat/__tests__/sessionIsolation.test.ts"
-    ],
+    "tests": ["T-01", "src/store/chat/__tests__/sessionIsolation.test.ts"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -27,19 +22,10 @@
     "severity": "P0",
     "status": "fixed",
     "whyItMatters": "Early audit framed cancel-on-switch as the fix; current soak knife-3 contract: selectSession must not cancel in-flight generation/tools — background continues, writes target owning session (R1-01), only explicit Stop cancels.",
-    "files": [
-      "src/store/createChatStore.ts",
-      "src/store/chat/chatActions.ts"
-    ],
+    "files": ["src/store/createChatStore.ts", "src/store/chat/chatActions.ts"],
     "smallestPrScope": "Regression: selectSession clears selected chrome only; no requestChatGenerationCancel/stop/scrub on switch; background owning-session writes continue; Stop is sole cancel path",
-    "tests": [
-      "T-01",
-      "src/store/chat/__tests__/sessionIsolation.test.ts",
-      "src/store/chat/__tests__/sessionSwitchCancellation.test.ts"
-    ],
-    "dependencies": [
-      "R1-01"
-    ],
+    "tests": ["T-01", "src/store/chat/__tests__/sessionIsolation.test.ts", "src/store/chat/__tests__/sessionSwitchCancellation.test.ts"],
+    "dependencies": ["R1-01"],
     "runtimeBehavior": true,
     "uiBehavior": false,
     "splitPrs": false,
@@ -54,16 +40,10 @@
     "status": "fixed",
     "fixNote": "Code fixed earlier (split renders renderChatPanel with ChatInput). 2026-09-17: regression covered by TOP-15-02 / T-02 (ChatBrowserWorkspaceShell.splitChatInput.test.tsx).",
     "whyItMatters": "Users in split mode could not send messages",
-    "files": [
-      "src/components/ChatBrowserWorkspaceShell.tsx"
-    ],
+    "files": ["src/components/ChatBrowserWorkspaceShell.tsx"],
     "smallestPrScope": "Shell render test asserting ChatInput in split mode",
-    "tests": [
-      "T-02"
-    ],
-    "dependencies": [
-      "INFRA-01"
-    ],
+    "tests": ["T-02"],
+    "dependencies": ["INFRA-01"],
     "runtimeBehavior": false,
     "uiBehavior": true,
     "splitPrs": true,
@@ -76,16 +56,10 @@
     "severity": "P2",
     "status": "fixed",
     "whyItMatters": "setState-after-unmount and memory leak from orphaned debounce timer",
-    "files": [
-      "src/hooks/useChatMessageScroll.ts"
-    ],
+    "files": ["src/hooks/useChatMessageScroll.ts"],
     "smallestPrScope": "Timer mock unit test",
-    "tests": [
-      "T-19"
-    ],
-    "dependencies": [
-      "INFRA-01"
-    ],
+    "tests": ["T-19"],
+    "dependencies": ["INFRA-01"],
     "runtimeBehavior": false,
     "uiBehavior": true,
     "splitPrs": false,
@@ -158,14 +132,8 @@
       "src/store/chat/__tests__/chatToolExecution.test.ts"
     ],
     "smallestPrScope": "Pass session_id from invoke args",
-    "tests": [
-      "cargo test tools::tests",
-      "chatToolExecution.test.ts",
-      "approval token consume path"
-    ],
-    "dependencies": [
-      "R2-01"
-    ],
+    "tests": ["cargo test tools::tests", "chatToolExecution.test.ts", "approval token consume path"],
+    "dependencies": ["R2-01"],
     "runtimeBehavior": true,
     "uiBehavior": false,
     "splitPrs": false,
@@ -179,14 +147,9 @@
     "status": "fixed",
     "fixNote": "2026-06-24: validated_session_memory_dir propagates validate_work_dir errors; all session_memory commands fail closed on invalid explicit work_dir; missing work_dir still uses app fallback.",
     "whyItMatters": "Memory writes allowed with invalid or out-of-sandbox work_dir",
-    "files": [
-      "src-tauri/src/commands/session_memory.rs"
-    ],
+    "files": ["src-tauri/src/commands/session_memory.rs"],
     "smallestPrScope": "Propagate validation error with ?",
-    "tests": [
-      "cargo test session_memory::tests",
-      "work_dir=/etc must fail"
-    ],
+    "tests": ["cargo test session_memory::tests", "work_dir=/etc must fail"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -201,9 +164,7 @@
     "status": "fixed",
     "fixNote": "2026-06-24: local mode no longer embeds remote_work_dir in a cd shell prefix; work dir passed as process cwd. SSH mode unchanged. 16 unit tests in ssh_bridge.rs.",
     "whyItMatters": "Command injection via unescaped local SSH bridge commands",
-    "files": [
-      "src-tauri/src/tools/ssh_bridge.rs"
-    ],
+    "files": ["src-tauri/src/tools/ssh_bridge.rs"],
     "smallestPrScope": "Local exec uses process cwd; paths stay shell-quoted in cp/cat/ssh wrappers",
     "tests": [
       "cargo test ssh_bridge::tests",
@@ -262,9 +223,7 @@
       "src/__tests__/nativeBrowserAgent.test.ts",
       "src/__tests__/browserActionPolicy.test.ts"
     ],
-    "dependencies": [
-      "R3-01"
-    ],
+    "dependencies": ["R3-01"],
     "runtimeBehavior": true,
     "uiBehavior": false,
     "splitPrs": false,
@@ -291,9 +250,7 @@
       "src/store/browser/__tests__/browserActionApproval.test.ts",
       "src/store/browser/__tests__/browserTaskStop.test.ts"
     ],
-    "dependencies": [
-      "R3-05"
-    ],
+    "dependencies": ["R3-05"],
     "runtimeBehavior": true,
     "uiBehavior": true,
     "splitPrs": false,
@@ -318,9 +275,7 @@
       "src/store/browser/__tests__/browserSurfaceMatch.test.ts",
       "src/store/browser/__tests__/browserSurfaceMismatch.test.ts"
     ],
-    "dependencies": [
-      "R3-03"
-    ],
+    "dependencies": ["R3-03"],
     "runtimeBehavior": true,
     "uiBehavior": true,
     "splitPrs": false,
@@ -341,11 +296,7 @@
       "src/__tests__/nativeBrowserAgent.test.ts"
     ],
     "smallestPrScope": "Wire abort signal through CDP task loop",
-    "tests": [
-      "T-17",
-      "src/store/browser/__tests__/browserTaskStop.test.ts",
-      "src/__tests__/nativeBrowserAgent.test.ts"
-    ],
+    "tests": ["T-17", "src/store/browser/__tests__/browserTaskStop.test.ts", "src/__tests__/nativeBrowserAgent.test.ts"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": true,
@@ -372,9 +323,7 @@
       "cargo test execution_policy",
       "src/utils/__tests__/browserActionClient.test.ts"
     ],
-    "dependencies": [
-      "R2-01"
-    ],
+    "dependencies": ["R2-01"],
     "runtimeBehavior": true,
     "uiBehavior": false,
     "splitPrs": false,
@@ -388,18 +337,10 @@
     "status": "fixed",
     "fixNote": "2026-09-17: injectOverlay moved inside try; finally always removeOverlay; browserAgentStore CDP error/abort paths call removeBrowserAgentOverlay; store + native regression tests.",
     "whyItMatters": "Full-screen scanning overlay stuck after agent failure",
-    "files": [
-      "src/utils/nativeBrowserAgent.ts",
-      "src/store/browserAgentStore.ts"
-    ],
+    "files": ["src/utils/nativeBrowserAgent.ts", "src/store/browserAgentStore.ts"],
     "smallestPrScope": "finally removeOverlay after CDP agent loop",
-    "tests": [
-      "src/__tests__/nativeBrowserAgent.test.ts overlay cleanup describe",
-      "src/store/browser/__tests__/browserOverlayCleanup.test.ts"
-    ],
-    "dependencies": [
-      "R3-05"
-    ],
+    "tests": ["src/__tests__/nativeBrowserAgent.test.ts overlay cleanup describe", "src/store/browser/__tests__/browserOverlayCleanup.test.ts"],
+    "dependencies": ["R3-05"],
     "runtimeBehavior": true,
     "uiBehavior": true,
     "splitPrs": false,
@@ -413,16 +354,10 @@
     "status": "fixed",
     "fixNote": "2026-09-17: closeWindow always calls stopTask before teardown; executeTask AbortError/error paths guard shouldAcceptTaskCompletion so late CDP abort cannot clobber closeWindow uninitialized state; pending approval cleared via stopTask; browserCloseWindow regression tests.",
     "whyItMatters": "Orphan CDP agent after closing browser panel",
-    "files": [
-      "src/store/browserAgentStore.ts"
-    ],
+    "files": ["src/store/browserAgentStore.ts"],
     "smallestPrScope": "stopTask before closeEmbeddedSurface",
-    "tests": [
-      "src/store/browser/__tests__/browserCloseWindow.test.ts"
-    ],
-    "dependencies": [
-      "R3-05"
-    ],
+    "tests": ["src/store/browser/__tests__/browserCloseWindow.test.ts"],
+    "dependencies": ["R3-05"],
     "runtimeBehavior": true,
     "uiBehavior": true,
     "splitPrs": false,
@@ -436,16 +371,9 @@
     "status": "fixed",
     "fixNote": "2026-09-17: honor selector end-to-end — normalizeSelectorHint matches Rust-escaped selector_hint quotes; navigate passes wait_selector to navigateBrowserPage; policy resolves sensitive elements via resolveBrowserActionTarget (selector); clearer click/input missing-target errors; selector-used regression tests.",
     "whyItMatters": "Schema allows selector but clicks/types silently no-op",
-    "files": [
-      "src/utils/browserPageStateModel.ts",
-      "src/utils/nativeBrowserAgent.ts",
-      "src/utils/browserActionPolicy.ts"
-    ],
+    "files": ["src/utils/browserPageStateModel.ts", "src/utils/nativeBrowserAgent.ts", "src/utils/browserActionPolicy.ts"],
     "smallestPrScope": "Selector fallback in resolveBrowserActionTarget",
-    "tests": [
-      "src/__tests__/browserPageStateModel.test.ts",
-      "src/__tests__/nativeBrowserAgent.test.ts selector describe"
-    ],
+    "tests": ["src/__tests__/browserPageStateModel.test.ts", "src/__tests__/nativeBrowserAgent.test.ts selector describe"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -460,13 +388,9 @@
     "status": "fixed",
     "fixNote": "2026-09-17: input_text.press_enter wires to pressBrowserKey('Enter') after typeIntoBrowserElement; Enter failures use press_enter_failed (not type_failed); regression covers enter sent, omitted/false no-op, selector+enter, and Enter failure path.",
     "whyItMatters": "Form submit after typing fails in common flows",
-    "files": [
-      "src/utils/nativeBrowserAgent.ts"
-    ],
+    "files": ["src/utils/nativeBrowserAgent.ts"],
     "smallestPrScope": "Wire press_enter in executeEnvelope input_text case",
-    "tests": [
-      "src/__tests__/nativeBrowserAgent.test.ts press_enter describe"
-    ],
+    "tests": ["src/__tests__/nativeBrowserAgent.test.ts press_enter describe"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -480,13 +404,9 @@
     "severity": "Critical",
     "status": "fixed",
     "whyItMatters": "Tauri listener leak caused duplicate event handlers",
-    "files": [
-      "src/utils/listenerGuard.ts"
-    ],
+    "files": ["src/utils/listenerGuard.ts"],
     "smallestPrScope": "Concurrent register/unregister order test",
-    "tests": [
-      "T-12"
-    ],
+    "tests": ["T-12"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -500,13 +420,9 @@
     "severity": "Critical",
     "status": "fixed",
     "whyItMatters": "New workflow runs blocked until app restart",
-    "files": [
-      "src/services/workflowEngine/engine.ts"
-    ],
+    "files": ["src/services/workflowEngine/engine.ts"],
     "smallestPrScope": "stop() then getIsRunning() === false test",
-    "tests": [
-      "T-14"
-    ],
+    "tests": ["T-14"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -520,14 +436,9 @@
     "severity": "Critical",
     "status": "fixed",
     "whyItMatters": "Stuck tool consumer caused permanent UI hang",
-    "files": [
-      "src/core/QueryEngine.ts"
-    ],
+    "files": ["src/core/QueryEngine.ts"],
     "smallestPrScope": "Mock consumer never resolves; assert timeout",
-    "tests": [
-      "T-03",
-      "src/core/__tests__/QueryEngine.test.ts"
-    ],
+    "tests": ["T-03", "src/core/__tests__/QueryEngine.test.ts"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -541,14 +452,9 @@
     "severity": "P0",
     "status": "fixed",
     "whyItMatters": "Stop could not interrupt in-flight AutoResearch agent turn",
-    "files": [
-      "src/services/autoresearch/chatAdapter.ts"
-    ],
+    "files": ["src/services/autoresearch/chatAdapter.ts"],
     "smallestPrScope": "Abort mid-turn integration test",
-    "tests": [
-      "T-04",
-      "TOP-15-08"
-    ],
+    "tests": ["T-04", "TOP-15-08"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -563,14 +469,9 @@
     "status": "fixed",
     "fixNote": "2026-09-17: wrap preflight + loop in shared try/finally so activeLoopAbortController is always nulled on !ok return or unexpected preflight throw; clearActiveLoopHandle in finally; regression tests cover no_ssh_config, dirty_repo, and throw paths.",
     "whyItMatters": "Orphan AbortController after preflight failure blocks clean restarts",
-    "files": [
-      "src/services/autoresearch/loopEngine.ts"
-    ],
+    "files": ["src/services/autoresearch/loopEngine.ts"],
     "smallestPrScope": "Wrap preflight in try/finally clearing controller",
-    "tests": [
-      "controller null after preflight fail",
-      "R5-15"
-    ],
+    "tests": ["controller null after preflight fail", "R5-15"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -584,14 +485,9 @@
     "severity": "P0",
     "status": "fixed",
     "whyItMatters": "Iterations continued after agent error causing runaway cost",
-    "files": [
-      "src/services/autoresearch/loopEngine.ts"
-    ],
+    "files": ["src/services/autoresearch/loopEngine.ts"],
     "smallestPrScope": "Throw path yields no second sendMessage",
-    "tests": [
-      "T-05",
-      "TOP-15-09"
-    ],
+    "tests": ["T-05", "TOP-15-09"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -612,10 +508,7 @@
       "src/services/autoresearch/__tests__/loopEngine.pause.test.ts"
     ],
     "smallestPrScope": "Stop on any non-idle loop state in unmount cleanup",
-    "tests": [
-      "loopEngine.pause.test.ts: pause + unmount (R5-04)",
-      "pause + unmount stops loop"
-    ],
+    "tests": ["loopEngine.pause.test.ts: pause + unmount (R5-04)", "pause + unmount stops loop"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": true,
@@ -629,14 +522,9 @@
     "severity": "P0",
     "status": "fixed",
     "whyItMatters": "Deleting active run left SSH/LLM processes running",
-    "files": [
-      "src/store/autoresearchStore.ts"
-    ],
+    "files": ["src/store/autoresearchStore.ts"],
     "smallestPrScope": "Delete active run stops loop",
-    "tests": [
-      "T-05",
-      "TOP-15-09"
-    ],
+    "tests": ["T-05", "TOP-15-09"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -656,10 +544,7 @@
       "src/services/autoresearch/bootstrap/uploadBootstrapScaffold.ts"
     ],
     "smallestPrScope": "Rollback remote files on Nth failure",
-    "tests": [
-      "uploadBootstrapScaffold.test.ts",
-      "R5-16 partial upload"
-    ],
+    "tests": ["uploadBootstrapScaffold.test.ts", "R5-16 partial upload"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": true,
@@ -674,14 +559,9 @@
     "status": "fixed",
     "fixNote": "2026-09-21: BootstrapChatView.handleReadyResult checks getAutoResearchLifecycleLock before handoff; Start button aria-disabled + lock hint while locked; unit test blocks handoff when an AutoResearch run is already active. AUDIT-FIX [R5-07].",
     "whyItMatters": "Two active runs possible during bootstrap handoff",
-    "files": [
-      "src/components/autoresearch/BootstrapChatView.tsx"
-    ],
+    "files": ["src/components/autoresearch/BootstrapChatView.tsx"],
     "smallestPrScope": "Block handoff when active run exists",
-    "tests": [
-      "active run blocks handoff",
-      "BootstrapChatView.test.tsx"
-    ],
+    "tests": ["active run blocks handoff", "BootstrapChatView.test.tsx"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": true,
@@ -696,19 +576,9 @@
     "status": "fixed",
     "fixNote": "2026-09-21: BootstrapChatView.resolveBootstrapMetricDirection prefers plan.direction, then recipe direction, then guessMetricDirection only when both omit; BootstrapPlan.direction optional end-to-end via synthesizeFinalize and bootstrap_finalize tool; unit + handoff tests assert plan wins over guess. AUDIT-FIX [R5-08].",
     "whyItMatters": "Metric optimization may run in wrong direction",
-    "files": [
-      "src/components/autoresearch/BootstrapChatView.tsx",
-      "src/services/autoresearch/bootstrap/types.ts",
-      "src/services/autoresearch/bootstrap/schema.ts",
-      "src/services/autoresearch/bootstrap/synthesizeFinalize.ts",
-      "src/services/tools/autoresearchBootstrap/index.ts"
-    ],
+    "files": ["src/components/autoresearch/BootstrapChatView.tsx", "src/services/autoresearch/bootstrap/types.ts", "src/services/autoresearch/bootstrap/schema.ts", "src/services/autoresearch/bootstrap/synthesizeFinalize.ts", "src/services/tools/autoresearchBootstrap/index.ts"],
     "smallestPrScope": "Read direction from plan not guess",
-    "tests": [
-      "direction matches plan",
-      "resolveBootstrapMetricDirection prefers plan",
-      "BootstrapChatView.test.tsx"
-    ],
+    "tests": ["direction matches plan", "resolveBootstrapMetricDirection prefers plan", "BootstrapChatView.test.tsx"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -728,10 +598,7 @@
       "src/services/autoresearch/__tests__/loopEngine.pause.test.ts"
     ],
     "smallestPrScope": "AbortSignal-aware pause wait",
-    "tests": [
-      "loopEngine.pause.test.ts: waitForResumeOrAbort resolves within 200ms of abort",
-      "stop during pause <200ms"
-    ],
+    "tests": ["loopEngine.pause.test.ts: waitForResumeOrAbort resolves within 200ms of abort", "stop during pause <200ms"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -746,15 +613,9 @@
     "status": "fixed",
     "fixNote": "2026-09-21: Panel copy/download now use displayedLiveOutput (redacted); DashboardView + DocumentReport centralize redactSensitiveText inside handleCopy/handleDownload so live output and event-line copies cannot leak raw API keys. Jest coverage in AutoResearchPanel.liveOutput.test.ts and AutoResearchDashboardView.clipboard.test.ts. AUDIT-FIX [R5-10].",
     "whyItMatters": "API keys may leak to clipboard",
-    "files": [
-      "src/components/AutoResearchPanel.tsx",
-      "src/components/autoresearch/AutoResearchDashboardView.tsx",
-      "src/components/autoresearch/AutoResearchDocumentReport.tsx"
-    ],
+    "files": ["src/components/AutoResearchPanel.tsx", "src/components/autoresearch/AutoResearchDashboardView.tsx", "src/components/autoresearch/AutoResearchDocumentReport.tsx"],
     "smallestPrScope": "Copy redacted output only",
-    "tests": [
-      "clipboard has no API key pattern"
-    ],
+    "tests": ["clipboard has no API key pattern"],
     "dependencies": [],
     "runtimeBehavior": false,
     "uiBehavior": true,
@@ -769,18 +630,9 @@
     "status": "fixed",
     "fixNote": "2026-09-21: Added dispatchAutoResearchRecoveryAction / handleAutoResearchRecoveryAction; Panel + DashboardView recovery buttons call it (retry_iteration/retry_failed_phase → resumeExperimentLoop, abort_run → stopExperimentLoop, open_logs/open_raw_request_summary → inspect/debug, switch_provider/increase_tool_budget stay unsupported). buildIterationRecoveryActions emits retry_iteration + abort_run. Unit tests in recoveryActions.test.ts. AUDIT-FIX [R5-11].",
     "whyItMatters": "Broken recovery UX — retry_iteration never fires",
-    "files": [
-      "src/services/autoresearch/recoveryActions.ts",
-      "src/components/AutoResearchPanel.tsx",
-      "src/components/autoresearch/AutoResearchDashboardView.tsx",
-      "src/services/autoresearch/loopEngine.metricsPhase.ts",
-      "src/services/autoresearch/structuredEvents.ts"
-    ],
+    "files": ["src/services/autoresearch/recoveryActions.ts", "src/components/AutoResearchPanel.tsx", "src/components/autoresearch/AutoResearchDashboardView.tsx", "src/services/autoresearch/loopEngine.metricsPhase.ts", "src/services/autoresearch/structuredEvents.ts"],
     "smallestPrScope": "Wire recovery handler to loop engine",
-    "tests": [
-      "retry_iteration calls handler",
-      "recoveryActions.test.ts"
-    ],
+    "tests": ["retry_iteration calls handler", "recoveryActions.test.ts"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": true,
@@ -795,14 +647,9 @@
     "status": "fixed",
     "fixNote": "2026-09-21: addExperiment no longer mutates failureCount; incrementConsecutiveFailures / resetConsecutiveFailures / updateBestMetric keep consecutiveFailures and run.failureCount in lockstep for auto-stop/resume. Tests in autoresearchStore.test.ts. AUDIT-FIX [R5-12].",
     "whyItMatters": "Wrong backoff and auto-stop behavior",
-    "files": [
-      "src/store/autoresearchStore.ts"
-    ],
+    "files": ["src/store/autoresearchStore.ts"],
     "smallestPrScope": "Unify failure counters",
-    "tests": [
-      "consecutive failure count consistent",
-      "autoresearchStore.test.ts"
-    ],
+    "tests": ["consecutive failure count consistent", "autoresearchStore.test.ts"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -817,14 +664,9 @@
     "status": "fixed",
     "fixNote": "2026-09-21: flushAutoResearchPersistOnClose always writes latest getState() on close/beforeunload even when persistTimer is null (covers failed debounce persist). Tests in autoresearchStore.test.ts. AUDIT-FIX [R5-13].",
     "whyItMatters": "Metrics lost on close after failed persist",
-    "files": [
-      "src/store/autoresearchStore.ts"
-    ],
+    "files": ["src/store/autoresearchStore.ts"],
     "smallestPrScope": "Flush on close regardless of timer state",
-    "tests": [
-      "close after failed persist still flushes",
-      "autoresearchStore.test.ts"
-    ],
+    "tests": ["close after failed persist still flushes", "autoresearchStore.test.ts"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -838,17 +680,10 @@
     "severity": "Test-gap",
     "status": "partially fixed",
     "whyItMatters": "R5-01 fixed in code; automated guard missing",
-    "files": [
-      "src/services/autoresearch/__tests__/chatAdapter.test.ts"
-    ],
+    "files": ["src/services/autoresearch/__tests__/chatAdapter.test.ts"],
     "smallestPrScope": "Add abort mid-turn test",
-    "tests": [
-      "T-04",
-      "TOP-15-08"
-    ],
-    "dependencies": [
-      "R5-01"
-    ],
+    "tests": ["T-04", "TOP-15-08"],
+    "dependencies": ["R5-01"],
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
@@ -861,19 +696,10 @@
     "severity": "Test-gap",
     "status": "partially fixed",
     "whyItMatters": "R5-03/05 fixed; preflight leak and stop paths untested",
-    "files": [
-      "src/services/autoresearch/__tests__/loopEngine.integration.test.ts"
-    ],
+    "files": ["src/services/autoresearch/__tests__/loopEngine.integration.test.ts"],
     "smallestPrScope": "New describe blocks for stop and preflight",
-    "tests": [
-      "T-05",
-      "R5-02 scenarios"
-    ],
-    "dependencies": [
-      "R5-02",
-      "R5-03",
-      "R5-05"
-    ],
+    "tests": ["T-05", "R5-02 scenarios"],
+    "dependencies": ["R5-02", "R5-03", "R5-05"],
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
@@ -892,10 +718,7 @@
       "src/components/autoresearch/__tests__/BootstrapChatView.test.tsx"
     ],
     "smallestPrScope": "New BootstrapChatView test file",
-    "tests": [
-      "BootstrapChatView.test.tsx: SSH upload failure + retry",
-      "BootstrapChatView.test.tsx: double-Start blocked by bootstrappedAtRef"
-    ],
+    "tests": ["BootstrapChatView.test.tsx: SSH upload failure + retry", "BootstrapChatView.test.tsx: double-Start blocked by bootstrappedAtRef"],
     "dependencies": [],
     "runtimeBehavior": false,
     "uiBehavior": false,
@@ -915,10 +738,7 @@
       "src/services/workflowEngine/__tests__/engine.test.ts"
     ],
     "smallestPrScope": "Early return to error state on reject",
-    "tests": [
-      "T-06",
-      "src/services/workflowEngine/__tests__/engine.test.ts"
-    ],
+    "tests": ["T-06", "src/services/workflowEngine/__tests__/engine.test.ts"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -939,13 +759,8 @@
       "src/services/workflowEngine/__tests__/engine.test.ts"
     ],
     "smallestPrScope": "AbortController through streaming invoke",
-    "tests": [
-      "T-14",
-      "src/services/workflowEngine/__tests__/engine.test.ts"
-    ],
-    "dependencies": [
-      "R4-02"
-    ],
+    "tests": ["T-14", "src/services/workflowEngine/__tests__/engine.test.ts"],
+    "dependencies": ["R4-02"],
     "runtimeBehavior": true,
     "uiBehavior": false,
     "splitPrs": false,
@@ -958,14 +773,9 @@
     "severity": "High",
     "status": "fixed",
     "whyItMatters": "Sibling-prefix path escape bypassed TS sandbox",
-    "files": [
-      "src/utils/pathValidation.ts"
-    ],
+    "files": ["src/utils/pathValidation.ts"],
     "smallestPrScope": "Table-driven sibling-prefix regression tests",
-    "tests": [
-      "T-07",
-      "TOP-15-15"
-    ],
+    "tests": ["T-07", "TOP-15-15"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -980,16 +790,9 @@
     "status": "fixed",
     "fixNote": "2026-06-24: artifactPathPolicy adds canonical/realpath containment (Node resolver + Tauri canonicalize_artifact_path); symlink escapes rejected; future-output paths require parent inside root.",
     "whyItMatters": "Path traversal via .. segments may bypass check",
-    "files": [
-      "src/services/artifactPathPolicy.ts",
-      "src/services/artifactPathCanonical.ts",
-      "src-tauri/src/commands/path_security.rs",
-      "src-tauri/src/commands/workspace.rs"
-    ],
+    "files": ["src/services/artifactPathPolicy.ts", "src/services/artifactPathCanonical.ts", "src-tauri/src/commands/path_security.rs", "src-tauri/src/commands/workspace.rs"],
     "smallestPrScope": "Canonicalize artifact paths before comparison",
-    "tests": [
-      "artifactPathPolicy.test.ts: symlink escape, future output, fail-closed"
-    ],
+    "tests": ["artifactPathPolicy.test.ts: symlink escape, future output, fail-closed"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -1004,14 +807,9 @@
     "status": "fixed",
     "fixNote": "2026-06-24 (031d183): artifactDetector adds Windows drive-letter, WSL, and saved/File path patterns with extraction regressions; backlog closed 2026-09-21 after verification.",
     "whyItMatters": "Windows artifacts not detected or filtered",
-    "files": [
-      "src/services/artifactDetector.ts",
-      "src/services/__tests__/artifactDetector.test.ts"
-    ],
+    "files": ["src/services/artifactDetector.ts", "src/services/__tests__/artifactDetector.test.ts"],
     "smallestPrScope": "Add Windows path patterns",
-    "tests": [
-      "artifactDetector.test.ts: Windows drive-letter, WSL, saved-to, and File: path extraction"
-    ],
+    "tests": ["artifactDetector.test.ts: Windows drive-letter, WSL, saved-to, and File: path extraction"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -1026,17 +824,9 @@
     "status": "fixed",
     "fixNote": "2026-09-17: detectAndRegisterArtifacts fail-closed when no allowed roots (workDir/outputDir unset or blank) via getAllowedArtifactRoots early return; shared artifactPathPolicy still rejects outside-root paths. Regressions cover /etc/passwd, /etc/passwd.png, /etc/shadow.pdf, and blank workDir.",
     "whyItMatters": "Any absolute path registrable as artifact without sandbox",
-    "files": [
-      "src/services/artifactDetector.ts",
-      "src/services/artifactPathPolicy.ts",
-      "src/__tests__/artifactDetector.test.ts"
-    ],
+    "files": ["src/services/artifactDetector.ts", "src/services/artifactPathPolicy.ts", "src/__tests__/artifactDetector.test.ts"],
     "smallestPrScope": "Reject absolute paths when workDir unset",
-    "tests": [
-      "rejects_absolute_path_when_both_roots_undefined (R7-04)",
-      "rejects_/etc/passwd_style_paths_when_workDir_undefined (R7-04)",
-      "rejects_absolute_paths_when_workDir_blank_and_no_outputDir (R7-04)"
-    ],
+    "tests": ["rejects_absolute_path_when_both_roots_undefined (R7-04)", "rejects_/etc/passwd_style_paths_when_workDir_undefined (R7-04)", "rejects_absolute_paths_when_workDir_blank_and_no_outputDir (R7-04)"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -1051,18 +841,10 @@
     "status": "fixed",
     "fixNote": "2026-06-24: addFileArtifact validates paths via shared artifactPathPolicy (workDir/outputDir roots); browserBenchmarkArtifacts passes workDir.",
     "whyItMatters": "Artifacts outside project folder can be registered",
-    "files": [
-      "src/services/artifactPathPolicy.ts",
-      "src/services/artifactDetector.ts",
-      "src/services/browserBenchmarkArtifacts.ts"
-    ],
+    "files": ["src/services/artifactPathPolicy.ts", "src/services/artifactDetector.ts", "src/services/browserBenchmarkArtifacts.ts"],
     "smallestPrScope": "Sandbox check on addFileArtifact",
-    "tests": [
-      "artifactDetector.test.ts: addFileArtifact root sandbox + shared policy"
-    ],
-    "dependencies": [
-      "R7-04"
-    ],
+    "tests": ["artifactDetector.test.ts: addFileArtifact root sandbox + shared policy"],
+    "dependencies": ["R7-04"],
     "runtimeBehavior": true,
     "uiBehavior": false,
     "splitPrs": false,
@@ -1076,16 +858,9 @@
     "status": "fixed",
     "fixNote": "2026-06-24: detectAndRegisterArtifacts accepts paths under workDir or outputDir via getAllowedArtifactRoots/isPathInsideAnyArtifactRoot; chatToolExecution passes session pipiOutputDir.",
     "whyItMatters": "pipiOutputDir artifacts not tracked in detector",
-    "files": [
-      "src/services/artifactDetector.ts",
-      "src/store/chat/chatArtifacts.ts",
-      "src/store/chat/chatToolExecution.ts"
-    ],
+    "files": ["src/services/artifactDetector.ts", "src/store/chat/chatArtifacts.ts", "src/store/chat/chatToolExecution.ts"],
     "smallestPrScope": "Register artifacts from pipiOutputDir",
-    "tests": [
-      "artifactDetector.test.ts: outputDir/workDir roots, prefix/traversal rejection",
-      "chatArtifacts.test.ts: outputDir forwarded"
-    ],
+    "tests": ["artifactDetector.test.ts: outputDir/workDir roots, prefix/traversal rejection", "chatArtifacts.test.ts: outputDir forwarded"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -1099,14 +874,9 @@
     "severity": "High",
     "status": "fixed",
     "whyItMatters": "XSS via malicious assistant markdown links",
-    "files": [
-      "src/components/ChatMessage.tsx"
-    ],
+    "files": ["src/components/ChatMessage.tsx"],
     "smallestPrScope": "XSS vector regression render test",
-    "tests": [
-      "T-08",
-      "TOP-15-14"
-    ],
+    "tests": ["T-08", "TOP-15-14"],
     "dependencies": [],
     "runtimeBehavior": false,
     "uiBehavior": true,
@@ -1120,14 +890,9 @@
     "severity": "High",
     "status": "fixed",
     "whyItMatters": "img onerror and similar XSS in doc preview",
-    "files": [
-      "src/components/document/MarkdownDocumentPreview.tsx"
-    ],
+    "files": ["src/components/document/MarkdownDocumentPreview.tsx"],
     "smallestPrScope": "XSS vector render test",
-    "tests": [
-      "T-08",
-      "TOP-15-14"
-    ],
+    "tests": ["T-08", "TOP-15-14"],
     "dependencies": [],
     "runtimeBehavior": false,
     "uiBehavior": true,
@@ -1142,14 +907,9 @@
     "status": "fixed",
     "fixNote": "2026-06-24 (b1ce00b): ChatImage adds an image-source scheme allowlist and regression coverage for dangerous schemes; backlog closed 2026-09-21 after verification.",
     "whyItMatters": "javascript: or data: URLs in image lightbox",
-    "files": [
-      "src/components/ChatImage.tsx",
-      "src/components/__tests__/ChatImage.test.tsx"
-    ],
+    "files": ["src/components/ChatImage.tsx", "src/components/__tests__/ChatImage.test.tsx"],
     "smallestPrScope": "Allowlist http(s) and blob schemes",
-    "tests": [
-      "ChatImage.test.tsx: javascript/vbscript/file/data scheme rejection and safe scheme allowlist"
-    ],
+    "tests": ["ChatImage.test.tsx: javascript/vbscript/file/data scheme rejection and safe scheme allowlist"],
     "dependencies": [],
     "runtimeBehavior": false,
     "uiBehavior": true,
@@ -1164,13 +924,9 @@
     "status": "fixed",
     "fixNote": "2026-06-24 (eda9a9a): telegram.rs redacts tokens from request errors and includes redact_token_* unit tests; backlog closed 2026-09-21 after verification.",
     "whyItMatters": "Token leakage via logs and error messages",
-    "files": [
-      "src-tauri/src/commands/telegram.rs"
-    ],
+    "files": ["src-tauri/src/commands/telegram.rs"],
     "smallestPrScope": "Redact token in error paths",
-    "tests": [
-      "telegram.rs command_registration_tests::redact_*"
-    ],
+    "tests": ["telegram.rs command_registration_tests::redact_*"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -1194,11 +950,7 @@
       "src/services/telegram/__tests__/commandRouter.test.ts"
     ],
     "smallestPrScope": "Call isChatAllowed before dispatch",
-    "tests": [
-      "T-16",
-      "TOP-15-13",
-      "src/services/telegram/__tests__/chatAuthorization.test.ts"
-    ],
+    "tests": ["T-16", "TOP-15-13", "src/services/telegram/__tests__/chatAuthorization.test.ts"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -1213,19 +965,9 @@
     "status": "fixed",
     "fixNote": "2026-09-17: Re-audited tip 843a425 — all telegramService.ts telegram_* invokes match lib.rs generate_handler + telegram.rs pub fns; strengthened tauriCommandParity.test.ts (dynamic extract); added tools/check-tauri-commands.mjs (T-15 / INFRA-03) and check:tauri-commands script.",
     "whyItMatters": "TS invokes commands that fail or noop at runtime",
-    "files": [
-      "src/services/telegramService.ts",
-      "src-tauri/src/lib.rs",
-      "src-tauri/src/commands/telegram.rs",
-      "src/services/telegram/__tests__/tauriCommandParity.test.ts",
-      "tools/check-tauri-commands.mjs"
-    ],
+    "files": ["src/services/telegramService.ts", "src-tauri/src/lib.rs", "src-tauri/src/commands/telegram.rs", "src/services/telegram/__tests__/tauriCommandParity.test.ts", "tools/check-tauri-commands.mjs"],
     "smallestPrScope": "Register missing handlers or remove dead invokes",
-    "tests": [
-      "T-15",
-      "TOP-15-12",
-      "tools/check-tauri-commands.mjs"
-    ],
+    "tests": ["T-15", "TOP-15-12", "tools/check-tauri-commands.mjs"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -1240,14 +982,9 @@
     "status": "fixed",
     "fixNote": "Code landed 2026-06-24 (11ca70f): terminal_create calls validate_path(cwd, None) before PTY spawn. 2026-09-21: extracted validate_terminal_cwd helper + regression tests (/etc, /etc/passwd, relative, ../etc rejected; temp cwd accepted).",
     "whyItMatters": "PTY can start in sensitive system directories",
-    "files": [
-      "src-tauri/src/commands/terminal.rs"
-    ],
+    "files": ["src-tauri/src/commands/terminal.rs"],
     "smallestPrScope": "Validate cwd through path_security",
-    "tests": [
-      "/etc cwd rejected",
-      "test_terminal_cwd_sandbox"
-    ],
+    "tests": ["/etc cwd rejected", "test_terminal_cwd_sandbox"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -1269,10 +1006,7 @@
       "src/store/settingsStore.ts"
     ],
     "smallestPrScope": "Wire chosen Tauri 2 keychain plugin (spike done)",
-    "tests": [
-      "token not in localStorage plaintext",
-      "src/utils/__tests__/secureStorage.test.ts"
-    ],
+    "tests": ["token not in localStorage plaintext", "src/utils/__tests__/secureStorage.test.ts"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -1287,14 +1021,9 @@
     "status": "fixed",
     "fixNote": "2026-06-24 (cff603c): pathValidation.ts adds Windows blocked prefixes and a Windows-path regression describe; backlog closed 2026-09-21 after verification.",
     "whyItMatters": "Windows system dirs not blocked in TS path checks",
-    "files": [
-      "src/services/tools/pathValidation.ts",
-      "src/services/tools/__tests__/pathValidation.test.ts"
-    ],
+    "files": ["src/services/tools/pathValidation.ts", "src/services/tools/__tests__/pathValidation.test.ts"],
     "smallestPrScope": "Add C:\\Windows and related prefixes",
-    "tests": [
-      "pathValidation.test.ts: Windows system directory and sensitive-file rejection"
-    ],
+    "tests": ["pathValidation.test.ts: Windows system directory and sensitive-file rejection"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -1309,9 +1038,7 @@
     "status": "fixed",
     "fixNote": "2026-09-17: Closed T-01 / R1-01/R1-02 regression gap under current soak semantics (stream writes own session; selectSession clears selected chrome only — no cancel-on-switch). Strengthened sessionIsolation.test.ts selectSession contract describe; companions remain chatStreamingIsolation.test.ts, chatStoreSendMessage P0-2/knife-3, sessionSwitchCancellation, startSessionPermissionIsolation, Chat.permissionSessionTarget.",
     "whyItMatters": "Guard R1-01/R1-02 fixes from regression",
-    "files": [
-      "src/store/chat/__tests__/"
-    ],
+    "files": ["src/store/chat/__tests__/"],
     "smallestPrScope": "sessionIsolation regression describe block",
     "tests": [
       "T-01",
@@ -1322,10 +1049,7 @@
       "src/store/chat/__tests__/startSessionPermissionIsolation.test.ts",
       "src/__tests__/Chat.permissionSessionTarget.test.tsx"
     ],
-    "dependencies": [
-      "R1-01",
-      "R1-02"
-    ],
+    "dependencies": ["R1-01", "R1-02"],
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
@@ -1339,9 +1063,7 @@
     "status": "fixed",
     "fixNote": "2026-09-17: Closed T-02 / R1-03 regression gap — RTL shell test proves browserDockMode=split mounts BrowserWorkspacePane + ChatInput and send reaches sendMessage for current session. Regression: ChatBrowserWorkspaceShell.splitChatInput.test.tsx. Companions: ChatInput.sendStopMount (send/stop exclusivity), uiStore browserDockMode transitions, ChatWorkspaceModeToggle.",
     "whyItMatters": "Guard R1-03 split mode fix",
-    "files": [
-      "src/components/ChatBrowserWorkspaceShell.tsx"
-    ],
+    "files": ["src/components/ChatBrowserWorkspaceShell.tsx"],
     "smallestPrScope": "Shell render test split mode",
     "tests": [
       "T-02",
@@ -1349,10 +1071,7 @@
       "src/components/__tests__/ChatInput.sendStopMount.test.tsx (companion)",
       "src/__tests__/uiStore.test.ts (browserDockMode companion)"
     ],
-    "dependencies": [
-      "R1-03",
-      "INFRA-01"
-    ],
+    "dependencies": ["R1-03", "INFRA-01"],
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
@@ -1365,17 +1084,10 @@
     "severity": "P2",
     "status": "test gap only",
     "whyItMatters": "Guard R1-11 and cover R1-16 scroll behavior",
-    "files": [
-      "src/hooks/useChatMessageScroll.ts"
-    ],
+    "files": ["src/hooks/useChatMessageScroll.ts"],
     "smallestPrScope": "Hook unit tests with timer mock",
-    "tests": [
-      "T-19"
-    ],
-    "dependencies": [
-      "R1-11",
-      "INFRA-01"
-    ],
+    "tests": ["T-19"],
+    "dependencies": ["R1-11", "INFRA-01"],
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
@@ -1388,16 +1100,10 @@
     "severity": "Critical",
     "status": "test gap only",
     "whyItMatters": "Guard R4-01 listener leak fix",
-    "files": [
-      "src/utils/listenerGuard.ts"
-    ],
+    "files": ["src/utils/listenerGuard.ts"],
     "smallestPrScope": "Concurrent register/unregister test",
-    "tests": [
-      "T-12"
-    ],
-    "dependencies": [
-      "R4-01"
-    ],
+    "tests": ["T-12"],
+    "dependencies": ["R4-01"],
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
@@ -1410,16 +1116,10 @@
     "severity": "Critical",
     "status": "test gap only",
     "whyItMatters": "Guard R4-03 hang fix",
-    "files": [
-      "src/core/QueryEngine.ts"
-    ],
+    "files": ["src/core/QueryEngine.ts"],
     "smallestPrScope": "Never-resolve consumer timeout test",
-    "tests": [
-      "T-03"
-    ],
-    "dependencies": [
-      "R4-03"
-    ],
+    "tests": ["T-03"],
+    "dependencies": ["R4-03"],
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
@@ -1432,16 +1132,10 @@
     "severity": "High",
     "status": "test gap only",
     "whyItMatters": "Guard R4-07 confirmation gate",
-    "files": [
-      "src/services/StreamingToolExecutor.ts"
-    ],
+    "files": ["src/services/StreamingToolExecutor.ts"],
     "smallestPrScope": "requiresConfirmation path test",
-    "tests": [
-      "T-13"
-    ],
-    "dependencies": [
-      "R4-07"
-    ],
+    "tests": ["T-13"],
+    "dependencies": ["R4-07"],
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
@@ -1454,16 +1148,10 @@
     "severity": "Critical",
     "status": "test gap only",
     "whyItMatters": "Validate R2-01 fix and prevent policy drift",
-    "files": [
-      "src-tauri/src/commands/chat.rs"
-    ],
+    "files": ["src-tauri/src/commands/chat.rs"],
     "smallestPrScope": "Rust policy parity test",
-    "tests": [
-      "T-18"
-    ],
-    "dependencies": [
-      "R2-01"
-    ],
+    "tests": ["T-18"],
+    "dependencies": ["R2-01"],
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
@@ -1476,16 +1164,10 @@
     "severity": "P0",
     "status": "partially fixed",
     "whyItMatters": "Guard R5-01 abort wiring",
-    "files": [
-      "src/services/autoresearch/__tests__/chatAdapter.test.ts"
-    ],
+    "files": ["src/services/autoresearch/__tests__/chatAdapter.test.ts"],
     "smallestPrScope": "Abort mid-turn test",
-    "tests": [
-      "T-04"
-    ],
-    "dependencies": [
-      "R5-01"
-    ],
+    "tests": ["T-04"],
+    "dependencies": ["R5-01"],
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
@@ -1498,17 +1180,10 @@
     "severity": "P0",
     "status": "partially fixed",
     "whyItMatters": "Guard R5-03 and R5-05 fixes",
-    "files": [
-      "src/services/autoresearch/__tests__/loopEngine.integration.test.ts"
-    ],
+    "files": ["src/services/autoresearch/__tests__/loopEngine.integration.test.ts"],
     "smallestPrScope": "Integration describe for stop and delete",
-    "tests": [
-      "T-05"
-    ],
-    "dependencies": [
-      "R5-03",
-      "R5-05"
-    ],
+    "tests": ["T-05"],
+    "dependencies": ["R5-03", "R5-05"],
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
@@ -1521,17 +1196,10 @@
     "severity": "Critical",
     "status": "test gap only",
     "whyItMatters": "Main entry point has zero coverage",
-    "files": [
-      "src/App.tsx"
-    ],
+    "files": ["src/App.tsx"],
     "smallestPrScope": "Mock stores view switch test",
-    "tests": [
-      "T-09",
-      "R10-01"
-    ],
-    "dependencies": [
-      "INFRA-01"
-    ],
+    "tests": ["T-09", "R10-01"],
+    "dependencies": ["INFRA-01"],
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
@@ -1544,17 +1212,10 @@
     "severity": "Critical",
     "status": "test gap only",
     "whyItMatters": "Primary production shell untested",
-    "files": [
-      "src/components/ChatBrowserWorkspaceShell.tsx"
-    ],
+    "files": ["src/components/ChatBrowserWorkspaceShell.tsx"],
     "smallestPrScope": "FIFO permission + questionnaire filter tests",
-    "tests": [
-      "T-10",
-      "T-11"
-    ],
-    "dependencies": [
-      "INFRA-01"
-    ],
+    "tests": ["T-10", "T-11"],
+    "dependencies": ["INFRA-01"],
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
@@ -1568,17 +1229,9 @@
     "status": "fixed",
     "fixNote": "2026-09-17: Dynamic TS↔Rust telegram invoke parity contract in tauriCommandParity.test.ts; tools/check-tauri-commands.mjs covers T-15.",
     "whyItMatters": "Dead invokes cause runtime failures",
-    "files": [
-      "src/services/telegramService.ts",
-      "src-tauri/src/lib.rs",
-      "src/services/telegram/__tests__/tauriCommandParity.test.ts",
-      "tools/check-tauri-commands.mjs"
-    ],
+    "files": ["src/services/telegramService.ts", "src-tauri/src/lib.rs", "src/services/telegram/__tests__/tauriCommandParity.test.ts", "tools/check-tauri-commands.mjs"],
     "smallestPrScope": "Contract test per telegram_* command",
-    "tests": [
-      "T-15",
-      "INFRA-03"
-    ],
+    "tests": ["T-15", "INFRA-03"],
     "dependencies": [],
     "runtimeBehavior": false,
     "uiBehavior": false,
@@ -1593,16 +1246,10 @@
     "status": "fixed",
     "fixNote": "2026-09-24: Verified on main. chatAuthorization.test.ts rejects chat 456 when only 123 is allowed; commandRouter.test.ts verifies unauthorized chats are rejected before command dispatch.",
     "whyItMatters": "Security allowlist must be tested with R7-11 fix",
-    "files": [
-      "src/services/telegram/commandRouter.ts"
-    ],
+    "files": ["src/services/telegram/commandRouter.ts"],
     "smallestPrScope": "chat 456 rejected when allowlist [123]",
-    "tests": [
-      "T-16"
-    ],
-    "dependencies": [
-      "R7-11"
-    ],
+    "tests": ["T-16"],
+    "dependencies": ["R7-11"],
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
@@ -1615,18 +1262,10 @@
     "severity": "High",
     "status": "test gap only",
     "whyItMatters": "Guard R7-07 and R7-08 sanitization fixes",
-    "files": [
-      "src/components/ChatMessage.tsx",
-      "src/components/document/MarkdownDocumentPreview.tsx"
-    ],
+    "files": ["src/components/ChatMessage.tsx", "src/components/document/MarkdownDocumentPreview.tsx"],
     "smallestPrScope": "Malicious fixture render tests",
-    "tests": [
-      "T-08"
-    ],
-    "dependencies": [
-      "R7-07",
-      "R7-08"
-    ],
+    "tests": ["T-08"],
+    "dependencies": ["R7-07", "R7-08"],
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
@@ -1639,16 +1278,10 @@
     "severity": "High",
     "status": "test gap only",
     "whyItMatters": "Guard R7-01 isWithinDir fix",
-    "files": [
-      "src/utils/pathValidation.ts"
-    ],
+    "files": ["src/utils/pathValidation.ts"],
     "smallestPrScope": "Table-driven /project vs /project-evil cases",
-    "tests": [
-      "T-07"
-    ],
-    "dependencies": [
-      "R7-01"
-    ],
+    "tests": ["T-07"],
+    "dependencies": ["R7-01"],
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
@@ -1673,10 +1306,7 @@
       "src-tauri/src/database/tests.rs"
     ],
     "smallestPrScope": "Done — #172 split into database/ modules (database.rs 2811→388)",
-    "tests": [
-      "existing database tests",
-      "cargo test"
-    ],
+    "tests": ["existing database tests", "cargo test"],
     "dependencies": [],
     "runtimeBehavior": false,
     "uiBehavior": false,
@@ -1709,9 +1339,7 @@
       "loopEnginePreflightAbort.test.ts",
       "loopEngine.integration.test.ts"
     ],
-    "dependencies": [
-      "R5-02"
-    ],
+    "dependencies": ["R5-02"],
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": true,
@@ -1732,13 +1360,8 @@
       "src-tauri/src/commands/chat/tests.rs"
     ],
     "smallestPrScope": "Done — R2-01 fixed, then #173 extracted chat/ modules (chat.rs 1408→214)",
-    "tests": [
-      "T-18",
-      "cargo test chat"
-    ],
-    "dependencies": [
-      "R2-01"
-    ],
+    "tests": ["T-18", "cargo test chat"],
+    "dependencies": ["R2-01"],
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": true,
@@ -1752,15 +1375,9 @@
     "status": "fixed",
     "fixNote": "2026-09-24: AG-04 closed after #174 (`ad8949c`). Sidebar.tsx 1488→357 LOC (live wc -l on main `b6c811a`), under the 500 LOC component threshold. Extracted to src/components/sidebar/: SidebarSessionList.tsx 381, SidebarModals.tsx 252, SidebarWorkflowList.tsx 232, SidebarViewSwitcher.tsx 126, SidebarSessionBulkActions.tsx 121, SidebarWorkflowBulkActions.tsx 72, plus hooks useSidebarSessionActions 134 / useSidebarSessionState 124 / useSidebarWorkflowController 123 / useSidebarProjectController 100 — all <500. Added SidebarSessionBulkActions / SidebarViewSwitcher / SidebarWorkflowBulkActions tests.",
     "whyItMatters": "Component exceeds 500 LOC component threshold",
-    "files": [
-      "src/components/Sidebar.tsx",
-      "src/components/sidebar/"
-    ],
+    "files": ["src/components/Sidebar.tsx", "src/components/sidebar/"],
     "smallestPrScope": "Done — #174 extracted lists, modals, bulk actions, controllers (Sidebar.tsx 1488→357)",
-    "tests": [
-      "Sidebar tests",
-      "T-23"
-    ],
+    "tests": ["Sidebar tests", "T-23"],
     "dependencies": [],
     "runtimeBehavior": false,
     "uiBehavior": true,
@@ -1813,9 +1430,7 @@
       "src/store/autoresearchPersistence.ts"
     ],
     "smallestPrScope": "Done — #177 types/records/persistence + #188 run/iteration actions (799→304)",
-    "tests": [
-      "autoresearchStore.test.ts"
-    ],
+    "tests": ["autoresearchStore.test.ts"],
     "dependencies": [],
     "runtimeBehavior": false,
     "uiBehavior": false,
@@ -1830,20 +1445,9 @@
     "status": "fixed",
     "fixNote": "2026-09-24: AG-07 closed by #193. Mechanical, behavior-preserving extract of src/utils/nativeBrowserAgent.ts (757→463 LOC, live wc -l) into sibling modules: nativeBrowserAgentObservation.ts (97; captureStepObservation — verbatim light / PageState / resync-on-page-reference-error observation block, loop-scoped lastUrl/lastPageState carried in a mutable NativeObservationState holder; awaited only inside the original `desiredLevel === 'light' || usePageStateFlow` branch at the caller, so the set of awaiting paths is identical to main), nativeBrowserAgentPrompt.ts (68; NATIVE_BROWSER_AGENT_SYSTEM_PROMPT byte-identical + pure resolveNativeAgentStartUrl, same regexes/fallbacks), nativeBrowserAgentRunState.ts (66; emptySummary, recordStepTiming, countLoopRepeats, resolveIncompleteRunOutcome — same semantics/branches), nativeBrowserAgentOverlay.ts (60; overlay inject/remove scripts, best-effort), nativeBrowserAgentTypes.ts (86; NativeAgentStepTiming/NativeAgentRunSummary/NativeAgentOptions, re-exported from nativeBrowserAgent.ts). nativeBrowserAgent.ts keeps the executeNativeBrowserTask step loop and exported API (executeNativeBrowserTask, removeBrowserAgentOverlay, NativeAgentStepTiming, NativeAgentRunSummary, NativeAgentOptions); same call/await order, log + error messages, onStep/onRunSummary payloads. Static imports only (no dynamic import). Behavior + source-guard tests in src/__tests__/nativeBrowserAgentExtract.test.ts.",
     "whyItMatters": "Was in 500–800 split-soon band (audit baseline 1267; 757 on main 2026-09-24); now 463 LOC after #193, under 500",
-    "files": [
-      "src/utils/nativeBrowserAgent.ts",
-      "src/utils/nativeBrowserAgentObservation.ts",
-      "src/utils/nativeBrowserAgentPrompt.ts",
-      "src/utils/nativeBrowserAgentRunState.ts",
-      "src/utils/nativeBrowserAgentOverlay.ts",
-      "src/utils/nativeBrowserAgentTypes.ts"
-    ],
+    "files": ["src/utils/nativeBrowserAgent.ts", "src/utils/nativeBrowserAgentObservation.ts", "src/utils/nativeBrowserAgentPrompt.ts", "src/utils/nativeBrowserAgentRunState.ts", "src/utils/nativeBrowserAgentOverlay.ts", "src/utils/nativeBrowserAgentTypes.ts"],
     "smallestPrScope": "Done — #193 observation + system prompt/start URL + run-state helpers + overlay + types (757→463)",
-    "tests": [
-      "browser agent tests",
-      "src/__tests__/nativeBrowserAgent.test.ts",
-      "src/__tests__/nativeBrowserAgentExtract.test.ts"
-    ],
+    "tests": ["browser agent tests", "src/__tests__/nativeBrowserAgent.test.ts", "src/__tests__/nativeBrowserAgentExtract.test.ts"],
     "dependencies": [],
     "runtimeBehavior": false,
     "uiBehavior": false,
@@ -1865,12 +1469,8 @@
       "src/store/chat/sessionLifecycle.ts"
     ],
     "smallestPrScope": "Done — #180 extracted session/stream actions + sessionLifecycle (1258→497)",
-    "tests": [
-      "chat store tests"
-    ],
-    "dependencies": [
-      "TOP-15-01"
-    ],
+    "tests": ["chat store tests"],
+    "dependencies": ["TOP-15-01"],
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": true,
@@ -1892,13 +1492,8 @@
       "src/store/chat/chatStreamActions.ts"
     ],
     "smallestPrScope": "Done — #180 extracted session/stream actions; #186 extracted sendMessagePreparation (sendMessageAction 1013→781)",
-    "tests": [
-      "chatActions tests",
-      "TOP-15-01"
-    ],
-    "dependencies": [
-      "TOP-15-01"
-    ],
+    "tests": ["chatActions tests", "TOP-15-01"],
+    "dependencies": ["TOP-15-01"],
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": true,
@@ -1939,19 +1534,9 @@
     "status": "fixed",
     "fixNote": "2026-09-24: AG-11 closed by #194. Mechanical, behavior-preserving extract of src/store/workflowStore.ts (712→362 LOC, live wc -l) into zustand action-slice sibling modules (same pattern as workflowRunActions.ts / #188 autoresearchStore*Actions): workflowAgentActions.ts (274; createWorkflowAgentActions — verbatim addAgent/updateAgent/removeAgent/updateAgentPosition/updateAgentSize/setAgentStatus/setAgentStatusInInstance/setAgentInputFrom/markAgentDirty/markAgentDirtyInInstance/clearAgentDirty/clearAgentDirtyInInstance bodies), workflowConnectionActions.ts (158; createWorkflowConnectionActions — verbatim addConnection/removeConnection/addOutputRoute/updateOutputRoute/removeOutputRoute bodies). Slices are spread at the exact position the inline actions occupied (identical store key order), receive the same zustand set/get, and remain fully synchronous (no async/await added); same set/get call order, saveToStorage persistence, topology-mutation guard + notification text. workflowStore.ts keeps instance management, run-action spread, execution state, canvas + preset actions and its exported API (useWorkflowStore, WorkflowStore, helper re-exports). Static imports only (no dynamic import). Behavior + source-guard tests in src/store/__tests__/workflowStoreExtract.test.ts.",
     "whyItMatters": "Was in 500–800 split-soon band (audit baseline 1211; 712 on main 2026-09-24); now 362 LOC after #194, under 500",
-    "files": [
-      "src/store/workflowStore.ts",
-      "src/store/workflowAgentActions.ts",
-      "src/store/workflowConnectionActions.ts",
-      "src/store/workflowRunActions.ts",
-      "src/store/workflowStoreHelpers.ts"
-    ],
+    "files": ["src/store/workflowStore.ts", "src/store/workflowAgentActions.ts", "src/store/workflowConnectionActions.ts", "src/store/workflowRunActions.ts", "src/store/workflowStoreHelpers.ts"],
     "smallestPrScope": "Done — #194 agent CRUD + connection/output-route action slices (712→362)",
-    "tests": [
-      "workflowStore tests",
-      "src/store/__tests__/workflowStore.test.ts",
-      "src/store/__tests__/workflowStoreExtract.test.ts"
-    ],
+    "tests": ["workflowStore tests", "src/store/__tests__/workflowStore.test.ts", "src/store/__tests__/workflowStoreExtract.test.ts"],
     "dependencies": [],
     "runtimeBehavior": false,
     "uiBehavior": false,
@@ -1966,21 +1551,10 @@
     "status": "fixed",
     "fixNote": "2026-09-24: AG-12 closed by #192. Mechanical, behavior-preserving extract of src/services/autoresearch/chatAdapter.ts (762→418 LOC, live wc -l) into sibling modules: chatAdapterReflectionEvents.ts (123; emitToolBudgetEvent, persistReflectionDecision, persistReflectionArtifacts, emitReflectionParseFailureEvents — bodies verbatim), chatAdapterToolHooks.ts (234; createAutoResearchToolHooks factory holding the verbatim allowToolExecution/onToolCall/onToolResult bodies; tool-lane phase kept in a shared mutable holder created once per sendMessage so it persists across retry attempts as before), chatAdapterReasoning.ts (50; per-attempt reasoning buffer + flush-once), chatAdapterRecoveryPrompt.ts (100; pure selectRecoveryAttemptPrompt + buildIterationFailureExplanation, same branches/strings). chatAdapter.ts keeps createAutoResearchSendMessage retry/reflection loop, constants and exported API (createAutoResearchSendMessage, AutoResearchSendMessageOptions, parseToolResult, buildAutoResearchRetryConstraintState, AutoResearchRetryConstraintState); same call order, error messages and side effects. Static imports only (no dynamic import). Behavior + source-guard tests in src/services/autoresearch/__tests__/chatAdapterExtract.test.ts.",
     "whyItMatters": "Was in 500–800 split-soon band (audit baseline 1117; 762 on main 2026-09-24); now 418 LOC after #192, under 500",
-    "files": [
-      "src/services/autoresearch/chatAdapter.ts",
-      "src/services/autoresearch/chatAdapterReflectionEvents.ts",
-      "src/services/autoresearch/chatAdapterToolHooks.ts",
-      "src/services/autoresearch/chatAdapterReasoning.ts",
-      "src/services/autoresearch/chatAdapterRecoveryPrompt.ts"
-    ],
+    "files": ["src/services/autoresearch/chatAdapter.ts", "src/services/autoresearch/chatAdapterReflectionEvents.ts", "src/services/autoresearch/chatAdapterToolHooks.ts", "src/services/autoresearch/chatAdapterReasoning.ts", "src/services/autoresearch/chatAdapterRecoveryPrompt.ts"],
     "smallestPrScope": "Done — #192 reflection events + tool hooks + reasoning buffer + recovery prompt helpers (762→418)",
-    "tests": [
-      "chatAdapter.test.ts",
-      "src/services/autoresearch/__tests__/chatAdapterExtract.test.ts"
-    ],
-    "dependencies": [
-      "TOP-15-08"
-    ],
+    "tests": ["chatAdapter.test.ts", "src/services/autoresearch/__tests__/chatAdapterExtract.test.ts"],
+    "dependencies": ["TOP-15-08"],
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": true,
@@ -1993,13 +1567,9 @@
     "severity": "Governance",
     "status": "fixed",
     "whyItMatters": "Component exceeds 500 LOC threshold",
-    "files": [
-      "src/components/ChatInput.tsx"
-    ],
+    "files": ["src/components/ChatInput.tsx"],
     "smallestPrScope": "Extract remaining ChatInput submit/browser shell toward <500",
-    "tests": [
-      "ChatInputFlow.test.ts"
-    ],
+    "tests": ["ChatInputFlow.test.ts"],
     "dependencies": [],
     "runtimeBehavior": false,
     "uiBehavior": true,
@@ -2015,17 +1585,9 @@
     "status": "fixed",
     "fixNote": "2026-09-24: AG-14 closed by #191. Mechanical, behavior-preserving extract: display-only src/pages/settings/settingsSections.tsx (141; SettingsLoadingState, SettingsModalShell, SettingsSecondarySections, SettingsTokenStatsFrame) + pure src/pages/settings/settingsFormHelpers.ts (210; form defaults/mapping, model entries, draft config, provider-change updates, pricing display, form errors, save payload, connection-test messages). Settings.tsx keeps all store access, state, effects, handlers and ApiConfigurationSettings wiring; 729→459 LOC (live wc -l), under the 500 LOC component threshold. Static imports only in new files (pre-existing lazy TokenStats kept in Settings.tsx). Prop-forwarding + source-guard tests in src/pages/settings/__tests__/settingsSections.test.tsx.",
     "whyItMatters": "Component exceeded 500 LOC threshold (audit baseline 1131; 729 on main 2026-09-24); now 459 LOC after #191",
-    "files": [
-      "src/pages/Settings.tsx",
-      "src/pages/settings/settingsSections.tsx",
-      "src/pages/settings/settingsFormHelpers.ts"
-    ],
+    "files": ["src/pages/Settings.tsx", "src/pages/settings/settingsSections.tsx", "src/pages/settings/settingsFormHelpers.ts"],
     "smallestPrScope": "Done — #191 display-only sections + pure form helpers (729→459)",
-    "tests": [
-      "SettingsCustomModel.test.tsx",
-      "SettingsConnection.test.ts",
-      "src/pages/settings/__tests__/settingsSections.test.tsx"
-    ],
+    "tests": ["SettingsCustomModel.test.tsx", "SettingsConnection.test.ts", "src/pages/settings/__tests__/settingsSections.test.tsx"],
     "dependencies": [],
     "runtimeBehavior": false,
     "uiBehavior": true,
@@ -2039,17 +1601,10 @@
     "severity": "Governance",
     "status": "fixed",
     "whyItMatters": "Primary shell approaching split threshold",
-    "files": [
-      "src/components/ChatBrowserWorkspaceShell.tsx"
-    ],
+    "files": ["src/components/ChatBrowserWorkspaceShell.tsx"],
     "smallestPrScope": "Done — PR1+PR2",
-    "tests": [
-      "TOP-15-02",
-      "TOP-15-11"
-    ],
-    "dependencies": [
-      "INFRA-01"
-    ],
+    "tests": ["TOP-15-02", "TOP-15-11"],
+    "dependencies": ["INFRA-01"],
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": true,
@@ -2064,16 +1619,9 @@
     "status": "fixed",
     "fixNote": "2026-09-21: Grep audit of createChatStore/chatActions/autoresearch cwd sites. Fixed chatActions browser-result handoff to use getSessionProjectDir (was workDir-only). Main send path aligned to same helper. Audit note at docs/audit/ag-16-cwd-callsite-audit.md — remaining sites audit-clean (ensureSessionWorkDir provisions pipi only; resolveWorkspaceToolPreflight rejects pipi-as-cwd; AR workDir is workspace/iterDir). Extended setSessionWorkDirFromPath.test.ts.",
     "whyItMatters": "workDir vs pipiOutputDir confusion causes tool cwd bugs",
-    "files": [
-      "src/store/createChatStore.ts",
-      "src/store/chat/chatActions.ts",
-      "src/services/autoresearch/"
-    ],
+    "files": ["src/store/createChatStore.ts", "src/store/chat/chatActions.ts", "src/services/autoresearch/"],
     "smallestPrScope": "Grep audit + fix miswired cwd",
-    "tests": [
-      "setSessionWorkDirFromPath.test.ts",
-      "defaultTemplate.test.ts"
-    ],
+    "tests": ["setSessionWorkDirFromPath.test.ts", "defaultTemplate.test.ts"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -2088,18 +1636,10 @@
     "status": "fixed",
     "fixNote": "2026-09-21: Aligned docs/concepts/execution-modes.md with post-R2-01 reality — Ask/Plan/Danger product modes, Debug/Agent/Bypass hydrate-only, Rust execution_policy + legacy execute_tool registry rejection (no policy bypass), browser observe_only called out as orthogonal, AutoResearch internal bypass runner flag documented. Session.executionMode JSDoc no longer says 5-mode. modeConsistency.test.ts still green.",
     "whyItMatters": "Legacy Rust bypass (R2-01) contradicts documented gating",
-    "files": [
-      "src-tauri/src/tools/execution_policy.rs",
-      "docs/concepts/execution-modes.md"
-    ],
+    "files": ["src-tauri/src/tools/execution_policy.rs", "docs/concepts/execution-modes.md"],
     "smallestPrScope": "Doc update after R2-01 fix",
-    "tests": [
-      "modeConsistency.test.ts",
-      "T-18"
-    ],
-    "dependencies": [
-      "R2-01"
-    ],
+    "tests": ["modeConsistency.test.ts", "T-18"],
+    "dependencies": ["R2-01"],
     "runtimeBehavior": true,
     "uiBehavior": false,
     "splitPrs": false,
@@ -2113,17 +1653,10 @@
     "status": "fixed",
     "fixNote": "2026-09-21: Updated docs/concepts/autoresearch-runtime.md after R5-01/02/05/09 — added §10 Abort/stop/pause/unmount AbortSignal table, documented paused run status, fixed stale Ask/Plan/Debug/Agent/Bypass + Bypass-as-no-safety rows.",
     "whyItMatters": "Runtime doc stale vs loopEngine abort paths",
-    "files": [
-      "docs/concepts/autoresearch-runtime.md",
-      "src/services/autoresearch/loopEngine.ts"
-    ],
+    "files": ["docs/concepts/autoresearch-runtime.md", "src/services/autoresearch/loopEngine.ts"],
     "smallestPrScope": "Doc-only PR after R5-02",
-    "tests": [
-      "doc review"
-    ],
-    "dependencies": [
-      "R5-02"
-    ],
+    "tests": ["doc review"],
+    "dependencies": ["R5-02"],
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
@@ -2137,16 +1670,9 @@
     "status": "fixed",
     "fixNote": "2026-09-22: Deleted dead legacy pages/Chat.tsx (~377 LOC), removed export from src/pages/index.ts, deleted legacy Chat.permissionSessionTarget.test.tsx, and updated sessionIsolation.test.ts companion coverage comment (resolves R1-14, R9-11).",
     "whyItMatters": "377 LOC dead code drifts from production shell",
-    "files": [
-      "src/pages/Chat.tsx",
-      "src/pages/index.ts",
-      "src/__tests__/Chat.permissionSessionTarget.test.tsx",
-      "src/store/chat/__tests__/sessionIsolation.test.ts"
-    ],
+    "files": ["src/pages/Chat.tsx", "src/pages/index.ts", "src/__tests__/Chat.permissionSessionTarget.test.tsx", "src/store/chat/__tests__/sessionIsolation.test.ts"],
     "smallestPrScope": "Delete file + verify import graph",
-    "tests": [
-      "R1-14 import graph check"
-    ],
+    "tests": ["R1-14 import graph check"],
     "dependencies": [],
     "runtimeBehavior": false,
     "uiBehavior": false,
@@ -2161,15 +1687,9 @@
     "status": "fixed",
     "fixNote": "2026-09-22: Added scripts/check-pr-size.mjs calculating files changed and net LOC vs base with soft ::warning:: annotation for >20 files or >800 net LOC; added CI check-pr-size step in .github/workflows/ci.yml with fetch-depth: 0; documented in docs/architecture/complexity-governance.md §7.",
     "whyItMatters": "complexity-governance PR caps not enforced automatically",
-    "files": [
-      ".github/workflows/ci.yml",
-      "scripts/check-pr-size.mjs",
-      "docs/architecture/complexity-governance.md"
-    ],
+    "files": [".github/workflows/ci.yml", "scripts/check-pr-size.mjs", "docs/architecture/complexity-governance.md"],
     "smallestPrScope": "Add PR size check workflow step",
-    "tests": [
-      "workflow dry-run"
-    ],
+    "tests": ["workflow dry-run"],
     "dependencies": [],
     "runtimeBehavior": false,
     "uiBehavior": false,
@@ -2310,7 +1830,7 @@
     "lane": "I. Architecture Governance",
     "severity": "Governance",
     "status": "fixed",
-    "fixNote": "2026-09-25: Fixed in #208. Extracted the serde/data structs (PaperReference through ScaffoldRenderResult), deserialize_optional_json_map, and the pure IfEmptyThen trait to autoresearch_bootstrap/types.rs (fields use pub(super); serde attributes and serialized field names unchanged); moved the existing two inline tests to tests.rs. mod.rs 697→493 LOC (<500; types.rs 171, tests.rs 42). Added source guards for the module boundaries and size target. Mechanical checks: 18 await points in mod.rs unchanged; the two Rust tests are retained; no new dependencies.",
+    "fixNote": "2026-09-25: Fixed in #208. Extracted the serde/data structs (PaperReference through ScaffoldRenderResult), deserialize_optional_json_map, and the pure IfEmptyThen trait to autoresearch_bootstrap/types.rs (fields use pub(super); serde attributes and serialized field names unchanged); moved the existing two inline tests to tests.rs. mod.rs 697→493 LOC (<500; types.rs 171, tests.rs 42). Added source guards for module boundaries and the size target. Mechanical checks: 18 await points in mod.rs unchanged; the two Rust tests are retained; no new dependencies.",
     "whyItMatters": "Over the >800 'requires refactor plan' limit (1268 LOC on main 99113a6, 2026-09-24). Target: under 800 first, then under 500. Paper/arXiv/baseline extraction, scaffold templating, git init and bootstrap finalize in one module root; already a directory module, so child files are cheap.",
     "files": [
       "src-tauri/src/tools/autoresearch_bootstrap/mod.rs"
@@ -2494,19 +2014,9 @@
     "status": "fixed",
     "fixNote": "2026-09-17: Verified @testing-library/react declared (not phantom); added companion @testing-library/dom, jest-dom, user-event; jest.setup.afterenv wires jest-dom matchers; sample useChatMessageScroll.renderHook tests + rtlInfrastructure smoke.",
     "whyItMatters": "Blocks hook and component tests (R10-13)",
-    "files": [
-      "package.json",
-      "pnpm-lock.yaml",
-      "jest.config.cjs",
-      "jest.setup.afterenv.cjs",
-      "src/__tests__/rtlInfrastructure.test.tsx",
-      "src/__tests__/useChatMessageScroll.test.tsx"
-    ],
+    "files": ["package.json", "pnpm-lock.yaml", "jest.config.cjs", "jest.setup.afterenv.cjs", "src/__tests__/rtlInfrastructure.test.tsx", "src/__tests__/useChatMessageScroll.test.tsx"],
     "smallestPrScope": "Add devDep + sample hook test",
-    "tests": [
-      "rtlInfrastructure.test.tsx",
-      "useChatMessageScroll.test.tsx"
-    ],
+    "tests": ["rtlInfrastructure.test.tsx", "useChatMessageScroll.test.tsx"],
     "dependencies": [],
     "runtimeBehavior": false,
     "uiBehavior": false,
@@ -2521,16 +2031,10 @@
     "status": "fixed",
     "fixNote": "2026-09-21: legacy execute_tool render_typst_to_pdf / compile_typst_file destinations sandboxed via crate::commands::file::resolve_path (resolve_typst_path helper); outside-work_dir paths rejected. Regression: cargo test --locked typst_path_sandbox.",
     "whyItMatters": "typst render in legacy chat.rs can write outside work_dir",
-    "files": [
-      "src-tauri/src/commands/chat.rs"
-    ],
+    "files": ["src-tauri/src/commands/chat.rs"],
     "smallestPrScope": "Validate destination through path_security::resolve_path",
-    "tests": [
-      "cargo test chat::typst_path_sandbox"
-    ],
-    "dependencies": [
-      "R2-01"
-    ],
+    "tests": ["cargo test chat::typst_path_sandbox"],
+    "dependencies": ["R2-01"],
     "runtimeBehavior": true,
     "uiBehavior": false,
     "splitPrs": false,
@@ -2544,13 +2048,9 @@
     "status": "fixed",
     "fixNote": "2026-09-21: validate_backup_path uses path_security::is_within_dir instead of Path::starts_with so sibling-prefix paths like `{backup_dir}-evil/...` are rejected. Regression: cargo test database::backup_sibling_prefix.",
     "whyItMatters": "backups-evil/ would pass the startsWith check",
-    "files": [
-      "src-tauri/src/database.rs"
-    ],
+    "files": ["src-tauri/src/database.rs"],
     "smallestPrScope": "Use is_within_dir instead of starts_with for backup path containment",
-    "tests": [
-      "cargo test database::backup_sibling_prefix"
-    ],
+    "tests": ["cargo test database::backup_sibling_prefix"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -2565,13 +2065,9 @@
     "status": "fixed",
     "fixNote": "2026-09-21: is_within_or_matches_blocked_prefix already matched Unix exact roots (/sys for /sys/); hardened Windows exact roots without trailing slash the same way. Regression: cargo test path_security::tests test_blocked_sys_directory.",
     "whyItMatters": "validate_path(\"/sys\") may not be rejected because /sys lacks trailing slash",
-    "files": [
-      "src-tauri/src/commands/path_security.rs"
-    ],
+    "files": ["src-tauri/src/commands/path_security.rs"],
     "smallestPrScope": "Treat /sys, /proc, /etc as roots (no trailing slash) in is_within_or_matches_blocked_prefix",
-    "tests": [
-      "cargo test path_security::tests test_blocked_sys_directory"
-    ],
+    "tests": ["cargo test path_security::tests test_blocked_sys_directory"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -2586,13 +2082,9 @@
     "status": "fixed",
     "fixNote": "2026-09-21: removed AutoresearchPhase from early execute_command bypass allow-list so network checks still apply; Bypass+curl under AutoresearchPhase is rejected while benign local commands remain allowed. Regression: cargo test --locked test_bypass_curl_rejected.",
     "whyItMatters": "Bypass+curl may run unconfirmed; AutoResearch path should not skip network policy",
-    "files": [
-      "src-tauri/src/tools/execution_policy.rs"
-    ],
+    "files": ["src-tauri/src/tools/execution_policy.rs"],
     "smallestPrScope": "Add network check to bypass path for AutoResearch source",
-    "tests": [
-      "cargo test execution_policy::tests test_bypass_curl_rejected"
-    ],
+    "tests": ["cargo test execution_policy::tests test_bypass_curl_rejected"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -2607,15 +2099,9 @@
     "status": "fixed",
     "fixNote": "2026-09-21: password auth uses `sshpass -e` without embedding SSHPASS=secret in the shell command string; SSHPASS is passed via Command.env through execute_bash_for_tool/spawn_shell_process extra_env. Regression: cargo test --locked test_cmdline_does_not_contain_password.",
     "whyItMatters": "Password leaks via /proc/<pid>/cmdline to other processes on host",
-    "files": [
-      "src-tauri/src/tools/ssh_bridge.rs",
-      "src-tauri/src/commands/code.rs",
-      "src-tauri/src/tools/process_manager.rs"
-    ],
+    "files": ["src-tauri/src/tools/ssh_bridge.rs", "src-tauri/src/commands/code.rs", "src-tauri/src/tools/process_manager.rs"],
     "smallestPrScope": "Pipe SSHPASS via stdin (sshpass -e) or use SSH_ASKPASS instead of -p argument",
-    "tests": [
-      "cargo test ssh_bridge::tests test_cmdline_does_not_contain_password"
-    ],
+    "tests": ["cargo test ssh_bridge::tests test_cmdline_does_not_contain_password"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -2630,13 +2116,9 @@
     "status": "fixed",
     "fixNote": "2026-09-21: assert_http_navigation_url allowlists http/https (case-insensitive) plus exact about:blank before CDP page.goto; rejects file/javascript/data/etc. Real path: src-tauri/src/browser/actions/navigate.rs. Regression: cargo test --locked test_file_scheme_rejected.",
     "whyItMatters": "file:// URLs reachable via CDP Page.navigate",
-    "files": [
-      "src-tauri/src/browser/actions/navigate.rs"
-    ],
+    "files": ["src-tauri/src/browser/actions/navigate.rs"],
     "smallestPrScope": "Reject non-http(s) URL schemes in cdp_navigate",
-    "tests": [
-      "cargo test --locked test_file_scheme_rejected"
-    ],
+    "tests": ["cargo test --locked test_file_scheme_rejected"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -2651,13 +2133,9 @@
     "status": "fixed",
     "fixNote": "2026-09-21: validate_mcp_stdio_cwd runs path_security::validate_path(cwd, None) before Command::current_dir; rejects blocked system prefixes (e.g. /etc) and relative cwd without work_dir. Real path: src-tauri/src/mcp/transport/stdio.rs. Regression: cargo test --locked test_cwd_sandbox.",
     "whyItMatters": "MCP stdio server can be spawned in /etc or other sensitive dirs",
-    "files": [
-      "src-tauri/src/mcp/transport/stdio.rs"
-    ],
+    "files": ["src-tauri/src/mcp/transport/stdio.rs"],
     "smallestPrScope": "Validate cwd through path_security before spawn",
-    "tests": [
-      "cargo test --locked test_cwd_sandbox"
-    ],
+    "tests": ["cargo test --locked test_cwd_sandbox"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -2672,16 +2150,9 @@
     "status": "fixed",
     "fixNote": "2026-09-21: mcp_call_tool builds ToolCallRequest and calls enforce_request_policy before mgr.call_tool; destructive MCP names require_confirmation, non-destructive allow, Unknown rejects. Frontend passes sessionId/approvalToken/source/executionMode/mcpToolName/toolCallId. Regression: cargo test --locked test_destructive_requires_approval.",
     "whyItMatters": "Destructive MCP tools can run without approval",
-    "files": [
-      "src-tauri/src/commands/mcp.rs",
-      "src-tauri/src/tools/execution_policy.rs",
-      "src/services/StreamingToolExecutor.ts",
-      "src/services/mcp/index.ts"
-    ],
+    "files": ["src-tauri/src/commands/mcp.rs", "src-tauri/src/tools/execution_policy.rs", "src/services/StreamingToolExecutor.ts", "src/services/mcp/index.ts"],
     "smallestPrScope": "Run MCP tool calls through execution_policy with destructive tools requiring approval",
-    "tests": [
-      "cargo test mcp::tests test_destructive_requires_approval"
-    ],
+    "tests": ["cargo test mcp::tests test_destructive_requires_approval"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
@@ -2701,9 +2172,7 @@
       "src/services/workflowEngine/__tests__/agentRunner.test.ts"
     ],
     "smallestPrScope": "Check AbortSignal between tool executions in executeBatch",
-    "tests": [
-      "agentRunner.test.ts: aborts during retry backoff within 200ms (R6-03)"
-    ],
+    "tests": ["agentRunner.test.ts: aborts during retry backoff within 200ms (R6-03)"],
     "dependencies": [],
     "runtimeBehavior": true,
     "uiBehavior": false,
