@@ -9,8 +9,8 @@ use crate::claude::message::{Message, ToolCall};
 mod artifacts;
 mod openai_history;
 
-pub use artifacts::detect_artifacts;
-use openai_history::{build_openai_user_content, sanitize_openai_history_messages};
+pub use self::artifacts::detect_artifacts;
+use self::openai_history::{build_openai_user_content, sanitize_openai_history_messages};
 
 const OPENAI_TOOL_CALL_PROTOCOL_ADDENDUM: &str = r#"## Tool Calling Protocol
 You MUST invoke tools via the OpenAI function-calling channel named tool_calls.

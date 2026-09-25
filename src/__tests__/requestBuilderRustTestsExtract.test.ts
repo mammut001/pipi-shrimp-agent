@@ -71,7 +71,7 @@ describe('AG-33 request_builder module extract guards', () => {
     ]) {
       expect(builder).toMatch(new RegExp('^pub fn ' + name + '\\(', 'm'));
     }
-    expect(builder).toMatch(/^pub use artifacts::detect_artifacts;$/m);
+    expect(builder).toMatch(/^pub use self::artifacts::detect_artifacts;$/m);
   });
 
   it('keeps artifact and OpenAI history helpers in static sibling modules', () => {
