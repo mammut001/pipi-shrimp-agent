@@ -1,8 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use chrono::Utc;
-use serde::{Deserialize, Deserializer, Serialize};
-use serde_json::{json, Map, Value};
+use serde_json::{json, Value};
 use tokio::fs;
 use tokio::process::Command;
 
@@ -13,12 +12,18 @@ use crate::utils::{AppError, AppResult};
 
 mod paper_tools;
 mod scaffold_template;
+mod types;
 
 use paper_tools::{
     execute_arxiv_search_tool, execute_baseline_extract_tool, execute_paper_extract_meta_tool,
     execute_pdf_read_tool,
 };
 use scaffold_template::{normalize_scaffold_vars, render_known_scaffold_template};
+use types::{
+    AutoResearchBootstrapResult, BaselineMethod, BootstrapPlan, ExtractedBaseline, IfEmptyThen,
+    PaperReference, RenderedScaffoldFile, ReportedMetric, Reproducibility, ScaffoldFile,
+    ScaffoldPlan, ScaffoldRenderResult, TemplateDefinition, TemplateFileSource,
+};
 
 const PYTHON_GITIGNORE: &str = "__pycache__/\nartifacts/\n.venv/\nnode_modules/\n";
 const NODE_GITIGNORE: &str = "node_modules/\ndist/\nartifacts/\n";
@@ -37,159 +42,6 @@ pub struct BootstrapProviderContext {
 pub struct BootstrapExecutionContext {
     pub work_dir: Option<String>,
     pub provider: Option<BootstrapProviderContext>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct PaperReference {
-    source: String,
-    title: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    authors: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    year: Option<i64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    venue: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    file_path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    original_url: Option<String>,
-    #[serde(rename = "abstract", skip_serializing_if = "Option::is_none")]
-    abstract_text: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    citation_key: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ReportedMetric {
-    name: String,
-    value: f64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    unit: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct BaselineMethod {
-    summary: String,
-    #[serde(default, deserialize_with = "deserialize_optional_json_map", skip_serializing_if = "Option::is_none")]
-    key_hyperparams: Option<Map<String, Value>>,
-}
-
-fn deserialize_optional_json_map<'de, D>(
-    deserializer: D,
-) -> Result<Option<Map<String, Value>>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let value = Option::<Value>::deserialize(deserializer)?;
-    match value {
-        None => Ok(None),
-        Some(Value::Object(map)) => Ok(Some(map)),
-        Some(Value::String(raw)) => serde_json::from_str(&raw)
-            .map(Some)
-            .map_err(serde::de::Error::custom),
-        Some(other) => Err(serde::de::Error::custom(format!(
-            "expected object or JSON string for keyHyperparams, got {other}"
-        ))),
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct Reproducibility {
-    has_official_code: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    repo_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    notes: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ExtractedBaseline {
-    name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    paper: Option<PaperReference>,
-    task: String,
-    dataset: String,
-    reported_metrics: Vec<ReportedMetric>,
-    method: BaselineMethod,
-    reproducibility: Reproducibility,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ScaffoldFile {
-    path: String,
-    purpose: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ScaffoldPlan {
-    template_id: String,
-    work_dir: String,
-    language: String,
-    entry_command: String,
-    vars: Map<String, Value>,
-    files: Vec<ScaffoldFile>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct BootstrapPlan {
-    research_goal: String,
-    success_criteria: String,
-    primary_metric: String,
-    secondary_metrics: Vec<String>,
-    papers: Vec<PaperReference>,
-    baselines: Vec<ExtractedBaseline>,
-    scaffold: ScaffoldPlan,
-    git_initialized: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    initial_commit_sha: Option<String>,
-    conversational_template_id: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AutoResearchBootstrapResult {
-    status: String,
-    plan: BootstrapPlan,
-    warnings: Vec<String>,
-    unresolved_questions: Vec<String>,
-    created_at: String,
-    schema_version: u8,
-}
-
-#[derive(Debug, Clone)]
-struct TemplateFileSource {
-    output: &'static str,
-    purpose: &'static str,
-    content: &'static str,
-}
-
-#[derive(Debug, Clone)]
-struct TemplateDefinition {
-    language: &'static str,
-    entry_command: &'static str,
-    required_vars: &'static [&'static str],
-    files: &'static [TemplateFileSource],
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct RenderedScaffoldFile {
-    path: String,
-    purpose: String,
-    content: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct ScaffoldRenderResult {
-    scaffold: ScaffoldPlan,
-    rendered_files: Vec<RenderedScaffoldFile>,
 }
 
 pub async fn execute_tool(
@@ -637,61 +489,5 @@ async fn execute_bootstrap_finalize_tool(
     })
 }
 
-trait IfEmptyThen {
-    fn if_empty_then(self, fallback: &str) -> String;
-}
-
-impl IfEmptyThen for String {
-    fn if_empty_then(self, fallback: &str) -> String {
-        if self.trim().is_empty() {
-            fallback.to_string()
-        } else {
-            self
-        }
-    }
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn grounds_metric_tokens_from_source_text() {
-        assert!(metric_appears_in_source(
-            95.1,
-            "The ResNet50 baseline reaches accuracy 95.1 on CIFAR10.",
-        ));
-        assert!(!metric_appears_in_source(
-            99.9,
-            "The ResNet50 baseline reaches accuracy 95.1 on CIFAR10.",
-        ));
-    }
-
-    #[test]
-    fn renders_python_scaffold_with_required_files() {
-        let vars = normalize_scaffold_vars(&json!({
-            "projectName": "test-project",
-            "researchGoal": "Improve test accuracy",
-            "successCriteria": "Beat the baseline by at least 1 point.",
-            "primaryMetric": "accuracy",
-            "baselineName": "ResNet50",
-            "datasetName": "CIFAR10",
-            "trainCommand": "python3 train.py",
-            "evalCommand": "python3 eval.py",
-            "requirementsExtra": "torch",
-        }));
-
-        let rendered =
-            render_known_scaffold_template("python-ml-baseline", "/tmp/test-project", &vars)
-                .expect("render should succeed");
-
-        assert!(rendered
-            .rendered_files
-            .iter()
-            .any(|file| file.path == "run_experiment.py"));
-        assert!(rendered
-            .rendered_files
-            .iter()
-            .any(|file| file.path == "AUTORESEARCH.md"));
-    }
-}
+mod tests;
