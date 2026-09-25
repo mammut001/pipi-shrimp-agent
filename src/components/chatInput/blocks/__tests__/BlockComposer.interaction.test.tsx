@@ -92,6 +92,25 @@ describe('BlockComposer (interaction)', () => {
     view.cleanup();
   });
 
+  it('updates intent block via its extracted editor', () => {
+    const onChange = jest.fn();
+    const view = renderComposer({
+      blocks: [{ id: 'i1', type: 'intent', intentType: 'implement', detail: '' }],
+      onChange,
+    });
+    const intentSelect = Array.from(view.container.querySelectorAll('select'))
+      .find((select) => select.value === 'implement');
+    expect(intentSelect).toBeTruthy();
+    act(() => {
+      intentSelect!.value = 'debug';
+      intentSelect!.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+    expect(onChange).toHaveBeenCalledTimes(1);
+    const nextBlocks = onChange.mock.calls[0]?.[0] as ComposerBlock[];
+    expect(nextBlocks[0]).toMatchObject({ type: 'intent', intentType: 'debug' });
+    view.cleanup();
+  });
+
   it('adds mode block defaulting to current execution mode', () => {
     const onChange = jest.fn();
     const view = renderComposer({ blocks: [], onChange, defaultMode: 'ask' });

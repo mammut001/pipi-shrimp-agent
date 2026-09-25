@@ -685,7 +685,7 @@ LOC = live `wc -l` on `main` (`99113a6`, 2026-09-24), including inline Rust `#[c
 | AG-26 | `src-tauri/src/tools/autoresearch_bootstrap/mod.rs` | **697** | **Open.** Progress ✅ #202: template tables + rendering → `scaffold_template.rs` (352) and pdf/paper-meta/baseline/arXiv tools → `paper_tools.rs` (254), verbatim (1268→697, under 800; serde types kept in mod.rs to avoid field-visibility churn). Next for <500: serde model structs → `types.rs` (needs `pub(super)` fields) or finalize/git-init group; scaffold path checks verbatim | Yes | Yes |
 | AG-27 | `src/pages/AutoResearch.tsx` | **1131** | **Open.** `loadPersistedSetup` + types → `autoResearchSetupPersistence.ts`, `ExperimentDetailPanel` → own file; then display-only JSX sections of `AutoResearchView` (<800 → <500); handlers stay | Yes | Yes |
 | AG-28 | `src-tauri/src/commands/browser.rs` | **1098** | **Open — careful (`proxy_http_request`).** web.rs pattern: keep all 26 `#[tauri::command]` wrappers, move bodies to `browser/embedded_surface.rs` / `browser/window.rs`, `BrowserState` → `browser/state.rs` (<800 → <500); proxy verbatim only | Yes | Yes |
-| AG-29 | `src/components/chatInput/BlockComposer.tsx` | **503** | **Open.** Progress ✅ #205: `createBlock` → `blocks/createComposerBlock.ts` and the context / constraints / output / verification / safety editors → `chatInput/blocks/*BlockEditor.tsx`, verbatim (1047→503, under 800; hook-free presentational editors, hooks unchanged in the shell). Next for <500: intent + mode editors (or label chips) the same way; state stays in the shell | Yes | Yes |
+| AG-29 | `src/components/chatInput/BlockComposer.tsx` | **466** | **Fixed** — #205 extracted the factory + five editors (1047→503); #207 extracted `IntentBlockEditor` (40) + `ModeBlockEditor` (42) (503→466; all editors hook-free, typed props, state stays in the shell; 9 hooks in original order, 0 awaits, static imports) | No | Done — #205 + #207 |
 | AG-30 | `src-tauri/src/utils/typst.rs` | **443** | **Fixed** — #200 moved the inline `#[cfg(test)] mod tests` block (L442-1028) verbatim into `utils/typst/tests.rs` (113; 3 basic compile tests) + `utils/typst/tests/template_examples.rs` (482; 5 template inline-example tests) (1028→443; under 500; production tokens unchanged, 8 tests before/after, 0 awaits) (2026-09-24) | No | Done — #200 |
 | AG-31 | `src/services/autoresearch/history.ts` | **1016** | **Open — careful (redaction).** Types → `historyTypes.ts` (re-exported); normalizers → `historyNormalize.ts` (<800); compaction/persistence → `historyPersistence.ts` (<500); redaction + `MAX_*` caps verbatim | Yes | Yes |
 | AG-32 | `src-tauri/src/commands/telegram.rs` | **1012** | **Open — careful (token redaction / allowed chats).** Serde types → `telegram/types.rs` with `pub use` (<800); webhook/file bodies behind thin wrappers (<500); redaction + URL builders verbatim | Yes | Yes |
@@ -711,22 +711,22 @@ LOC = live `wc -l` on `main` (`99113a6`, 2026-09-24), including inline Rust `#[c
 
 ## Summary counts
 
-Recomputed from `docs/audit/remediation-backlog.json` by `status` / `severity` / `lane` — **as of 2026-09-24, main `b6c811a` + PR #189** (AG-01/03/04/06/08 open → fixed) **+ PR #191** (AG-14 open → fixed) **+ PR #192** (AG-12 open → fixed) **+ PR #193** (AG-07 open → fixed) **+ PR #194** (AG-11 open → fixed) **+ PR #195** (AG-05 open → fixed) **+ PR #196** (AG-10 open → fixed) **+ PR #197** (AG-21 added as fixed: `web/cdp.rs` 526→361) **+ PR #199** (AG-22–AG-33 added as open: >1000 LOC files, main `99113a6`) **+ PR #200** (AG-30 open → fixed). Items tracked only in round docs are not counted here.
+Recomputed from `docs/audit/remediation-backlog.json` by `status` / `severity` / `lane` — **as of 2026-09-24, main `b6c811a` + PR #189** (AG-01/03/04/06/08 open → fixed) **+ PR #191** (AG-14 open → fixed) **+ PR #192** (AG-12 open → fixed) **+ PR #193** (AG-07 open → fixed) **+ PR #194** (AG-11 open → fixed) **+ PR #195** (AG-05 open → fixed) **+ PR #196** (AG-10 open → fixed) **+ PR #197** (AG-21 added as fixed: `web/cdp.rs` 526→361) **+ PR #199** (AG-22–AG-33 added as open: >1000 LOC files, main `99113a6`) **+ PR #200** (AG-30 open → fixed) **+ PR #207** (AG-29 open → fixed: `BlockComposer.tsx` 503→466). Items tracked only in round docs are not counted here.
 
 | Category | Count |
 | -------- | ----- |
 | **Total tracked in backlog JSON** | 113 |
-| **Fixed** (`status: fixed`; many still need regression tests) | 88 |
-| **Open** (`status: open`) | 11 — AG-22–AG-29, AG-31–AG-33 (architecture governance, severity Governance) |
+| **Fixed** (`status: fixed`; many still need regression tests) | 89 |
+| **Open** (`status: open`) | 10 — AG-22–AG-28, AG-31–AG-33 (architecture governance, severity Governance) |
 | **Partially fixed** (`status: partially fixed`) | 5 — R5-14, R5-15, R7-15, TOP-15-08, TOP-15-09 |
 | **Test gap only** (`status: test gap only`) | 9 — TOP-15-03/04/05/06/07/10/11/14/15 |
 | **Open P0 / Critical** (`status: open`) | 0 |
 | **Open High+** (`status: open`, severity P0/Critical/High) | 0 |
 | **Not fixed with P0/Critical/High severity** (partially fixed / test gap only) | 10 — all TOP-15 regression-suite items in lane H (TOP-15-04/05/06/07/08/09/10/11/14/15): P0 ×2, Critical ×5, High ×3 |
-| **Architecture governance lane (I)** | 33 — 22 fixed, 11 open |
+| **Architecture governance lane (I)** | 33 — 23 fixed, 10 open |
 | **Test infrastructure lane (H)** | 19 — 6 fixed, 4 partially fixed, 9 test gap only |
 
-Previous snapshot (before this refresh): Fixed 24, Total 95 — stale vs JSON (main `b6c811a` JSON had 100 items: 75 fixed / 11 open / 5 partially fixed / 9 test gap only).
+Previous snapshot (before this refresh): Fixed 88, Total 113 — after #200 (main `a234f7a` JSON had 113 items: 88 fixed / 11 open / 5 partially fixed / 9 test gap only).
 
 ---
 

@@ -1,6 +1,6 @@
 /**
- * AG-29 (step 1): source guards for the mechanical extract of the createBlock
- * factory and the five per-type block editors (context / constraints / output /
+ * AG-29: source guards for the mechanical extract of the createBlock factory and
+ * seven per-type block editors (intent / context / mode / constraints / output /
  * verification / safety) out of `src/components/chatInput/BlockComposer.tsx`
  * into `src/components/chatInput/blocks/`.
  *
@@ -28,12 +28,14 @@ const EDITORS: Array<[string, string, string[]]> = [
   ['output', 'OutputBlockEditor', []],
   ['verification', 'VerificationBlockEditor', ['newVerifications', 'setNewVerifications']],
   ['safety', 'SafetyBlockEditor', ['newForbiddens', 'setNewForbiddens']],
+  ['intent', 'IntentBlockEditor', []],
+  ['mode', 'ModeBlockEditor', []],
 ];
 const HOOK_RE = /\b(use(?:State|Callback|Effect|Memo|Ref|Context|Reducer|LayoutEffect))\b(?:<[^()]*>)?\(/g;
 
 describe('AG-29 BlockComposer editor extract guards', () => {
-  it('BlockComposer.tsx is under the 800 LOC limit and every extracted file is under 500', () => {
-    expect(loc(SHELL)).toBeLessThan(800);
+  it('BlockComposer.tsx and every extracted file are under the 500 LOC component limit', () => {
+    expect(loc(SHELL)).toBeLessThan(500);
     expect(loc(FACTORY)).toBeLessThan(500);
     for (const [, name] of EDITORS) {
       expect(loc(`${DIR}/blocks/${name}.tsx`)).toBeLessThan(500);
@@ -70,9 +72,9 @@ describe('AG-29 BlockComposer editor extract guards', () => {
       );
       expect(src).toMatch(re);
     }
-    // intent + mode editors, picker toolbar and preview stay inline in the shell
-    expect(src).toContain("{block.type === 'intent' && (");
-    expect(src).toContain("{block.type === 'mode' && (");
+    // Block labels, picker toolbar and preview stay in the shell; editors are extracted.
+    expect(src).not.toMatch(/<select\s+value={block\.intentType}/);
+    expect(src).not.toContain("['ask', 'plan', 'debug', 'agent', 'bypass']");
     expect(src).toContain("onClick={() => addBlock('safety')}");
     expect(src).toContain('<pre className="whitespace-pre-wrap">{compiledPrompt}</pre>');
   });

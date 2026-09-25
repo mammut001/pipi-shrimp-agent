@@ -12,6 +12,8 @@ import { ConstraintsBlockEditor } from './blocks/ConstraintsBlockEditor';
 import { OutputBlockEditor } from './blocks/OutputBlockEditor';
 import { VerificationBlockEditor } from './blocks/VerificationBlockEditor';
 import { SafetyBlockEditor } from './blocks/SafetyBlockEditor';
+import { IntentBlockEditor } from './blocks/IntentBlockEditor';
+import { ModeBlockEditor } from './blocks/ModeBlockEditor';
 import type { ExecutionModeId } from '@/services/executionMode';
 
 interface PromptContext {
@@ -277,30 +279,11 @@ export function BlockComposer({
                 <div className="flex-1 flex flex-col gap-2">
                   {/* INTENT BLOCK EDITOR */}
                   {block.type === 'intent' && (
-                    <>
-                      <select
-                        value={block.intentType}
-                        onChange={(e) => updateBlock(index, { ...block, intentType: e.target.value as any })}
-                        className="w-full rounded-lg border border-neutral-200 bg-neutral-50 px-2.5 py-1 text-xs text-neutral-800 focus:outline-none focus:border-neutral-300"
-                      >
-                        <option value="implement">Implement Feature</option>
-                        <option value="debug">Debug / Fix Bug</option>
-                        <option value="plan">Design Plan / Proposal</option>
-                        <option value="question">Question / Explain Code</option>
-                        <option value="refactor">Refactor Code</option>
-                        <option value="test">Write Tests</option>
-                        <option value="document">Documentation</option>
-                        <option value="run_command">Run Command</option>
-                        <option value="autoresearch">AutoResearch Task</option>
-                      </select>
-                      <textarea
-                        value={block.detail}
-                        onChange={(e) => updateBlock(index, { ...block, detail: e.target.value })}
-                        placeholder="What specific outcome are you targeting?"
-                        rows={2}
-                        className="w-full rounded-lg border border-neutral-200 p-2 text-xs focus:outline-none focus:border-neutral-300 resize-none flex-1 font-sans"
-                      />
-                    </>
+                    <IntentBlockEditor
+                      block={block}
+                      index={index}
+                      updateBlock={updateBlock}
+                    />
                   )}
 
                   {/* CONTEXT BLOCK EDITOR */}
@@ -318,31 +301,11 @@ export function BlockComposer({
 
                   {/* MODE BLOCK EDITOR */}
                   {block.type === 'mode' && (
-                    <div className="flex flex-col gap-2">
-                      <div className="grid grid-cols-3 gap-1">
-                        {(['ask', 'plan', 'debug', 'agent', 'bypass'] as ExecutionModeId[]).map((m) => (
-                          <button
-                            key={m}
-                            type="button"
-                            onClick={() => updateBlock(index, { ...block, executionMode: m })}
-                            className={`py-1 px-1.5 text-[10px] font-bold rounded border uppercase tracking-wider text-center transition-all ${
-                              block.executionMode === m
-                                ? 'bg-neutral-900 border-neutral-900 text-white shadow-sm'
-                                : 'bg-neutral-50 border-neutral-200 text-neutral-600 hover:bg-neutral-100 hover:border-neutral-300'
-                            }`}
-                          >
-                            {m}
-                          </button>
-                        ))}
-                      </div>
-                      <p className="text-[10px] text-neutral-500 italic px-1">
-                        {block.executionMode === 'ask' && 'Read-only mode. Answers queries without executing actions.'}
-                        {block.executionMode === 'plan' && 'Read-only analysis mode. Formulates a plan document before editing.'}
-                        {block.executionMode === 'debug' && 'Diagnoses issues, runs minimal localized fixes, verifies results.'}
-                        {block.executionMode === 'agent' && 'Runs full agent cycle. Modifies code, runs build verification commands.'}
-                        {block.executionMode === 'bypass' && '⚠️ TRUST MODE. Runs local commands with no manual step approval dialogs.'}
-                      </p>
-                    </div>
+                    <ModeBlockEditor
+                      block={block}
+                      index={index}
+                      updateBlock={updateBlock}
+                    />
                   )}
 
                   {/* CONSTRAINTS BLOCK EDITOR */}
