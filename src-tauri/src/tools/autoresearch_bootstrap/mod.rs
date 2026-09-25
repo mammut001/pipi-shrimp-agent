@@ -488,6 +488,6 @@ async fn execute_bootstrap_finalize_tool(
         AppError::InternalError(format!("Failed to encode bootstrap result: {error}"))
     })
 }
-}
+
 #[cfg(test)]
 mod tests;
