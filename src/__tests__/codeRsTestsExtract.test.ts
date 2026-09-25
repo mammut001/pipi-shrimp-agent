@@ -1,12 +1,11 @@
 /**
- * AG-23 (steps 1–2): source guards for the mechanical extract of the inline
+ * AG-23 (steps 1–3): source guards for the mechanical extract of the inline
  * `#[cfg(test)] mod tests { .. }` block (mid-file, before the LSP section) out
  * of `src-tauri/src/commands/code.rs` into the file module
  * `src-tauri/src/commands/code/tests.rs`.
  *
- * code.rs is now below 800 LOC but above 500, so AG-23 stays open. These guards
- * pin the test-module move, the Python/cwd helper modules, and all 6 command
- * wrappers staying in code.rs.
+ * code.rs is now below 500 LOC, so AG-23 is fixed. These guards pin the test-module
+ * move, all helper modules, and all 6 command wrappers staying in code.rs.
  */
 import fs from 'fs';
 import path from 'path';
@@ -22,6 +21,8 @@ const CODE_RS = 'src-tauri/src/commands/code.rs';
 const TESTS_RS = 'src-tauri/src/commands/code/tests.rs';
 const CWD_RS = 'src-tauri/src/commands/code/cwd.rs';
 const PYTHON_SESSION_RS = 'src-tauri/src/commands/code/python_session.rs';
+const PROCESS_RS = 'src-tauri/src/commands/code/process.rs';
+const RESPONSES_RS = 'src-tauri/src/commands/code/responses.rs';
 
 const TESTS = [
   'execute_bash_for_tool_returns_structured_timeout_result',
@@ -47,12 +48,11 @@ const COMMANDS = [
 ];
 
 describe('AG-23 code.rs test-module extract guards', () => {
-  it('code.rs is under 800 LOC and the test/helper modules stay under 500 LOC', () => {
-    expect(loc(CODE_RS)).toBeLessThan(800);
-    expect(loc(CODE_RS)).toBeGreaterThan(500);
-    expect(loc(TESTS_RS)).toBeLessThan(500);
-    expect(loc(CWD_RS)).toBeLessThan(500);
-    expect(loc(PYTHON_SESSION_RS)).toBeLessThan(500);
+  it('code.rs and the test/helper modules are under 500 LOC', () => {
+    expect(loc(CODE_RS)).toBeLessThan(500);
+    for (const file of [TESTS_RS, CWD_RS, PYTHON_SESSION_RS, PROCESS_RS, RESPONSES_RS]) {
+      expect(loc(file)).toBeLessThan(500);
+    }
   });
 
   it('code.rs declares the test module as a file module in place and has no test bodies', () => {
@@ -108,6 +108,26 @@ describe('AG-23 code.rs test-module extract guards', () => {
       0,
     );
     expect(awaitCount).toBe(3);
+  });
+
+  it('process and response helpers stay outside code.rs without moving command/safety logic', () => {
+    const code = read(CODE_RS);
+    const process = read(PROCESS_RS);
+    const responses = read(RESPONSES_RS);
+    const session = read(PYTHON_SESSION_RS);
+    expect(code).toContain('mod process;');
+    expect(code).toContain('mod responses;');
+    expect(code).toContain('use self::process::{command_exists, run_with_timeout};');
+    expect(process).toContain('pub(super) fn command_exists(');
+    expect(process).toContain('pub(super) fn run_with_timeout(');
+    expect(process).not.toContain('#[tauri::command]');
+    expect(responses).toContain('pub(super) fn build_execute_code_response(');
+    expect(responses).toContain('pub(super) fn build_failed_command_response(');
+    expect(responses).toContain('pub(super) fn append_warning(');
+    expect(code).not.toContain('fn run_with_timeout(');
+    expect(code).not.toContain('fn build_execute_code_response(');
+    expect(session).toContain('use super::process::command_exists;');
+    expect(session).toContain('use super::responses::build_execute_code_response;');
   });
 
   it('all 6 tauri commands and the command-safety code stay in code.rs', () => {

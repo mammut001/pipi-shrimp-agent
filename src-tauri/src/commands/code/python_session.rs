@@ -1,5 +1,6 @@
 use super::cwd::resolve_command_cwd;
-use super::{build_execute_code_response, command_exists};
+use super::process::command_exists;
+use super::responses::build_execute_code_response;
 use crate::models::{ExecuteCodeResponse, ToolExecutionStatus};
 use crate::utils::{AppError, AppResult};
 use once_cell::sync::Lazy;
