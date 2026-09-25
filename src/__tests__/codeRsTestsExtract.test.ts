@@ -1,12 +1,12 @@
 /**
- * AG-23 (step 1): source guards for the mechanical extract of the inline
+ * AG-23 (steps 1–2): source guards for the mechanical extract of the inline
  * `#[cfg(test)] mod tests { .. }` block (mid-file, before the LSP section) out
  * of `src-tauri/src/commands/code.rs` into the file module
  * `src-tauri/src/commands/code/tests.rs`.
  *
- * code.rs is still above the 800 LOC hard limit after this first step (AG-23
- * stays open); these guards pin the test-module move, keep tests.rs under the
- * 500 LOC watch line, and assert all 6 `#[tauri::command]` fns stay in code.rs.
+ * code.rs is now below 800 LOC but above 500, so AG-23 stays open. These guards
+ * pin the test-module move, the Python/cwd helper modules, and all 6 command
+ * wrappers staying in code.rs.
  */
 import fs from 'fs';
 import path from 'path';
@@ -20,6 +20,8 @@ const loc = (rel: string) => {
 
 const CODE_RS = 'src-tauri/src/commands/code.rs';
 const TESTS_RS = 'src-tauri/src/commands/code/tests.rs';
+const CWD_RS = 'src-tauri/src/commands/code/cwd.rs';
+const PYTHON_SESSION_RS = 'src-tauri/src/commands/code/python_session.rs';
 
 const TESTS = [
   'execute_bash_for_tool_returns_structured_timeout_result',
@@ -45,9 +47,12 @@ const COMMANDS = [
 ];
 
 describe('AG-23 code.rs test-module extract guards', () => {
-  it('code.rs shrank below its 1472-line baseline and tests.rs is under 500 LOC', () => {
-    expect(loc(CODE_RS)).toBeLessThan(1100);
+  it('code.rs is under 800 LOC and the test/helper modules stay under 500 LOC', () => {
+    expect(loc(CODE_RS)).toBeLessThan(800);
+    expect(loc(CODE_RS)).toBeGreaterThan(500);
     expect(loc(TESTS_RS)).toBeLessThan(500);
+    expect(loc(CWD_RS)).toBeLessThan(500);
+    expect(loc(PYTHON_SESSION_RS)).toBeLessThan(500);
   });
 
   it('code.rs declares the test module as a file module in place and has no test bodies', () => {
@@ -72,6 +77,37 @@ describe('AG-23 code.rs test-module extract guards', () => {
       (m) => m[1],
     );
     expect(names).toEqual(TESTS);
+  });
+
+  it('Python session management and cwd/WSL helpers move to child modules while commands stay in code.rs', () => {
+    const code = read(CODE_RS);
+    const cwd = read(CWD_RS);
+    const session = read(PYTHON_SESSION_RS);
+    expect(code).toContain('mod cwd;');
+    expect(code).toContain('mod python_session;');
+    expect(code).toMatch(/^use self::cwd::resolve_command_cwd;$/m);
+    expect(cwd).toContain('pub(super) fn resolve_command_cwd(');
+    expect(cwd).toContain('fn resolve_windows_command_cwd(');
+    expect(cwd).toContain('fn normalize_wsl_style_path(');
+    expect(cwd).toContain('fn join_wsl_paths(');
+    expect(code).not.toContain('fn resolve_windows_command_cwd(');
+    expect(code).not.toContain('fn normalize_wsl_style_path(');
+    expect(code).not.toContain('fn join_wsl_paths(');
+    expect(session).toContain('static PYTHON_SESSIONS');
+    expect(session).toContain('struct PythonSession');
+    expect(session).toContain('fn create_python_session(');
+    expect(session).toContain('pub(super) fn execute_python_session(');
+    expect(session).toContain('pub(super) fn close_python_session(');
+    expect(session).not.toContain('#[tauri::command]');
+    expect(code).toContain('pub async fn execute_python_session(');
+    expect(code).toContain('self::python_session::execute_python_session(');
+    expect(code).toContain('pub async fn close_python_session(');
+    expect(code).toContain('self::python_session::close_python_session(');
+    const awaitCount = [code, cwd, session].reduce(
+      (count, source) => count + (source.match(/\bawait\b/g) ?? []).length,
+      0,
+    );
+    expect(awaitCount).toBe(3);
   });
 
   it('all 6 tauri commands and the command-safety code stay in code.rs', () => {
