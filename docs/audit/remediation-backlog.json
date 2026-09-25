@@ -1830,7 +1830,7 @@
     "lane": "I. Architecture Governance",
     "severity": "Governance",
     "status": "fixed",
-    "fixNote": "2026-09-25: Fixed in #208. Extracted the serde/data structs (PaperReference through ScaffoldRenderResult), deserialize_optional_json_map, and the pure IfEmptyThen trait to autoresearch_bootstrap/types.rs (fields use pub(super); serde attributes and serialized field names unchanged); moved the existing two inline tests to tests.rs. mod.rs 697→493 LOC (<500; types.rs 171, tests.rs 42). Added source guards for module boundaries and the size target. Mechanical checks: 18 await points in mod.rs unchanged; the two Rust tests are retained; no new dependencies.",
+    "fixNote": "2026-09-25: Fixed in #208. Extracted the serde/data structs (PaperReference through ScaffoldRenderResult), deserialize_optional_json_map, and the pure IfEmptyThen trait to autoresearch_bootstrap/types.rs (fields use pub(super); serde attributes and serialized field names unchanged); moved the existing two inline tests to tests.rs. mod.rs 697→493 LOC (<500; types.rs 171, tests.rs 41). Added source guards for module boundaries and the size target. Mechanical checks: 18 await points in mod.rs unchanged; the two Rust tests are retained; no new dependencies.",
     "whyItMatters": "Over the >800 'requires refactor plan' limit (1268 LOC on main 99113a6, 2026-09-24). Target: under 800 first, then under 500. Paper/arXiv/baseline extraction, scaffold templating, git init and bootstrap finalize in one module root; already a directory module, so child files are cheap.",
     "files": [
       "src-tauri/src/tools/autoresearch_bootstrap/mod.rs"
