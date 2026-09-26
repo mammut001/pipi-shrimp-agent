@@ -276,7 +276,6 @@ pub async fn telegram_send_message(
 
     #[allow(dead_code)]
     #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
     struct SendMessageResponse {
         ok: bool,
         result: TelegramMessage,
