@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 
 import type { EngineEvent } from '../../core/types';
-import { getSessionHandle, submitSessionToolResults } from '../../core/runtime';
+import { submitSessionToolResults } from '../../core/runtime';
 import { t } from '../../i18n';
 import { recordToolForReactiveCompact } from '../../services/compact/reactiveCompact';
 import { StreamingToolExecutor, type ToolRequest } from '../../services/StreamingToolExecutor';
@@ -38,65 +38,16 @@ import {
   getSessionProjectDir as resolveSessionProjectDir,
 } from '@/utils/sessionFolders';
 
+import { emitSessionToolTrace, emitSessionToolTerminal } from './chatToolTrace';
+import { mapTerminalStatusToStepStatus, resolveToolStepStatus } from './chatToolStatus';
+export type { ToolTerminalStatus, ToolStepStatus } from './chatToolStatus';
+export { mapTerminalStatusToStepStatus, resolveToolStepStatus };
+
 type ToolBatchChunk = Extract<EngineEvent, { type: 'tool_batch_request' }>;
 
 type ChatSetState = (
   updater: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)
 ) => void;
-
-
-/** Best-effort identity/status trace — never includes tool argument payloads. */
-function emitSessionToolTrace(
-  sessionId: string,
-  type: 'tool_requested' | 'tool_execution_started' | 'tool_completed' | 'tool_cancel_requested' | 'tool_cancelled',
-  extras: {
-    toolCallId?: string;
-    executionId?: string | null;
-    requestId?: string;
-    turnId?: string;
-    reason?: string;
-  } = {},
-): void {
-  try {
-    const handle = getSessionHandle(sessionId);
-    handle.emitTraceEvent(type, {
-      ...(extras.toolCallId !== undefined ? { toolCallId: extras.toolCallId } : {}),
-      ...(extras.executionId ? { executionId: extras.executionId } : {}),
-      ...(extras.requestId !== undefined ? { requestId: extras.requestId } : {}),
-      ...(extras.turnId !== undefined ? { turnId: extras.turnId } : {}),
-      ...(extras.reason !== undefined ? { reason: extras.reason } : {}),
-    });
-  } catch {
-    // Trace must never break tool execution
-  }
-}
-
-/** Close a tool identity chain with completed/cancelled (never payloads). */
-function emitSessionToolTerminal(
-  sessionId: string,
-  toolCallId: string,
-  status: 'done' | 'failed' | 'rejected' | 'cancelled' | 'timed_out',
-  extras: {
-    executionId?: string | null;
-    requestId?: string;
-    turnId?: string;
-  } = {},
-): void {
-  const reason = status === 'done' ? 'success' : status;
-  if (status === 'cancelled') {
-    emitSessionToolTrace(sessionId, 'tool_cancelled', {
-      toolCallId,
-      reason,
-      ...extras,
-    });
-    return;
-  }
-  emitSessionToolTrace(sessionId, 'tool_completed', {
-    toolCallId,
-    reason,
-    ...extras,
-  });
-}
 
 /** Greppable unbound denial — keep in sync with chip hint / docs. */
 export const NO_PROJECT_FOLDER_MESSAGE =
@@ -247,90 +198,6 @@ function buildGetCurrentWorkspaceResult(workDir: string | null): string {
   return workDir
     ? JSON.stringify({ work_dir: workDir, message: `Current working directory: ${workDir}` })
     : JSON.stringify({ work_dir: null, message: 'No working directory bound to this session.' });
-}
-
-export type ToolTerminalStatus =
-  | 'success'
-  | 'failed'
-  | 'rejected'
-  | 'cancelled'
-  | 'timed_out';
-
-export type ToolStepStatus = 'done' | 'failed' | 'cancelled' | 'timed_out' | 'rejected';
-
-/** Map Rust `ToolTerminalStatus` snake_case values onto Chat step statuses. */
-export function mapTerminalStatusToStepStatus(
-  terminalStatus: string | null | undefined,
-): ToolStepStatus | null {
-  if (!terminalStatus) {
-    return null;
-  }
-  switch (terminalStatus) {
-    case 'success':
-      return 'done';
-    case 'failed':
-      return 'failed';
-    case 'rejected':
-      return 'rejected';
-    case 'cancelled':
-    case 'canceled':
-      return 'cancelled';
-    case 'timed_out':
-    case 'timeout':
-      return 'timed_out';
-    default:
-      return null;
-  }
-}
-
-/**
- * Prefer the authoritative native `status` / `terminal_status` field when present.
- * Fall back to JSON/content heuristics only for legacy results that omit it.
- */
-export function resolveToolStepStatus(
-  content: string,
-  fallbackFailed: boolean,
-  terminalStatus?: string | null,
-): ToolStepStatus {
-  const fromNative = mapTerminalStatusToStepStatus(terminalStatus);
-  if (fromNative) {
-    return fromNative;
-  }
-
-  try {
-    const parsed = JSON.parse(content) as {
-      status?: string;
-      error_kind?: string;
-      terminal_status?: string;
-      timed_out?: boolean;
-    };
-    // Legacy content heuristics: only cancel / timeout / reject — not process "failed".
-    const legacyTerminal = parsed.terminal_status
-      ?? (parsed.status === 'cancelled'
-        || parsed.status === 'canceled'
-        || parsed.status === 'timed_out'
-        || parsed.status === 'timeout'
-        || parsed.status === 'rejected'
-        ? parsed.status
-        : null);
-    const fromLegacy = mapTerminalStatusToStepStatus(legacyTerminal);
-    if (fromLegacy && fromLegacy !== 'done' && fromLegacy !== 'failed') {
-      return fromLegacy;
-    }
-    if (parsed.status === 'cancelled' || parsed.status === 'canceled') {
-      return 'cancelled';
-    }
-    if (parsed.status === 'timed_out' || parsed.status === 'timeout' || parsed.timed_out === true) {
-      return 'timed_out';
-    }
-    if (parsed.error_kind === 'permission_denied') {
-      return 'rejected';
-    }
-  } catch {
-    // Keep legacy fallback for plain-text tool results.
-  }
-
-  return fallbackFailed ? 'failed' : 'done';
 }
 
 async function previewBackendToolPolicy(
