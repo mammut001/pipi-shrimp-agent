@@ -104,7 +104,7 @@ describe('AG-25 registry extraction guards', () => {
     ]);
 
     expect(src.match(/\.await\b/g)).toHaveLength(1);
-    for (const source of [fs, search, command, bootstrap]) {
+    for (const source of [fsSource, search, command, bootstrap]) {
       expect(source).not.toMatch(/\.await\b/);
     }
   });
