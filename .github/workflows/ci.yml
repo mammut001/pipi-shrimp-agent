@@ -34,6 +34,7 @@ jobs:
           GITHUB_BASE_REF: ${{ github.base_ref }}
           GITHUB_HEAD_REF: ${{ github.head_ref }}
       - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
       - run: pnpm test -- --passWithNoTests
 
   rust-lockfile:

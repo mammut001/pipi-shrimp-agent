@@ -34,6 +34,7 @@ import {
   getChatSessionTurnEpoch,
   getStreamingBuffer,
   ownsSelectedStreamChrome,
+  STREAMING_TIMEOUT_MS,
 } from './chatStreaming';
 import { getSessionProjectDir as resolveSessionProjectDir } from '@/utils/sessionFolders';
 import { t } from '@/i18n';

@@ -132,7 +132,7 @@ export function AgentConfigModelSection({
   roleHint?: RoleModelHint | null;
   configOptions: ConfigOption[];
   modelOptions: string[];
-  apiConfigs: Array<{ id: string; provider: string; model?: string }>;
+  apiConfigs: Array<{ id: string; provider: ProviderName; model?: string }>;
   applyRecommendedModel: () => void;
 }) {
   return (
