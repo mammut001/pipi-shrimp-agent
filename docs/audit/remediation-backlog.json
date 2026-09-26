@@ -836,7 +836,7 @@
     "title": "chatAdapter signal propagation test gap",
     "lane": "H. Test Infrastructure",
     "severity": "Test-gap",
-    "status": "partially fixed",
+    "status": "fixed",
     "whyItMatters": "R5-01 fixed in code; automated guard missing",
     "files": [
       "src/services/autoresearch/__tests__/chatAdapter.test.ts"
@@ -852,14 +852,15 @@
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
-    "recommendedPr": null
+    "recommendedPr": null,
+    "fixNote": "2026-09-26: Already covered on main; backlog status was stale — chatAdapter.test.ts 'propagates AbortSignal to the headless turn and stops on mid-turn abort'."
   },
   {
     "id": "R5-15",
     "title": "loopEngine integration stop/preflight/failed-continue test gap",
     "lane": "H. Test Infrastructure",
     "severity": "Test-gap",
-    "status": "partially fixed",
+    "status": "fixed",
     "whyItMatters": "R5-03/05 fixed; preflight leak and stop paths untested",
     "files": [
       "src/services/autoresearch/__tests__/loopEngine.integration.test.ts"
@@ -877,7 +878,8 @@
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
-    "recommendedPr": null
+    "recommendedPr": null,
+    "fixNote": "2026-09-26: Already covered on main; backlog status was stale — loopEngine.integration.test.ts: 'stop aborts the active headless turn and clears the loop handle', preflight refusal/startup-failure cases, 'fails a budget-exhausted iteration, rolls back its workspace, and continues the run'."
   },
   {
     "id": "R5-16",
@@ -1363,7 +1365,7 @@
     "title": "Test: useChatMessageScroll debounce unmount windowed history",
     "lane": "H. Test Infrastructure",
     "severity": "P2",
-    "status": "test gap only",
+    "status": "fixed",
     "whyItMatters": "Guard R1-11 and cover R1-16 scroll behavior",
     "files": [
       "src/hooks/useChatMessageScroll.ts"
@@ -1379,14 +1381,15 @@
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
-    "recommendedPr": 9
+    "recommendedPr": 9,
+    "fixNote": "2026-09-26: Already covered on main; backlog status was stale — src/hooks/__tests__/useChatMessageScroll.test.tsx (describe 'useChatMessageScroll (TOP-15-03)')."
   },
   {
     "id": "TOP-15-04",
     "title": "Test: listenerGuard ref-count concurrent order",
     "lane": "H. Test Infrastructure",
     "severity": "Critical",
-    "status": "test gap only",
+    "status": "fixed",
     "whyItMatters": "Guard R4-01 listener leak fix",
     "files": [
       "src/utils/listenerGuard.ts"
@@ -1401,14 +1404,15 @@
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
-    "recommendedPr": null
+    "recommendedPr": null,
+    "fixNote": "2026-09-26: Already covered on main; backlog status was stale — src/store/__tests__/listenerGuard.test.ts (TOP-15-04 / T-12 concurrent register/unregister order)."
   },
   {
     "id": "TOP-15-05",
     "title": "Test: QueryEngine tool_batch timeout no-resolve",
     "lane": "H. Test Infrastructure",
     "severity": "Critical",
-    "status": "test gap only",
+    "status": "fixed",
     "whyItMatters": "Guard R4-03 hang fix",
     "files": [
       "src/core/QueryEngine.ts"
@@ -1423,14 +1427,15 @@
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
-    "recommendedPr": null
+    "recommendedPr": null,
+    "fixNote": "2026-09-26: Already covered on main; backlog status was stale — src/core/__tests__/QueryEngine.test.ts 'times out when the consumer never resolves a tool batch request'."
   },
   {
     "id": "TOP-15-06",
     "title": "Test: StreamingToolExecutor requiresConfirmation bypass",
     "lane": "H. Test Infrastructure",
     "severity": "High",
-    "status": "test gap only",
+    "status": "fixed",
     "whyItMatters": "Guard R4-07 confirmation gate",
     "files": [
       "src/services/StreamingToolExecutor.ts"
@@ -1445,14 +1450,15 @@
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
-    "recommendedPr": null
+    "recommendedPr": null,
+    "fixNote": "2026-09-26: Already covered on main; backlog status was stale — src/services/__tests__/StreamingToolExecutor.test.ts 'requires frontend hook confirmation even when backend preview allows the tool'."
   },
   {
     "id": "TOP-15-07",
     "title": "Test: legacy execute_tool vs batch policy consistency",
     "lane": "H. Test Infrastructure",
     "severity": "Critical",
-    "status": "test gap only",
+    "status": "fixed",
     "whyItMatters": "Validate R2-01 fix and prevent policy drift",
     "files": [
       "src-tauri/src/commands/chat.rs"
@@ -1467,14 +1473,15 @@
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
-    "recommendedPr": 2
+    "recommendedPr": 2,
+    "fixNote": "2026-09-26: Already covered on main; backlog status was stale — src-tauri/src/commands/legacy_execute_tool.rs #[cfg(test)] (registered/unknown/shell/write_file tools rejected; browser/typst/Skill whitelist allowed)."
   },
   {
     "id": "TOP-15-08",
     "title": "Test: chatAdapter AbortSignal propagation to headless turn",
     "lane": "H. Test Infrastructure",
     "severity": "P0",
-    "status": "partially fixed",
+    "status": "fixed",
     "whyItMatters": "Guard R5-01 abort wiring",
     "files": [
       "src/services/autoresearch/__tests__/chatAdapter.test.ts"
@@ -1489,14 +1496,15 @@
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
-    "recommendedPr": null
+    "recommendedPr": null,
+    "fixNote": "2026-09-26: Already covered on main; backlog status was stale — chatAdapter.test.ts 'propagates AbortSignal to the headless turn and stops on mid-turn abort'."
   },
   {
     "id": "TOP-15-09",
     "title": "Test: loopEngine stop delete active run failed-continue",
     "lane": "H. Test Infrastructure",
     "severity": "P0",
-    "status": "partially fixed",
+    "status": "fixed",
     "whyItMatters": "Guard R5-03 and R5-05 fixes",
     "files": [
       "src/services/autoresearch/__tests__/loopEngine.integration.test.ts"
@@ -1512,14 +1520,15 @@
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
-    "recommendedPr": null
+    "recommendedPr": null,
+    "fixNote": "2026-09-26: Already covered on main; backlog status was stale — loopEngine.integration.test.ts stop + failed-continue cases; autoresearchStore.test.ts 'stops an active loop before deleting its run'."
   },
   {
     "id": "TOP-15-10",
     "title": "Test: App.tsx bootstrap and routing integration",
     "lane": "H. Test Infrastructure",
     "severity": "Critical",
-    "status": "test gap only",
+    "status": "fixed",
     "whyItMatters": "Main entry point has zero coverage",
     "files": [
       "src/App.tsx"
@@ -1535,14 +1544,15 @@
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
-    "recommendedPr": null
+    "recommendedPr": null,
+    "fixNote": "2026-09-26: Already covered on main; backlog status was stale — src/__tests__/App.bootstrap-routing.test.tsx (describe 'App bootstrap and routing (TOP-15-10)')."
   },
   {
     "id": "TOP-15-11",
     "title": "Test: shell permission queue and questionnaire session isolation",
     "lane": "H. Test Infrastructure",
     "severity": "Critical",
-    "status": "test gap only",
+    "status": "fixed",
     "whyItMatters": "Primary production shell untested",
     "files": [
       "src/components/ChatBrowserWorkspaceShell.tsx"
@@ -1558,7 +1568,8 @@
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
-    "recommendedPr": null
+    "recommendedPr": null,
+    "fixNote": "2026-09-26: Already covered on main; backlog status was stale — ChatBrowserWorkspaceShell.splitChatInput.test.tsx 'shows current-session permissions in FIFO order and resolves the active request' + 'shows a questionnaire only in its owning chat session'."
   },
   {
     "id": "TOP-15-12",
@@ -1613,7 +1624,7 @@
     "title": "Test: MarkdownDocumentPreview and ChatMessage XSS vectors",
     "lane": "H. Test Infrastructure",
     "severity": "High",
-    "status": "test gap only",
+    "status": "fixed",
     "whyItMatters": "Guard R7-07 and R7-08 sanitization fixes",
     "files": [
       "src/components/ChatMessage.tsx",
@@ -1630,14 +1641,15 @@
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
-    "recommendedPr": null
+    "recommendedPr": null,
+    "fixNote": "2026-09-26: Covered — src/utils/__tests__/markdownSafety.test.tsx (added in #214): sanitizers + hardened isSafeMarkdownHref, and render tests proving ChatMessage/MarkdownDocumentPreview hand ReactMarkdown sanitized content."
   },
   {
     "id": "TOP-15-15",
     "title": "Test: pathValidation sibling-prefix escape",
     "lane": "H. Test Infrastructure",
     "severity": "High",
-    "status": "test gap only",
+    "status": "fixed",
     "whyItMatters": "Guard R7-01 isWithinDir fix",
     "files": [
       "src/utils/pathValidation.ts"
@@ -1652,7 +1664,8 @@
     "runtimeBehavior": false,
     "uiBehavior": false,
     "splitPrs": false,
-    "recommendedPr": null
+    "recommendedPr": null,
+    "fixNote": "2026-09-26: Already covered on main; backlog status was stale — src/services/tools/__tests__/pathValidation.test.ts 'rejects sibling-prefix paths outside workDir'."
   },
   {
     "id": "AG-01",
@@ -2209,8 +2222,8 @@
     "title": "Split tools/execution_policy.rs (tool execution policy gate)",
     "lane": "I. Architecture Governance",
     "severity": "Governance",
-    "status": "open",
-    "fixNote": "2026-09-24: Opened (not yet fixed). 1901 LOC live wc -l on main 99113a6, 2026-09-24 (1063 production + 838 inline #[cfg(test)]). No AG item existed before this entry. SECURITY-SENSITIVE: extra-careful plan — only pure data/table or verbatim test-module moves first; never alter decision logic, error strings, or ordering in one PR.",
+    "status": "partially fixed",
+    "fixNote": "2026-09-26: #214 executed all three planned steps: inline tests -> execution_policy/tests.rs; WRITE_TOOLS/WORKSPACE_BOUND_TOOLS/APPROVAL_TTL + is_*_tool classifiers + command_uses_network/command_is_long_running -> execution_policy/classify.rs (is_destructive_mcp_tool re-exported at the same path); SSH remote-path helpers -> execution_policy/ssh_paths.rs. 1901 -> 856 LOC, still over 800. Remaining root is the evaluate_*/enforce_* decision functions and the APPROVALS store, so a further split needs a new plan.",
     "whyItMatters": "Over the >800 'requires refactor plan' limit (1901 LOC on main 99113a6, 2026-09-24). Target: under 800 first, then under 500. Central tool policy gate (approval store/TTL, workspace binding, command/SSH/CDP-script policy, preview + enforce entry points); every tool call and R3-06/R2-08/R2-12 depend on it.",
     "files": [
       "src-tauri/src/tools/execution_policy.rs"
@@ -2259,8 +2272,8 @@
     "title": "Split store/chat/chatToolExecution.ts (tool batch execution + permissions)",
     "lane": "I. Architecture Governance",
     "severity": "Governance",
-    "status": "open",
-    "fixNote": "2026-09-24: Opened (not yet fixed). 1348 LOC live wc -l on main 99113a6, 2026-09-24 (1348 production, no inline tests). No AG item existed before this entry. SECURITY-SENSITIVE: extra-careful plan — only pure data/table or verbatim test-module moves first; never alter decision logic, error strings, or ordering in one PR.",
+    "status": "fixed",
+    "fixNote": "2026-09-26: fixed by #214. 1348 -> 667 LOC. Step 1: status mapping -> chatToolStatus.ts, trace emitters -> chatToolTrace.ts. Steps 2-3: permission gate (buildPermissionContext, previewBackendToolPolicy, resolveWorkspaceToolPreflight, resolveSerialToolPermission) -> chatToolPermission.ts verbatim; executeAgentTool -> chatToolAgentExec.ts; executeConcurrentTools -> chatToolConcurrentExec.ts. Under 800; 500 stretch not reached (executeSerialTool + handleToolBatchRequest remain).",
     "whyItMatters": "Over the >800 'requires refactor plan' limit (1348 LOC on main 99113a6, 2026-09-24). Target: under 800 first, then under 500. Frontend tool-batch executor: workspace preflight, permission resolution (waitForPermission / swarm enqueuePermissionInUI), concurrent vs serial batches, agent tool, terminal status mapping.",
     "files": [
       "src/store/chat/chatToolExecution.ts"
@@ -2422,8 +2435,8 @@
     "title": "Split services/autoresearch/history.ts (run history types, normalization, persistence)",
     "lane": "I. Architecture Governance",
     "severity": "Governance",
-    "status": "open",
-    "fixNote": "2026-09-24: Opened (not yet fixed). 1016 LOC live wc -l on main 99113a6, 2026-09-24 (1016 production, no inline tests). No AG item existed before this entry.",
+    "status": "fixed",
+    "fixNote": "2026-09-26: fixed by #214. 1016 -> 426 LOC. Types -> historyTypes.ts; normalizers, MAX_* caps, redaction and live-output clip helpers -> historyNormalize.ts (468). history.ts keeps compaction/load/persist. All three files under 500.",
     "whyItMatters": "Over the >800 'requires refactor plan' limit (1016 LOC on main 99113a6, 2026-09-24). Target: under 800 first, then under 500. Run/iteration/event types (L1-190), caps + sanitizers/redaction (L191-590), live-output clipping, compaction and localStorage load/persist with quota fallback (L687-1016).",
     "files": [
       "src/services/autoresearch/history.ts"
@@ -2445,8 +2458,8 @@
     "title": "Split commands/telegram.rs (Telegram Bot API commands)",
     "lane": "I. Architecture Governance",
     "severity": "Governance",
-    "status": "open",
-    "fixNote": "2026-09-24: Opened (not yet fixed). 1012 LOC live wc -l on main 99113a6, 2026-09-24 (948 production + 64 inline #[cfg(test)]). No AG item existed before this entry. SECURITY-SENSITIVE: extra-careful plan — only pure data/table or verbatim test-module moves first; never alter decision logic, error strings, or ordering in one PR.",
+    "status": "fixed",
+    "fixNote": "2026-09-26: fixed by #214. 1012 -> 713 LOC. Serde types -> telegram/types.rs; getFile/download bodies -> telegram/files.rs; webhook bodies -> telegram/webhook.rs, behind thin #[tauri::command] wrappers kept in telegram.rs. Token redaction, build_*_url, TelegramState and telegram_set_allowed_chats untouched. Under 800; 500 stretch not reached.",
     "whyItMatters": "Over the >800 'requires refactor plan' limit (1012 LOC on main 99113a6, 2026-09-24). Target: under 800 first, then under 500. Bot API types, token redaction, telegram_api_request, 18 #[tauri::command] fns (connect, send, updates, files, webhooks, allowed chats).",
     "files": [
       "src-tauri/src/commands/telegram.rs"
@@ -2708,6 +2721,158 @@
     "runtimeBehavior": true,
     "uiBehavior": false,
     "splitPrs": false,
+    "recommendedPr": null
+  },
+  {
+    "id": "AG-34",
+    "title": "Split store/browserObservabilityStore.ts",
+    "lane": "I. Architecture Governance",
+    "severity": "Governance",
+    "status": "open",
+    "fixNote": "2026-09-26: Opened (not yet fixed). 958 LOC on main 9ae62aa. Found by a repo-wide >800 LOC scan after #214; no AG item existed.",
+    "whyItMatters": "Over the >800 'requires refactor plan' limit (958 LOC on main 9ae62aa, 2026-09-26). Target: under 800 first, then under 500.",
+    "files": [
+      "src/store/browserObservabilityStore.ts"
+    ],
+    "smallestPrScope": "Needs a plan. Start with pure moves only (types, constants, pure helpers, inline tests) re-exported at the same paths; no logic, error-string or await changes.",
+    "tests": [],
+    "dependencies": [],
+    "runtimeBehavior": false,
+    "uiBehavior": false,
+    "splitPrs": true,
+    "recommendedPr": null
+  },
+  {
+    "id": "AG-35",
+    "title": "Split components/BrowserPanel.tsx",
+    "lane": "I. Architecture Governance",
+    "severity": "Governance",
+    "status": "open",
+    "fixNote": "2026-09-26: Opened (not yet fixed). 932 LOC on main 9ae62aa. Found by a repo-wide >800 LOC scan after #214; no AG item existed.",
+    "whyItMatters": "Over the >800 'requires refactor plan' limit (932 LOC on main 9ae62aa, 2026-09-26). Target: under 800 first, then under 500.",
+    "files": [
+      "src/components/BrowserPanel.tsx"
+    ],
+    "smallestPrScope": "Needs a plan. Start with pure moves only (types, constants, pure helpers, inline tests) re-exported at the same paths; no logic, error-string or await changes.",
+    "tests": [],
+    "dependencies": [],
+    "runtimeBehavior": false,
+    "uiBehavior": true,
+    "splitPrs": true,
+    "recommendedPr": null
+  },
+  {
+    "id": "AG-36",
+    "title": "Split claude/http/tool_catalog.rs",
+    "lane": "I. Architecture Governance",
+    "severity": "Governance",
+    "status": "open",
+    "fixNote": "2026-09-26: Opened (not yet fixed). 900 LOC on main 9ae62aa. Found by a repo-wide >800 LOC scan after #214; no AG item existed.",
+    "whyItMatters": "Over the >800 'requires refactor plan' limit (900 LOC on main 9ae62aa, 2026-09-26). Target: under 800 first, then under 500.",
+    "files": [
+      "src-tauri/src/claude/http/tool_catalog.rs"
+    ],
+    "smallestPrScope": "Needs a plan. Start with pure moves only (types, constants, pure helpers, inline tests) re-exported at the same paths; no logic, error-string or await changes.",
+    "tests": [],
+    "dependencies": [],
+    "runtimeBehavior": false,
+    "uiBehavior": false,
+    "splitPrs": true,
+    "recommendedPr": null
+  },
+  {
+    "id": "AG-37",
+    "title": "Split components/autoresearch/AutoResearchDashboardView.tsx",
+    "lane": "I. Architecture Governance",
+    "severity": "Governance",
+    "status": "open",
+    "fixNote": "2026-09-26: Opened (not yet fixed). 887 LOC on main 9ae62aa. Found by a repo-wide >800 LOC scan after #214; no AG item existed.",
+    "whyItMatters": "Over the >800 'requires refactor plan' limit (887 LOC on main 9ae62aa, 2026-09-26). Target: under 800 first, then under 500.",
+    "files": [
+      "src/components/autoresearch/AutoResearchDashboardView.tsx"
+    ],
+    "smallestPrScope": "Needs a plan. Start with pure moves only (types, constants, pure helpers, inline tests) re-exported at the same paths; no logic, error-string or await changes.",
+    "tests": [],
+    "dependencies": [],
+    "runtimeBehavior": false,
+    "uiBehavior": true,
+    "splitPrs": true,
+    "recommendedPr": null
+  },
+  {
+    "id": "AG-38",
+    "title": "Split claude/http/adapters/openai.rs",
+    "lane": "I. Architecture Governance",
+    "severity": "Governance",
+    "status": "open",
+    "fixNote": "2026-09-26: Opened (not yet fixed). 873 LOC on main 9ae62aa. Found by a repo-wide >800 LOC scan after #214; no AG item existed.",
+    "whyItMatters": "Over the >800 'requires refactor plan' limit (873 LOC on main 9ae62aa, 2026-09-26). Target: under 800 first, then under 500.",
+    "files": [
+      "src-tauri/src/claude/http/adapters/openai.rs"
+    ],
+    "smallestPrScope": "Needs a plan. Start with pure moves only (types, constants, pure helpers, inline tests) re-exported at the same paths; no logic, error-string or await changes.",
+    "tests": [],
+    "dependencies": [],
+    "runtimeBehavior": false,
+    "uiBehavior": false,
+    "splitPrs": true,
+    "recommendedPr": null
+  },
+  {
+    "id": "AG-39",
+    "title": "Split components/autoresearch/AdvancedWorkdirSetup.tsx",
+    "lane": "I. Architecture Governance",
+    "severity": "Governance",
+    "status": "open",
+    "fixNote": "2026-09-26: Opened (not yet fixed). 868 LOC on main 9ae62aa. Found by a repo-wide >800 LOC scan after #214; no AG item existed.",
+    "whyItMatters": "Over the >800 'requires refactor plan' limit (868 LOC on main 9ae62aa, 2026-09-26). Target: under 800 first, then under 500.",
+    "files": [
+      "src/components/autoresearch/AdvancedWorkdirSetup.tsx"
+    ],
+    "smallestPrScope": "Needs a plan. Start with pure moves only (types, constants, pure helpers, inline tests) re-exported at the same paths; no logic, error-string or await changes.",
+    "tests": [],
+    "dependencies": [],
+    "runtimeBehavior": false,
+    "uiBehavior": true,
+    "splitPrs": true,
+    "recommendedPr": null
+  },
+  {
+    "id": "AG-40",
+    "title": "Split commands/file.rs",
+    "lane": "I. Architecture Governance",
+    "severity": "Governance",
+    "status": "open",
+    "fixNote": "2026-09-26: Opened (not yet fixed). 864 LOC on main 9ae62aa. Found by a repo-wide >800 LOC scan after #214; no AG item existed.",
+    "whyItMatters": "Over the >800 'requires refactor plan' limit (864 LOC on main 9ae62aa, 2026-09-26). Target: under 800 first, then under 500.",
+    "files": [
+      "src-tauri/src/commands/file.rs"
+    ],
+    "smallestPrScope": "Needs a plan. Start with pure moves only (types, constants, pure helpers, inline tests) re-exported at the same paths; no logic, error-string or await changes.",
+    "tests": [],
+    "dependencies": [],
+    "runtimeBehavior": false,
+    "uiBehavior": false,
+    "splitPrs": true,
+    "recommendedPr": null
+  },
+  {
+    "id": "AG-41",
+    "title": "Split claude/adapter.rs",
+    "lane": "I. Architecture Governance",
+    "severity": "Governance",
+    "status": "open",
+    "fixNote": "2026-09-26: Opened (not yet fixed). 806 LOC on main 9ae62aa. Found by a repo-wide >800 LOC scan after #214; no AG item existed.",
+    "whyItMatters": "Over the >800 'requires refactor plan' limit (806 LOC on main 9ae62aa, 2026-09-26). Target: under 800 first, then under 500.",
+    "files": [
+      "src-tauri/src/claude/adapter.rs"
+    ],
+    "smallestPrScope": "Needs a plan. Start with pure moves only (types, constants, pure helpers, inline tests) re-exported at the same paths; no logic, error-string or await changes.",
+    "tests": [],
+    "dependencies": [],
+    "runtimeBehavior": false,
+    "uiBehavior": false,
+    "splitPrs": true,
     "recommendedPr": null
   }
 ]

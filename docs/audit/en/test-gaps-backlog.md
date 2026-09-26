@@ -14,12 +14,12 @@ Chinese version: [../test-gaps-backlog.md](../test-gaps-backlog.md)
 | --- | ------ | ---------------- | --------------- | ----------- |
 | T-01 | Chat | `selectSession` during streaming: content does not leak; selected chrome cleared; background turn continues on owning session (no cancel-on-switch) ✅ Fixed 2026-09-17 | R1-01, R1-02 | Regression: `sessionIsolation` + `chatStreamingIsolation` + `chatStoreSendMessage` P0-2 |
 | T-02 | Shell | `browserDockMode=split`: `ChatInput` visible or explicit UX documented ✅ Fixed 2026-09-17 | R1-03 | Regression: `ChatBrowserWorkspaceShell.splitChatInput.test.tsx` |
-| T-03 | Core | `QueryEngine` tool_batch with no resolve → timeout/reject | R4-03 | Code fixed; regression test needed |
-| T-04 | AutoResearch | `chatAdapter` AbortSignal propagated to `runHeadlessAgentTurn` | R5-01 | Code fixed; regression test needed |
-| T-05 | AutoResearch | `deleteRun` + in-flight loop stops | R5-05 | Code fixed; regression test needed |
-| T-06 | Workflow | `createRunDirectory` reject → run does not continue | R6-01 | **Still open** |
-| T-07 | Security | `pathValidation.ts` sibling-prefix escape | R7-01 | Code fixed; regression test needed |
-| T-08 | Security | `ChatMessage` / `MarkdownDocumentPreview` XSS vectors | R7-07, R7-08 | Code fixed; regression test needed |
+| T-03 | Core | `QueryEngine` tool_batch with no resolve → timeout/reject ✅ Covered 2026-09-26 | R4-03 | Covered: `src/core/__tests__/QueryEngine.test.ts` |
+| T-04 | AutoResearch | `chatAdapter` AbortSignal propagated to `runHeadlessAgentTurn` ✅ Covered 2026-09-26 | R5-01 | Covered: `src/services/autoresearch/__tests__/chatAdapter.test.ts` |
+| T-05 | AutoResearch | `deleteRun` + in-flight loop stops ✅ Covered 2026-09-26 | R5-05 | Covered: `src/store/__tests__/autoresearchStore.test.ts` |
+| T-06 | Workflow | `createRunDirectory` reject → run does not continue ✅ Covered 2026-09-26 | R6-01 | Covered: `src/services/workflowEngine/__tests__/engine.test.ts` |
+| T-07 | Security | `pathValidation.ts` sibling-prefix escape ✅ Covered 2026-09-26 | R7-01 | Covered: `src/services/tools/__tests__/pathValidation.test.ts` |
+| T-08 | Security | `ChatMessage` / `MarkdownDocumentPreview` XSS vectors ✅ Covered 2026-09-26 | R7-07, R7-08 | Covered: `src/utils/__tests__/markdownSafety.test.tsx` |
 
 ---
 
@@ -27,16 +27,16 @@ Chinese version: [../test-gaps-backlog.md](../test-gaps-backlog.md)
 
 | # | Module | Test description | Related |
 | --- | ------ | ---------------- | ------- |
-| T-09 | App | Bootstrap order, lazy routes, init failure UI | R10-01, R9-06 |
-| T-10 | Shell | `ChatBrowserWorkspaceShell` permission queue FIFO | R10-02 |
-| T-11 | Shell | Questionnaire `activeQuestionnaireSessionId` filtering | R1-15 |
-| T-12 | Store | `listenerGuard` out-of-order unmount | R4-01 |
-| T-13 | Store | `StreamingToolExecutor` requiresConfirmation path | R4-07 |
-| T-14 | Workflow | `engine.stop()` then `getIsRunning()` and restart | R4-02, R6-02 |
+| T-09 | App | Bootstrap order, lazy routes, init failure UI ✅ Covered 2026-09-26 | R10-01, R9-06 |
+| T-10 | Shell | `ChatBrowserWorkspaceShell` permission queue FIFO ✅ Covered 2026-09-26 | R10-02 |
+| T-11 | Shell | Questionnaire `activeQuestionnaireSessionId` filtering ✅ Covered 2026-09-26 | R1-15 |
+| T-12 | Store | `listenerGuard` out-of-order unmount ✅ Covered 2026-09-26 | R4-01 |
+| T-13 | Store | `StreamingToolExecutor` requiresConfirmation path ✅ Covered 2026-09-26 | R4-07 |
+| T-14 | Workflow | `engine.stop()` then `getIsRunning()` and restart ✅ Covered 2026-09-26 | R4-02, R6-02 |
 | T-15 | Telegram | `telegramService` invoke vs `lib.rs` registry parity ✅ Fixed 2026-09-17 | R7-12, R9-01, R10-05 |
-| T-16 | Telegram | `allowedChats` enforced in commandRouter | R7-11 |
-| T-17 | Browser | `stopTask` stops CDP loop | R3-05 |
-| T-18 | Rust | Legacy `execute_tool` vs batch policy consistency | R2-01 |
+| T-16 | Telegram | `allowedChats` enforced in commandRouter ✅ Fixed 2026-09-24 (chatAuthorization rejects unlisted chats; commandRouter rejects unauthorized chats before dispatch) | R7-11 |
+| T-17 | Browser | `stopTask` stops CDP loop ✅ Covered 2026-09-26 | R3-05 |
+| T-18 | Rust | Legacy `execute_tool` vs batch policy consistency ✅ Covered 2026-09-26 | R2-01 |
 
 ---
 
@@ -44,7 +44,7 @@ Chinese version: [../test-gaps-backlog.md](../test-gaps-backlog.md)
 
 | # | Module | Test description | Related |
 | --- | ------ | ---------------- | ------- |
-| T-19 | Hook | `useChatMessageScroll` debounce + unmount | R1-11, R10-13 |
+| T-19 | Hook | `useChatMessageScroll` debounce + unmount ✅ Covered 2026-09-26 | R1-11, R10-13 |
 | T-20 | Hook | `useResponsiveLayout` breakpoints | R9-08, R10-12 |
 | T-21 | UI | `ScrollToBottomButton` visible when scrolled up | Recent feature |
 | T-22 | UI | `TerminalPanel` shell profile + error banner | R8-13 |
