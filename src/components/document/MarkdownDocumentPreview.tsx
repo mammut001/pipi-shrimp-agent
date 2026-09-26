@@ -2,11 +2,11 @@ import DOMPurify from 'dompurify';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
-function sanitizeMarkdownBody(body: string): string {
+export function sanitizeMarkdownBody(body: string): string {
   return DOMPurify.sanitize(body, { USE_PROFILES: { html: true } });
 }
 
-function isSafeMarkdownHref(href: string | undefined): boolean {
+export function isSafeMarkdownHref(href: string | undefined): boolean {
   if (!href) return false;
   const normalized = href.trim().toLowerCase();
   return !normalized.startsWith('javascript:')

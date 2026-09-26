@@ -25,7 +25,7 @@ import { ChatImage } from './ChatImage';
 import { ArtifactsBadge } from './ArtifactsBadge';
 import { useUIStore } from '@/store';
 
-function isSafeMarkdownHref(href: string | undefined): boolean {
+export function isSafeMarkdownHref(href: string | undefined): boolean {
   if (!href) return false;
   const normalized = href.trim().toLowerCase();
   return !normalized.startsWith('javascript:')
