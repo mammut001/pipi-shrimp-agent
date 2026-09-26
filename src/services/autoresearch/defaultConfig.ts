@@ -1,4 +1,5 @@
 import { sanitizePathInput } from './pathInput';
+import { safeLocalStorage } from './historyNormalize';
 
 export interface AutoResearchDefaultConfig {
   workdir: string;
@@ -22,17 +23,6 @@ export const AUTORESEARCH_FALLBACK_CONFIG: AutoResearchDefaultConfig = {
   direction: 'higher',
   iterations: 5,
 };
-
-function safeLocalStorage(): Storage | null {
-  try {
-    if (typeof localStorage === 'undefined') {
-      return null;
-    }
-    return localStorage;
-  } catch {
-    return null;
-  }
-}
 
 function sanitizeString(value: unknown, fallback: string): string {
   if (typeof value !== 'string') {
