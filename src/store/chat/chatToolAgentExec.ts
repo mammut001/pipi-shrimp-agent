@@ -1,6 +1,22 @@
 import type { ToolRequest } from '../../services/StreamingToolExecutor';
 import type { ToolBatchExecutionDeps } from './chatToolExecution';
 
+type AgentContext = NonNullable<ReturnType<ToolBatchExecutionDeps['getCurrentAgentContext']>>;
+
+export function resolveParentAgentContext(
+  deps: ToolBatchExecutionDeps,
+  sessionId: string,
+  workDir: string | null,
+): AgentContext {
+  return deps.getCurrentAgentContext() || {
+    agentId: 'main',
+    sessionId,
+    workDir: workDir || undefined,
+    toolPool: [],
+    metadata: {},
+  };
+}
+
 export async function executeAgentTool(
   _tool: ToolRequest,
   effectiveArgs: string,
@@ -19,13 +35,7 @@ export async function executeAgentTool(
   if (args.team_name && args.name) {
     const swarm = await deps.loadSwarmModule();
     const { onAgentStarted, onTeamCreated } = await deps.loadInboxCoordinator();
-    const parentCtx = deps.getCurrentAgentContext() || {
-      agentId: 'main',
-      sessionId: activeSessionId,
-      workDir: workDir || undefined,
-      toolPool: [],
-      metadata: {},
-    };
+    const parentCtx = resolveParentAgentContext(deps, activeSessionId, workDir);
     const swarmProjectRoot = parentCtx.workDir || workDir || undefined;
     const { useSwarmStore } = await deps.loadSwarmStore();
     useSwarmStore.getState().init();
@@ -47,13 +57,20 @@ export async function executeAgentTool(
       });
       teamId = created.team.id;
       leaderId = created.leader.id;
-      onTeamCreated(teamId, leaderId);
     } else {
       teamId = runtimeTeam.id;
       leaderId = runtimeTeam.leaderId;
     }
+    // The permission step may have created the team without registering the
+    // leader inbox; onTeamCreated is idempotent, so always call it.
+    onTeamCreated(teamId, leaderId);
 
-    const { agent: runtimeAgent } = await swarm.spawnAgent({
+    // Reuse the idle teammate the permission step spawned for the approval
+    // prompt, so approval does not leave an orphaned agent behind.
+    const pendingAgent = swarm
+      .getAgentsForTeam(teamId)
+      .find((agent) => agent.name === args.name && agent.status === 'idle');
+    const runtimeAgent = pendingAgent ?? (await swarm.spawnAgent({
       teamId,
       name: args.name,
       role: 'member',
@@ -61,7 +78,7 @@ export async function executeAgentTool(
       parentAgentId: parentCtx.agentId,
       model: args.model,
       projectRoot: swarmProjectRoot,
-    });
+    })).agent;
     const runtimeTask = swarm.createTask({
       teamId,
       type: 'general',
@@ -96,13 +113,7 @@ export async function executeAgentTool(
       prompt: args.prompt,
       description: args.description || 'Background agent task',
       sessionId: activeSessionId,
-      parentContext: deps.getCurrentAgentContext() || {
-        agentId: 'main',
-        sessionId: activeSessionId,
-        workDir: workDir || undefined,
-        toolPool: [],
-        metadata: {},
-      },
+      parentContext: resolveParentAgentContext(deps, activeSessionId, workDir),
       runInBackground: true,
       model: args.model,
     });
@@ -114,13 +125,7 @@ export async function executeAgentTool(
     prompt: args.prompt,
     description: args.description || 'Subagent task',
     sessionId: activeSessionId,
-    parentContext: deps.getCurrentAgentContext() || {
-      agentId: 'main',
-      sessionId: activeSessionId,
-      workDir: workDir || undefined,
-      toolPool: [],
-      metadata: {},
-    },
+    parentContext: resolveParentAgentContext(deps, activeSessionId, workDir),
     model: args.model,
   });
 

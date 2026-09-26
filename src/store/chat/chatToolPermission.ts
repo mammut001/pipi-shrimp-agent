@@ -2,6 +2,7 @@ import type { ToolRequest } from '../../services/StreamingToolExecutor';
 import { canAutoApproveTool, type ToolPolicyPreviewResult, type PermissionMode } from '../../services/tools/toolExecutionPolicy';
 import { coerceRenderableText } from '@/utils/coerceRenderableText';
 import type { ToolBatchExecutionDeps } from './chatToolExecution';
+import { resolveParentAgentContext } from './chatToolAgentExec';
 
 export function buildPermissionContext(
   toolName: string,
@@ -109,7 +110,6 @@ export async function resolveSerialToolPermission(
   activeSessionId: string,
   permissionMode: PermissionMode,
   workDir: string | null,
-  requiresConfirmation: boolean,
   deps: ToolBatchExecutionDeps,
   browserIntent = false,
   permissionContext?: {
@@ -123,7 +123,7 @@ export async function resolveSerialToolPermission(
 ): Promise<boolean> {
   // Frontend auto-approve still returns true here; callers must pass any
   // backend-issued approvalToken through to execute so RequireConfirmation
-  // can be consumed. Do not gate this on requiresConfirmation or Bypass
+  // can be consumed. Do not gate this on confirmation state or Bypass
   // write tools will regress to a modal.
   if (canAutoApproveTool(permissionMode, tool.name, { browserIntent })) {
     return true;
@@ -168,13 +168,7 @@ export async function resolveSerialToolPermission(
   }
 
   const swarm = await deps.loadSwarmModule();
-  const parentCtx = deps.getCurrentAgentContext() || {
-    agentId: 'main',
-    sessionId: activeSessionId,
-    workDir: workDir || undefined,
-    toolPool: [],
-    metadata: {},
-  };
+  const parentCtx = resolveParentAgentContext(deps, activeSessionId, workDir);
   const swarmProjectRoot = parentCtx.workDir || workDir || undefined;
   const { useSwarmStore } = await deps.loadSwarmStore();
   useSwarmStore.getState().init();
