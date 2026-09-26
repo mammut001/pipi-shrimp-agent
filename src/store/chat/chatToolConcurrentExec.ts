@@ -8,11 +8,7 @@ import type { ToolArtifactResult } from './chatArtifacts';
 import { emitSessionToolTrace, emitSessionToolTerminal } from './chatToolTrace';
 import { resolveToolStepStatus } from './chatToolStatus';
 import { buildPermissionContext } from './chatToolPermission';
-import type { ToolBatchExecutionDeps } from './chatToolExecution';
-
-type ChatSetState = (
-  updater: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)
-) => void;
+import type { ChatSetState, ToolBatchExecutionDeps } from './chatToolExecution';
 
 export async function executeConcurrentTools(
   concurrent: ToolRequest[],

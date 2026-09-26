@@ -55,7 +55,7 @@ import { executeConcurrentTools } from './chatToolConcurrentExec';
 
 type ToolBatchChunk = Extract<EngineEvent, { type: 'tool_batch_request' }>;
 
-type ChatSetState = (
+export type ChatSetState = (
   updater: ChatState | Partial<ChatState> | ((state: ChatState) => ChatState | Partial<ChatState>)
 ) => void;
 
@@ -312,7 +312,6 @@ async function executeSerialTool(
     activeSessionId,
     permissionMode,
     workDir,
-    requiresExplicitApproval,
     deps,
     allowBrowserTools,
     {
