@@ -67,7 +67,7 @@ export type ManualDProductHarnessResult = {
   historyA: Message[];
   historyB: Message[];
   historySource: 'manual_d_harness';
-  events: RuntimeTraceEvent[];
+  events: readonly RuntimeTraceEvent[];
 };
 
 /**
@@ -272,7 +272,7 @@ export async function runManualDProductHarness(
 
 /** Trace helpers shared by harness tests / soak. */
 export function harnessSessionEvents(
-  events: RuntimeTraceEvent[],
+  events: readonly RuntimeTraceEvent[],
   sessionId: string,
 ): RuntimeTraceEvent[] {
   return events.filter((e) => e.context.sessionId === sessionId);
