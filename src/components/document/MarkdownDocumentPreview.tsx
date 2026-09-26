@@ -1,18 +1,6 @@
-import DOMPurify from 'dompurify';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-
-export function sanitizeMarkdownBody(body: string): string {
-  return DOMPurify.sanitize(body, { USE_PROFILES: { html: true } });
-}
-
-export function isSafeMarkdownHref(href: string | undefined): boolean {
-  if (!href) return false;
-  const normalized = href.trim().toLowerCase();
-  return !normalized.startsWith('javascript:')
-    && !normalized.startsWith('data:')
-    && !normalized.startsWith('vbscript:');
-}
+import { isSafeMarkdownHref, sanitizeDocumentMarkdown } from '@/utils/markdownSafety';
 
 const documentPreviewProseClassName = [
   'prose prose-stone prose-sm md:prose-base max-w-none',
@@ -29,7 +17,7 @@ const documentPreviewProseClassName = [
 ].join(' ');
 
 export function MarkdownDocumentPreview({ body }: { body: string }) {
-  const safeBody = sanitizeMarkdownBody(body);
+  const safeBody = sanitizeDocumentMarkdown(body);
   return (
     <article className={documentPreviewProseClassName}>
       <ReactMarkdown
