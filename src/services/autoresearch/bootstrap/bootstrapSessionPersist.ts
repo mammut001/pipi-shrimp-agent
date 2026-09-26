@@ -1,5 +1,6 @@
 import type { AutoResearchBootstrapResult, BootstrapStep } from './types';
 import type { Recipe } from '@/components/autoresearch/bootstrapRecipePrompt';
+import { safeLocalStorage } from '../historyNormalize';
 
 export const AUTORESEARCH_BOOTSTRAP_SESSION_STORAGE_KEY = 'pipi-shrimp-autoresearch-bootstrap-session-v1';
 const MAX_PERSISTED_LOG_CHARS = 80_000;
@@ -21,17 +22,6 @@ export interface PersistedBootstrapSession {
   lastCompiledPrompt: string | null;
   missingFinalize: boolean;
   error: string | null;
-}
-
-function safeLocalStorage(): Storage | null {
-  try {
-    if (typeof localStorage === 'undefined') {
-      return null;
-    }
-    return localStorage;
-  } catch {
-    return null;
-  }
 }
 
 function capLogs(value: string): string {
