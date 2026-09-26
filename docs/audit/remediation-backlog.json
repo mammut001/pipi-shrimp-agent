@@ -2747,8 +2747,8 @@
     "title": "Split components/BrowserPanel.tsx",
     "lane": "I. Architecture Governance",
     "severity": "Governance",
-    "status": "open",
-    "fixNote": "2026-09-26: Opened (not yet fixed). 932 LOC on main 9ae62aa. Found by a repo-wide >800 LOC scan after #214; no AG item existed.",
+    "status": "fixed",
+    "fixNote": "2026-09-26: 932 -> 773 LOC. Moved QUICK_SITES, TaskHistoryItem/InlineNotice types, the hostname/quick-task helpers, toneClasses and getToneIcon verbatim into browserPanelHelpers.ts (165). The component is unchanged. Under 800; 500 stretch not reached (the component body itself is ~740 lines).",
     "whyItMatters": "Over the >800 'requires refactor plan' limit (932 LOC on main 9ae62aa, 2026-09-26). Target: under 800 first, then under 500.",
     "files": [
       "src/components/BrowserPanel.tsx"
