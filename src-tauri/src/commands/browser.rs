@@ -1,4 +1,9 @@
-use crate::services::browser::action_service::strip_thinking_content;
+use crate::services::browser::action_service::{
+    build_page_agent_script, normalize_browser_url, strip_thinking_content,
+};
+use crate::services::browser::inspection_service::{
+    EMBEDDED_SURFACE_INSPECTION_SCRIPT, STANDALONE_INSPECTION_SCRIPT,
+};
 use crate::utils::{AppError, AppResult};
 use reqwest::Client as ReqwestClient;
 use serde::{Deserialize, Serialize};
@@ -12,6 +17,10 @@ use std::collections::HashMap;
  * Uses Tauri v2 API (WebviewWindowBuilder)
  */
 use std::sync::Arc;
+use tauri::{
+    Listener, LogicalPosition, LogicalSize, Manager, Url, WebviewBuilder, WebviewUrl,
+    WebviewWindowBuilder,
+};
 use tokio::sync::Mutex;
 
 mod state;

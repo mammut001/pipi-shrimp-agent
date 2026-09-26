@@ -1,5 +1,5 @@
 use crate::utils::AppError;
-use tauri::{Webview, WebviewWindow};
+use tauri::{Manager, Webview, WebviewWindow};
 
 /// Represents which browser surface is currently active.
 /// This eliminates ambiguity in dual-track execution environment.

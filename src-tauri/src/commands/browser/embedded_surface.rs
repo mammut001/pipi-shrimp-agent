@@ -1,11 +1,5 @@
 //! Compile-time bodies for embedded browser surface commands.
 
-use super::RawBrowserInspection;
-use crate::services::browser::action_service::{build_page_agent_script, normalize_browser_url};
-use crate::services::browser::inspection_service::EMBEDDED_SURFACE_INSPECTION_SCRIPT;
-use crate::utils::AppError;
-use tauri::{Listener, LogicalPosition, LogicalSize, Manager, Url, WebviewBuilder, WebviewUrl};
-
 macro_rules! open_embedded_surface_body {
     ($url:ident, $app:ident, $state:ident) => {{
     println!("[Browser] Opening embedded surface for URL: {}", $url);

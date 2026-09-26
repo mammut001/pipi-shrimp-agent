@@ -1,11 +1,5 @@
 //! Compile-time bodies for standalone browser window and shared browser commands.
 
-use super::RawBrowserInspection;
-use crate::services::browser::action_service::{build_page_agent_script, normalize_browser_url};
-use crate::services::browser::inspection_service::STANDALONE_INSPECTION_SCRIPT;
-use crate::utils::AppError;
-use tauri::{Listener, Url, WebviewUrl, WebviewWindowBuilder};
-
 macro_rules! open_browser_window_body {
     ($url:ident, $app:ident, $state:ident) => {{
     println!("[Browser] Opening window for URL: {}", $url);
