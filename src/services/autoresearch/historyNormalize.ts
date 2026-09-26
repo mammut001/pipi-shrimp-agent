@@ -33,6 +33,7 @@ export const MAX_REASON_CHARS = 1_000;
 export const MAX_NARRATIVE_CHARS = 2_000;
 export const MAX_EVENT_SUMMARY_CHARS = 400;
 const REDACTED_VALUE = '[redacted]';
+const REDACTION_LOOKBACK_CHARS = 1_024;
 
 function isRunPhase(value: unknown): value is AutoResearchRunPhase {
   return value === 'INIT'
@@ -424,12 +425,25 @@ export function clipLiveOutputExcerpt(value: string): string {
  * chained regex passes) and running it on every token was a CPU hotspot
  * for long runs. The persisted excerpt is redacted at write time via
  * {@link redactLiveOutputExcerptForStorage} instead.
+ *
+ * Because redaction runs later on this already-clipped text, the cut must
+ * not split a `KEY=value` / `token: value` pair: a value whose label was cut
+ * off no longer matches any redaction pattern. So the partial first line is
+ * dropped. A single line longer than the cap has no safe cut point; that
+ * rare case is redacted here with the preceding context still in view.
  */
 export function clipLiveOutputExcerptInMemory(value: string): string {
   if (value.length <= MAX_LIVE_OUTPUT_EXCERPT_CHARS) {
     return value;
   }
-  return value.slice(-MAX_LIVE_OUTPUT_EXCERPT_CHARS);
+  const tail = value.slice(-MAX_LIVE_OUTPUT_EXCERPT_CHARS);
+  const firstNewline = tail.indexOf('\n');
+  if (firstNewline !== -1) {
+    return tail.slice(firstNewline + 1);
+  }
+  return redactAutoResearchSensitiveText(
+    value.slice(-(MAX_LIVE_OUTPUT_EXCERPT_CHARS + REDACTION_LOOKBACK_CHARS)),
+  ).slice(-MAX_LIVE_OUTPUT_EXCERPT_CHARS);
 }
 
 /**
