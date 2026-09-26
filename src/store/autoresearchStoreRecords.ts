@@ -19,6 +19,7 @@ import type {
   LoopState,
   TelegramNotifyConfig,
 } from './autoresearchStoreTypes';
+import { sortRuns } from '../services/autoresearch/historyNormalize';
 
 export const defaultTelegramConfig: TelegramNotifyConfig = {
   enabled: false,
@@ -60,12 +61,7 @@ export function createEmptySession(): Omit<ExperimentSession, 'runHistory' | 'se
   };
 }
 
-export function sortRuns(runs: AutoResearchRunRecord[]): AutoResearchRunRecord[] {
-  return [...runs].sort((a, b) => {
-    const byUpdated = b.updatedAt.localeCompare(a.updatedAt);
-    return byUpdated !== 0 ? byUpdated : b.createdAt.localeCompare(a.createdAt);
-  });
-}
+export { sortRuns };
 
 export function upsertRunRecord(runs: AutoResearchRunRecord[], record: AutoResearchRunRecord): AutoResearchRunRecord[] {
   const next = runs.some((run) => run.id === record.id)

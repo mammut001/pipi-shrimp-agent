@@ -13,7 +13,6 @@ import { memo, useState, useCallback, lazy, Suspense, useEffect, useRef } from '
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
-import DOMPurify from 'dompurify';
 import type { Message } from '@/types/chat';
 import { t } from '@/i18n';
 import {
@@ -24,14 +23,7 @@ import { buildImageDataUrl } from '@/services/vision/imageAttachments';
 import { ChatImage } from './ChatImage';
 import { ArtifactsBadge } from './ArtifactsBadge';
 import { useUIStore } from '@/store';
-
-function isSafeMarkdownHref(href: string | undefined): boolean {
-  if (!href) return false;
-  const normalized = href.trim().toLowerCase();
-  return !normalized.startsWith('javascript:')
-    && !normalized.startsWith('data:')
-    && !normalized.startsWith('vbscript:');
-}
+import { isSafeMarkdownHref, sanitizeAssistantMarkdown } from '@/utils/markdownSafety';
 
 // Lazy-loaded heavy components — split into separate chunks
 const LazyCodeBlock = lazy(() => import('./LazyCodeBlock'));
@@ -305,7 +297,7 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
                     },
                   }}
                 >
-                  {DOMPurify.sanitize(normalizedMessageContent)}
+                  {sanitizeAssistantMarkdown(normalizedMessageContent)}
                 </ReactMarkdown>
               )}
 
