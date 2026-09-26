@@ -2785,8 +2785,8 @@
     "title": "Split components/autoresearch/AutoResearchDashboardView.tsx",
     "lane": "I. Architecture Governance",
     "severity": "Governance",
-    "status": "open",
-    "fixNote": "2026-09-26: Opened (not yet fixed). 887 LOC on main 9ae62aa. Found by a repo-wide >800 LOC scan after #214; no AG item existed.",
+    "status": "fixed",
+    "fixNote": "2026-09-26: 887 -> 506 LOC. Moved the formatting helpers, TIMELINE_FILTERS, DetailTab/props types and the small presentational components (SectionHeading, KeyValueList, OverviewStatCard, DebugCopyButton, TabButton, TimelineFilterButton, RawDetails, EventMetadataChips, TimelineEventCard, PhaseStepPill) verbatim into AutoResearchDashboardParts.tsx (412). AutoResearchDashboardView keeps the stateful view, copy/download handlers (R5-10 redaction) unchanged.",
     "whyItMatters": "Over the >800 'requires refactor plan' limit (887 LOC on main 9ae62aa, 2026-09-26). Target: under 800 first, then under 500.",
     "files": [
       "src/components/autoresearch/AutoResearchDashboardView.tsx"
