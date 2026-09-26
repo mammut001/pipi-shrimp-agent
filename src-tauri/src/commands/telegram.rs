@@ -24,6 +24,9 @@ mod types;
 pub use types::{ConnectionStatus, TelegramBotInfo, TelegramMessage, TelegramUpdate, TelegramWebhookInfo};
 use types::{GetMeResponse, GetUpdatesResponse, GetWebhookInfoResponse, SetWebhookResponse};
 
+mod files;
+mod webhook;
+
 /// Build an API URL with the bot token, but never let the result escape
 /// without first passing through `redact_token_in_url`. The token
 /// itself is required for the actual HTTP call (Telegram's auth scheme
@@ -497,51 +500,7 @@ pub async fn telegram_get_file_url(
 
     drop(s);
 
-    #[allow(dead_code)]
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct GetFileResponse {
-        ok: bool,
-        result: FileResult,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct FileResult {
-        file_path: String,
-    }
-
-    let url = format!(
-        "https://api.telegram.org/bot{}/getFile?file_id={}",
-        token,
-        urlencoding::encode(&file_id)
-    );
-
-    let client = reqwest::Client::new();
-    let response = client
-        .get(&url)
-        .timeout(Duration::from_secs(10))
-        .send()
-        .await
-        .map_err(|e| redact_token_in_error(&e.to_string(), &token))?;
-
-    if !response.status().is_success() {
-        let body = response.text().await.unwrap_or_default();
-        return Err(redact_token_in_error(
-            &format!("Failed to get file: {}", body),
-            &token,
-        ));
-    }
-
-    let file_response: GetFileResponse = response
-        .json()
-        .await
-        .map_err(|e| redact_token_in_error(&e.to_string(), &token))?;
-
-    // Construct the full file URL
-    let file_url = build_file_url(&token, &file_response.result.file_path);
-
-    Ok(file_url)
+    files::get_file_url_impl(&token, &file_id).await
 }
 
 /// Get updates (for debugging)
@@ -638,62 +597,7 @@ pub async fn telegram_download_file(
             .ok_or_else(|| "Not connected to Telegram".to_string())?
     };
 
-    let client = reqwest::Client::new();
-    let get_file_url = format!(
-        "https://api.telegram.org/bot{}/getFile?file_id={}",
-        token,
-        urlencoding::encode(&file_id)
-    );
-    let get_file_response = client
-        .get(&get_file_url)
-        .timeout(Duration::from_secs(10))
-        .send()
-        .await
-        .map_err(|e| redact_token_in_error(&e.to_string(), &token))?;
-    if !get_file_response.status().is_success() {
-        let body = get_file_response.text().await.unwrap_or_default();
-        return Err(redact_token_in_error(
-            &format!("Failed to get file: {}", body),
-            &token,
-        ));
-    }
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct DownloadFileResult {
-        file_path: String,
-    }
-    #[derive(Deserialize)]
-    struct DownloadGetFileResponse {
-        ok: bool,
-        result: DownloadFileResult,
-    }
-    let file_meta: DownloadGetFileResponse = get_file_response
-        .json()
-        .await
-        .map_err(|e| redact_token_in_error(&e.to_string(), &token))?;
-    let file_url = build_file_url(&token, &file_meta.result.file_path);
-    let response = client
-        .get(&file_url)
-        .timeout(Duration::from_secs(60))
-        .send()
-        .await
-        .map_err(|e| redact_token_in_error(&e.to_string(), &token))?;
-
-    if !response.status().is_success() {
-        let body = response.text().await.unwrap_or_default();
-        return Err(redact_token_in_error(
-            &format!("Download failed: {}", body),
-            &token,
-        ));
-    }
-
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| redact_token_in_error(&e.to_string(), &token))?;
-
-    std::fs::write(&destination, bytes).map_err(|e| format!("Failed to write file: {}", e))?;
-    Ok(destination)
+    files::download_file_impl(&token, &file_id, &destination).await
 }
 
 /// Register a webhook URL (polling mode remains the default runtime path).
@@ -710,37 +614,7 @@ pub async fn telegram_set_webhook(
             .ok_or_else(|| "Not connected to Telegram".to_string())?
     };
 
-    let client = reqwest::Client::new();
-    let mut form = std::collections::HashMap::new();
-    form.insert("url", url);
-    if let Some(secret) = secret_token.filter(|value| !value.is_empty()) {
-        form.insert("secret_token", secret);
-    }
-
-    let response = client
-        .post(format!("https://api.telegram.org/bot{}/setWebhook", token))
-        .form(&form)
-        .timeout(Duration::from_secs(15))
-        .send()
-        .await
-        .map_err(|e| redact_token_in_error(&e.to_string(), &token))?;
-
-    if !response.status().is_success() {
-        let body = response.text().await.unwrap_or_default();
-        return Err(redact_token_in_error(
-            &format!("setWebhook failed: {}", body),
-            &token,
-        ));
-    }
-
-    let parsed: SetWebhookResponse = response
-        .json()
-        .await
-        .map_err(|e| redact_token_in_error(&e.to_string(), &token))?;
-    if !parsed.ok {
-        return Err("Telegram setWebhook returned ok=false".to_string());
-    }
-    Ok(())
+    webhook::set_webhook_impl(&token, url, secret_token).await
 }
 
 /// Remove the active webhook and return to polling-friendly state.
@@ -755,22 +629,7 @@ pub async fn telegram_delete_webhook(
             .ok_or_else(|| "Not connected to Telegram".to_string())?
     };
 
-    let client = reqwest::Client::new();
-    let response = client
-        .post(format!("https://api.telegram.org/bot{}/deleteWebhook", token))
-        .timeout(Duration::from_secs(15))
-        .send()
-        .await
-        .map_err(|e| redact_token_in_error(&e.to_string(), &token))?;
-
-    if !response.status().is_success() {
-        let body = response.text().await.unwrap_or_default();
-        return Err(redact_token_in_error(
-            &format!("deleteWebhook failed: {}", body),
-            &token,
-        ));
-    }
-    Ok(())
+    webhook::delete_webhook_impl(&token).await
 }
 
 /// Fetch webhook metadata for diagnostics.
@@ -785,33 +644,7 @@ pub async fn telegram_get_webhook_info(
             .ok_or_else(|| "Not connected to Telegram".to_string())?
     };
 
-    let client = reqwest::Client::new();
-    let response = client
-        .get(format!(
-            "https://api.telegram.org/bot{}/getWebhookInfo",
-            token
-        ))
-        .timeout(Duration::from_secs(15))
-        .send()
-        .await
-        .map_err(|e| redact_token_in_error(&e.to_string(), &token))?;
-
-    if !response.status().is_success() {
-        let body = response.text().await.unwrap_or_default();
-        return Err(redact_token_in_error(
-            &format!("getWebhookInfo failed: {}", body),
-            &token,
-        ));
-    }
-
-    let parsed: GetWebhookInfoResponse = response
-        .json()
-        .await
-        .map_err(|e| redact_token_in_error(&e.to_string(), &token))?;
-    if !parsed.ok {
-        return Err("Telegram getWebhookInfo returned ok=false".to_string());
-    }
-    Ok(parsed.result)
+    webhook::get_webhook_info_impl(&token).await
 }
 
 #[cfg(test)]
