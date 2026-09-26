@@ -32,7 +32,7 @@ use commands::claude_sdk::ClaudeState;
 use commands::telegram::TelegramState;
 use commands::typst_render::FontDbState;
 use commands::web::BrowserController;
-use database::init_database;
+use database::init_database_with_error;
 use utils::{build_fonts, init_font_database};
 
 /// Tracks whether critical subsystems initialized successfully at startup.
@@ -68,7 +68,7 @@ pub fn run() {
         .setup(|app| {
             // Initialize database — start in degraded mode if it fails instead of
             // panicking. The frontend can query startup health and surface diagnostics.
-            let db_health = match init_database() {
+            let db_health = match init_database_with_error() {
                 Ok(()) => StartupHealthState {
                     database_ok: true,
                     database_error: None,

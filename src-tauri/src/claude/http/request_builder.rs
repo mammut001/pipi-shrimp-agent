@@ -1,7 +1,9 @@
 use serde_json::Value;
 
 use super::error_mapping::ClaudeHttpError;
-use super::provider_adapter::{ProviderCapabilities, ProviderId, ResolvedProviderConfig};
+use super::provider_adapter::{ProviderId, ResolvedProviderConfig};
+#[cfg(test)]
+use super::provider_adapter::ProviderCapabilities;
 use super::telemetry::sanitize_endpoint;
 use super::tool_catalog::{convert_tools_to_openai_format, get_tools, merge_system_prompt};
 use crate::claude::message::{Message, ToolCall};

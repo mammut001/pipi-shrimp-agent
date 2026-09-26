@@ -6,9 +6,10 @@ mod swarm;
 mod token_usage;
 
 pub use backup::{
-    backup_before_migration, export_database_backup_file, get_backup_directory,
-    list_database_backups, restore_database_from_backup, DbBackupEntry,
+    backup_before_migration, export_database_backup_file, list_database_backups, restore_database_from_backup, DbBackupEntry,
 };
+#[cfg(test)]
+use backup::get_backup_directory;
 pub use projects::*;
 pub use schema::{get_database_diagnostics, init_database, init_database_with_error};
 pub use sessions::*;
