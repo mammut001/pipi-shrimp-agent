@@ -118,7 +118,7 @@ describe('AG-27 AutoResearch page extract guards', () => {
     const src = read(PAGE);
     const controller = read(`${DIR}/autoResearch/useAutoResearchViewController.ts`);
     expect(controller).toContain(
-      "from './autoResearch/autoResearchSetupPersistence';",
+      "from './autoResearchSetupPersistence';",
     );
     expect(controller).toContain('loadPersistedSetup()');
     expect(controller).toContain('AUTORESEARCH_CONFIG_STORAGE_KEY');
