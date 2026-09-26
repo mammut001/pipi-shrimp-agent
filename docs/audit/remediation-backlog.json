@@ -2823,8 +2823,8 @@
     "title": "Split components/autoresearch/AdvancedWorkdirSetup.tsx",
     "lane": "I. Architecture Governance",
     "severity": "Governance",
-    "status": "open",
-    "fixNote": "2026-09-26: Opened (not yet fixed). 868 LOC on main 9ae62aa. Found by a repo-wide >800 LOC scan after #214; no AG item existed.",
+    "status": "fixed",
+    "fixNote": "2026-09-26: 868 -> 703 LOC. Moved the exported summary/format helpers, parseConnectionSuccessOutput, AUTORESEARCH_CONFIG_STORAGE_KEY, RawBashResult/ConnectionTestState, extractSshError and loadPersistedSetup verbatim into advancedWorkdirSetupHelpers.ts (179); the previously exported helpers are re-exported from AdvancedWorkdirSetup.tsx so AutoResearchTabs and the tests import them unchanged.",
     "whyItMatters": "Over the >800 'requires refactor plan' limit (868 LOC on main 9ae62aa, 2026-09-26). Target: under 800 first, then under 500.",
     "files": [
       "src/components/autoresearch/AdvancedWorkdirSetup.tsx"
