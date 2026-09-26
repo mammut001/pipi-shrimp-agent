@@ -15,10 +15,14 @@
  * error formatter (which includes the request URL) leak it back to the
  * frontend.
  */
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::Duration;
+
+mod types;
+pub use types::{ConnectionStatus, TelegramBotInfo, TelegramMessage, TelegramUpdate, TelegramWebhookInfo};
+use types::{GetMeResponse, GetUpdatesResponse, GetWebhookInfoResponse, SetWebhookResponse};
 
 /// Build an API URL with the bot token, but never let the result escape
 /// without first passing through `redact_token_in_url`. The token
@@ -49,116 +53,6 @@ pub fn redact_token_in_str(s: &str, token: &str) -> String {
 /// Convenience wrapper for use in error messages.
 pub fn redact_token_in_error(err: &str, token: &str) -> String {
     redact_token_in_str(err, token)
-}
-
-/// Telegram bot information from getMe
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TelegramBotInfo {
-    pub id: i64,
-    pub is_bot: bool,
-    pub first_name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_name: Option<String>,
-    pub username: String,
-    pub can_join_groups: bool,
-    pub can_read_all_group_messages: bool,
-    pub supports_inline_queries: bool,
-    #[serde(default)]
-    pub can_connect_to_business: bool,
-    #[serde(default)]
-    pub has_main_web_app: bool,
-}
-
-/// Telegram connection status
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "lowercase")]
-pub enum ConnectionStatus {
-    Disconnected,
-    Connecting,
-    Connected,
-    Error,
-    Reconnecting,
-}
-
-/// Telegram message
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TelegramMessage {
-    pub message_id: i64,
-    pub date: i64,
-    pub chat: TelegramChat,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub from: Option<TelegramUser>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub text: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub caption: Option<String>,
-}
-
-/// Telegram chat
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TelegramChat {
-    pub id: i64,
-    #[serde(rename = "type")]
-    pub chat_type: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub username: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub first_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_name: Option<String>,
-}
-
-/// Telegram user
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TelegramUser {
-    pub id: i64,
-    pub is_bot: bool,
-    pub first_name: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub last_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub username: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub language_code: Option<String>,
-}
-
-/// Telegram API error response
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-struct TelegramApiError {
-    ok: bool,
-    description: Option<String>,
-}
-
-/// Telegram getMe response
-#[derive(Debug, Deserialize)]
-struct GetMeResponse {
-    ok: bool,
-    result: TelegramBotInfo,
-}
-
-/// Telegram getUpdates response
-#[allow(dead_code)]
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct GetUpdatesResponse {
-    ok: bool,
-    result: Vec<TelegramUpdate>,
-}
-
-/// Telegram update
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TelegramUpdate {
-    update_id: i64,
-    #[serde(default)]
-    message: Option<TelegramMessage>,
 }
 
 /// Telegram state managed by the app
@@ -802,11 +696,6 @@ pub async fn telegram_download_file(
     Ok(destination)
 }
 
-#[derive(Debug, Deserialize)]
-struct SetWebhookResponse {
-    ok: bool,
-}
-
 /// Register a webhook URL (polling mode remains the default runtime path).
 #[tauri::command]
 pub async fn telegram_set_webhook(
@@ -882,26 +771,6 @@ pub async fn telegram_delete_webhook(
         ));
     }
     Ok(())
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct TelegramWebhookInfo {
-    pub url: Option<String>,
-    pub has_custom_certificate: bool,
-    pub pending_update_count: i64,
-    pub ip_address: Option<String>,
-    pub last_error_date: Option<i64>,
-    pub last_error_message: Option<String>,
-    pub last_synchronization_error_date: Option<i64>,
-    pub max_connections: Option<i64>,
-    pub allowed_updates: Option<Vec<String>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct GetWebhookInfoResponse {
-    ok: bool,
-    result: TelegramWebhookInfo,
 }
 
 /// Fetch webhook metadata for diagnostics.
