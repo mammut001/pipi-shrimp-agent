@@ -2766,8 +2766,8 @@
     "title": "Split claude/http/tool_catalog.rs",
     "lane": "I. Architecture Governance",
     "severity": "Governance",
-    "status": "open",
-    "fixNote": "2026-09-26: Opened (not yet fixed). 900 LOC on main 9ae62aa. Found by a repo-wide >800 LOC scan after #214; no AG item existed.",
+    "status": "fixed",
+    "fixNote": "2026-09-26: 900 -> 754 LOC. Moved the inline #[cfg(test)] mod tests verbatim into tool_catalog/tests.rs (rustfmt dedent only); production code untouched. Under 800; 500 stretch not reached.",
     "whyItMatters": "Over the >800 'requires refactor plan' limit (900 LOC on main 9ae62aa, 2026-09-26). Target: under 800 first, then under 500.",
     "files": [
       "src-tauri/src/claude/http/tool_catalog.rs"
@@ -2804,8 +2804,8 @@
     "title": "Split claude/http/adapters/openai.rs",
     "lane": "I. Architecture Governance",
     "severity": "Governance",
-    "status": "open",
-    "fixNote": "2026-09-26: Opened (not yet fixed). 873 LOC on main 9ae62aa. Found by a repo-wide >800 LOC scan after #214; no AG item existed.",
+    "status": "fixed",
+    "fixNote": "2026-09-26: 873 -> 403 LOC. Moved the inline #[cfg(test)] mod tests verbatim into openai/tests.rs (rustfmt dedent only); production code untouched. Under 800; 500 stretch not reached.",
     "whyItMatters": "Over the >800 'requires refactor plan' limit (873 LOC on main 9ae62aa, 2026-09-26). Target: under 800 first, then under 500.",
     "files": [
       "src-tauri/src/claude/http/adapters/openai.rs"
@@ -2842,8 +2842,8 @@
     "title": "Split commands/file.rs",
     "lane": "I. Architecture Governance",
     "severity": "Governance",
-    "status": "open",
-    "fixNote": "2026-09-26: Opened (not yet fixed). 864 LOC on main 9ae62aa. Found by a repo-wide >800 LOC scan after #214; no AG item existed.",
+    "status": "fixed",
+    "fixNote": "2026-09-26: 864 -> 750 LOC. Moved the inline #[cfg(test)] mod tests verbatim into file/tests.rs (rustfmt dedent only); production code untouched. Under 800; 500 stretch not reached.",
     "whyItMatters": "Over the >800 'requires refactor plan' limit (864 LOC on main 9ae62aa, 2026-09-26). Target: under 800 first, then under 500.",
     "files": [
       "src-tauri/src/commands/file.rs"
@@ -2861,8 +2861,8 @@
     "title": "Split claude/adapter.rs",
     "lane": "I. Architecture Governance",
     "severity": "Governance",
-    "status": "open",
-    "fixNote": "2026-09-26: Opened (not yet fixed). 806 LOC on main 9ae62aa. Found by a repo-wide >800 LOC scan after #214; no AG item existed.",
+    "status": "fixed",
+    "fixNote": "2026-09-26: 806 -> 774 LOC. Moved the inline #[cfg(test)] mod tests verbatim into adapter/tests.rs (rustfmt dedent only); production code untouched. Under 800; 500 stretch not reached.",
     "whyItMatters": "Over the >800 'requires refactor plan' limit (806 LOC on main 9ae62aa, 2026-09-26). Target: under 800 first, then under 500.",
     "files": [
       "src-tauri/src/claude/adapter.rs"
