@@ -684,7 +684,7 @@ LOC = live `wc -l` on `main` (`99113a6`, 2026-09-24), including inline Rust `#[c
 | AG-25 | `src-tauri/src/tools/registry.rs` | **394** | **Fixed** — #204 moved the 7 inline tests to `registry/tests.rs`; #212 extracted the 12 built-in registration blocks and 7 bootstrap registration blocks verbatim into static `builtin_fs.rs` (197), `builtin_search.rs` (209), `builtin_command.rs` (174), and `builtin_bootstrap.rs` (129) modules (1060→394; every file <500). Registry API, `register_bootstrap_tool`, and `test_barrier_tool` stay in `registry.rs`; family call order, ToolMetadata/schema literals, and registration token strings are unchanged; production await count 1→1; all 7 tests retained (2026-09-26) | No | Done — #204 + #212 |
 | AG-26 | `src-tauri/src/tools/autoresearch_bootstrap/mod.rs` | **493** | **Fixed** — #208 extracted bootstrap data models + `IfEmptyThen` to `types.rs` and the two existing inline tests to `tests.rs` (697→493; `types.rs` 171, `tests.rs` 41; serde attributes/serialized field names, dispatch order and runtime logic unchanged; 18 awaits unchanged) (2026-09-25) | No | Done — #202 + #208 |
 | AG-27 | `src/pages/AutoResearch.tsx` | **339** | **Fixed** — #211 extracted the original AutoResearchView state/effects/handlers into static custom hook `autoResearch/useAutoResearchViewController.ts` (761→338; controller 458; both <500). Hook state stays owned by AutoResearchView; 47 hook calls and their order, effect timing, and async/await counts (5/5) are preserved by source guards | No | Done — #206 + #211 |
-| AG-28 | `src-tauri/src/commands/browser.rs` | **1098** | **Open — careful (`proxy_http_request`).** web.rs pattern: keep all 26 `#[tauri::command]` wrappers, move bodies to `browser/embedded_surface.rs` / `browser/window.rs`, `BrowserState` → `browser/state.rs` (<800 → <500); proxy verbatim only | Yes | Yes |
+| AG-28 | `src-tauri/src/commands/browser.rs` | **354** | **Fixed** — #213 moved `ActiveSurface` and `BrowserState` verbatim to `browser/state.rs` (108); kept all 26 Tauri command wrappers, signatures, and paths in `browser.rs`; moved 25 command bodies to inline-expanding macros in `browser/embedded_surface.rs` (356) and `browser/window.rs` (467) (1098→354; every file <500). `proxy_http_request` remains byte-identical; total await count across the four files is 33→33; no runtime helper calls or new dependencies (2026-09-26) | No | Done — #213 |
 | AG-29 | `src/components/chatInput/BlockComposer.tsx` | **466** | **Fixed** — #205 extracted the factory + five editors (1047→503); #207 extracted `IntentBlockEditor` (40) + `ModeBlockEditor` (42) (503→466; all editors hook-free, typed props, state stays in the shell; 9 hooks in original order, 0 awaits, static imports) | No | Done — #205 + #207 |
 | AG-30 | `src-tauri/src/utils/typst.rs` | **443** | **Fixed** — #200 moved the inline `#[cfg(test)] mod tests` block (L442-1028) verbatim into `utils/typst/tests.rs` (113; 3 basic compile tests) + `utils/typst/tests/template_examples.rs` (482; 5 template inline-example tests) (1028→443; under 500; production tokens unchanged, 8 tests before/after, 0 awaits) (2026-09-24) | No | Done — #200 |
 | AG-31 | `src/services/autoresearch/history.ts` | **1016** | **Open — careful (redaction).** Types → `historyTypes.ts` (re-exported); normalizers → `historyNormalize.ts` (<800); compaction/persistence → `historyPersistence.ts` (<500); redaction + `MAX_*` caps verbatim | Yes | Yes |
@@ -711,22 +711,22 @@ LOC = live `wc -l` on `main` (`99113a6`, 2026-09-24), including inline Rust `#[c
 
 ## Summary counts
 
-Recomputed from `docs/audit/remediation-backlog.json` by `status` / `severity` / `lane` — **as of 2026-09-26, base main `53340fc` + PR #212** (AG-25 `registry.rs` 1060→394 LOC; the 12 built-in registrations and 7 bootstrap registration blocks moved into four static modules under 500; policy metadata/schema literals and family registration order preserved; production await count 1→1). Items tracked only in round docs are not counted here.
+Recomputed from `docs/audit/remediation-backlog.json` by `status` / `severity` / `lane` — **as of 2026-09-26, base main `0a9ea5a` + PR #213** (AG-28 `browser.rs` 1098→354 LOC; all 26 command wrappers and signatures stay in place; 25 bodies are compile-time extracted; `proxy_http_request` is unchanged; total await count 33→33). Items tracked only in round docs are not counted here.
 
 | Category | Count |
 | -------- | ----- |
 | **Total tracked in backlog JSON** | 113 |
-| **Fixed** (`status: fixed`; many still need regression tests) | 94 |
-| **Open** (`status: open`) | 5 — AG-22, AG-24, AG-28, AG-31, AG-32 (architecture governance, severity Governance) |
+| **Fixed** (`status: fixed`; many still need regression tests) | 95 |
+| **Open** (`status: open`) | 4 — AG-22, AG-24, AG-31, AG-32 (architecture governance, severity Governance) |
 | **Partially fixed** (`status: partially fixed`) | 5 — R5-14, R5-15, R7-15, TOP-15-08, TOP-15-09 |
 | **Test gap only** (`status: test gap only`) | 9 — TOP-15-03/04/05/06/07/10/11/14/15 |
 | **Open P0 / Critical** (`status: open`) | 0 |
 | **Open High+** (`status: open`, severity P0/Critical/High) | 0 |
 | **Not fixed with P0/Critical/High severity** (partially fixed / test gap only) | 10 — all TOP-15 regression-suite items in lane H (TOP-15-04/05/06/07/08/09/10/11/14/15): P0 ×2, Critical ×5, High ×3 |
-| **Architecture governance lane (I)** | 33 — 28 fixed, 5 open |
+| **Architecture governance lane (I)** | 33 — 29 fixed, 4 open |
 | **Test infrastructure lane (H)** | 19 — 6 fixed, 4 partially fixed, 9 test gap only |
 
-Previous snapshot (before PR #212): Fixed 93, Total 113 — after #211 was merged to main; backlog had 93 fixed / 6 open / 5 partially fixed / 9 test gap only.
+Previous snapshot (before PR #213): Fixed 94, Total 113 — after #212 was merged to main; backlog had 94 fixed / 5 open / 5 partially fixed / 9 test gap only.
 
 ---
 
