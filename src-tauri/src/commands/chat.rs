@@ -1,3 +1,4 @@
+#[cfg(test)]
 use crate::browser::dom::PageState;
 use crate::commands::web::BrowserController;
 /**
@@ -6,6 +7,7 @@ use crate::commands::web::BrowserController;
  * Handles chat session management and message sending using SQLite
  */
 use crate::models::{SendMessageRequest, SendMessageResponse};
+#[cfg(test)]
 use crate::services::chat::browser_tool_service::{
     execute_browser_chat_tool_call, parse_browser_chat_tool_call, BrowserChatRuntime,
     BrowserToolTarget,
@@ -15,13 +17,12 @@ use crate::services::chat::session_service::{
     reset_token_estimate_service, save_message_to_db_service, send_message_service,
     start_session_service, update_session_cwd_service, update_session_title_service,
 };
-use crate::commands::legacy_execute_tool::{
-    build_legacy_tool_request, is_legacy_chat_only_tool, reject_legacy_execute_tool,
-    LEGACY_EXECUTE_TOOL_DISABLED_MSG,
-};
+#[cfg(test)]
+use crate::commands::legacy_execute_tool::{build_legacy_tool_request, reject_legacy_execute_tool};
 use crate::commands::tools::ToolRegistryState;
 use crate::tools::ToolExecutionSource;
-use crate::utils::{AppError, AppResult};
+use crate::utils::AppResult;
+#[cfg(test)]
 use async_trait::async_trait;
 use std::sync::Arc;
 use tauri::AppHandle;
