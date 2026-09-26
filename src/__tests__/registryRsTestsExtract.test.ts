@@ -1,14 +1,10 @@
 /**
- * AG-25 (step 1): source guards for the mechanical extract of the inline
- * `#[cfg(test)] mod tests { .. }` block at the end of
- * `src-tauri/src/tools/registry.rs` into the file module
- * `src-tauri/src/tools/registry/tests.rs`.
+ * AG-25 source guards: preserve the verbatim inline-test move and the
+ * order-preserving extraction of built-in registration blocks.
  *
- * registry.rs is security-sensitive (ToolMetadata flags feed execution policy
- * and concurrency) and still above the 800 LOC hard limit after this first
- * step (AG-25 stays open). These guards pin the test-module move, keep
- * tests.rs under the 500 LOC watch line, and assert the registry API and
- * builtin registration stay in registry.rs.
+ * ToolMetadata flags feed execution policy and concurrency, so family
+ * modules are pinned to their registration sequence and all relevant files
+ * stay below 500 LOC.
  */
 import fs from 'fs';
 import path from 'path';
@@ -22,6 +18,10 @@ const loc = (rel: string) => {
 
 const REGISTRY_RS = 'src-tauri/src/tools/registry.rs';
 const TESTS_RS = 'src-tauri/src/tools/registry/tests.rs';
+const BUILTIN_FS_RS = 'src-tauri/src/tools/registry/builtin_fs.rs';
+const BUILTIN_SEARCH_RS = 'src-tauri/src/tools/registry/builtin_search.rs';
+const BUILTIN_COMMAND_RS = 'src-tauri/src/tools/registry/builtin_command.rs';
+const BUILTIN_BOOTSTRAP_RS = 'src-tauri/src/tools/registry/builtin_bootstrap.rs';
 
 const TESTS = [
   'bootstrap_llm_tool_requires_provider_context',
@@ -33,10 +33,11 @@ const TESTS = [
   'test_barrier_tool_runtime_metadata_is_cancellable_and_concurrent',
 ];
 
-describe('AG-25 registry.rs test-module extract guards', () => {
-  it('registry.rs shrank below its 1304-line baseline and tests.rs is under 500 LOC', () => {
-    expect(loc(REGISTRY_RS)).toBeLessThan(1100);
-    expect(loc(TESTS_RS)).toBeLessThan(500);
+describe('AG-25 registry extraction guards', () => {
+  it('registry.rs, registration modules, and tests.rs are all under 500 LOC', () => {
+    for (const file of [REGISTRY_RS, BUILTIN_FS_RS, BUILTIN_SEARCH_RS, BUILTIN_COMMAND_RS, BUILTIN_BOOTSTRAP_RS, TESTS_RS]) {
+      expect(loc(file)).toBeLessThan(500);
+    }
   });
 
   it('registry.rs ends with the file-module declaration and has no test bodies', () => {
@@ -59,7 +60,7 @@ describe('AG-25 registry.rs test-module extract guards', () => {
     expect(names).toEqual(TESTS);
   });
 
-  it('the registry API, bootstrap registration and builtin registration stay in registry.rs', () => {
+  it('the registry API and registration orchestration stay in registry.rs', () => {
     const src = read(REGISTRY_RS);
     expect(src).toMatch(/^pub struct ToolRegistry \{/m);
     expect(src).toMatch(/^pub fn register_builtin_tools\(registry: &mut ToolRegistry\) \{/m);
@@ -68,5 +69,43 @@ describe('AG-25 registry.rs test-module extract guards', () => {
       expect(src).toMatch(new RegExp(`pub (async )?fn ${fn}\\(`));
     }
     expect(read(TESTS_RS)).not.toMatch(/fn register_builtin_tools\(/);
+  });
+
+  it('static family modules retain the original ToolMetadata registration order', () => {
+    const src = read(REGISTRY_RS);
+    const fsSource = read(BUILTIN_FS_RS);
+    const search = read(BUILTIN_SEARCH_RS);
+    const command = read(BUILTIN_COMMAND_RS);
+    const bootstrap = read(BUILTIN_BOOTSTRAP_RS);
+
+    for (const name of ['builtin_fs', 'builtin_search', 'builtin_command', 'builtin_bootstrap']) {
+      expect(src).toContain(`mod ${name};`);
+    }
+    expect(src).toMatch(
+      /builtin_fs::register_filesystem_tools\(registry\);\s*builtin_search::register_search_files\(registry\);\s*builtin_command::register_command_tools\(registry\);\s*builtin_search::register_glob_and_grep\(registry\);\s*builtin_bootstrap::register_bootstrap_tools\(registry\);\s*\/\/ --- test_barrier_tool/,
+    );
+
+    const registered = (source: string) =>
+      [...source.matchAll(/registry\.register\(\s*"([^"]+)"/g)].map((match) => match[1]);
+    expect(registered(fsSource)).toEqual([
+      'read_file', 'write_file', 'list_files', 'create_directory', 'path_exists',
+    ]);
+    expect(registered(search)).toEqual(['search_files', 'glob_search', 'grep_files']);
+    expect(registered(command)).toEqual([
+      'execute_command', 'ssh_exec', 'ssh_upload_file', 'ssh_read_file',
+    ]);
+    expect(command).toMatch(/^use super::super::handler_output_from_execute_code;$/m);
+    expect(
+      [...bootstrap.matchAll(/register_bootstrap_tool\(\s*registry,\s*"([^"]+)"/g)]
+        .map((match) => match[1]),
+    ).toEqual([
+      'pdf_read', 'paper_extract_meta', 'baseline_extract', 'arxiv_search',
+      'scaffold_generate', 'git_init_workdir', 'bootstrap_finalize',
+    ]);
+
+    expect(src.match(/\.await\b/g)).toHaveLength(1);
+    for (const source of [fsSource, search, command, bootstrap]) {
+      expect(source).not.toMatch(/\.await\b/);
+    }
   });
 });

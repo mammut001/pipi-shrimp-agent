@@ -681,7 +681,7 @@ LOC = live `wc -l` on `main` (`99113a6`, 2026-09-24), including inline Rust `#[c
 | AG-22 | `src-tauri/src/tools/execution_policy.rs` | **1901** | **Open — extra-careful (policy gate).** 1063 prod + 838 inline tests. Move tests → `execution_policy/tests.rs` (~1065), then pure data/classifier tables (`WRITE_TOOLS`/`WORKSPACE_BOUND_TOOLS`, `is_*_tool`, `command_uses_network`/`command_is_long_running`) → `classify.rs` (<800); SSH remote-path helpers later. No `evaluate_*`/`enforce_*`/approval-store edits | Yes | Yes |
 | AG-23 | `src-tauri/src/commands/code.rs` | **477** | **Fixed** — #203 moved tests to `code/tests.rs`; #210 extracted Python session, cwd/WSL, process-timeout and response helpers into static child modules (1071→477, <500). All 6 command wrappers and command-safety functions remain in `code.rs`; await count 3→3; 11 tests retained | Yes | Done — #210 |
 | AG-24 | `src/store/chat/chatToolExecution.ts` | **1348** | **Open — careful (permission gate).** Pure status mapping + trace emitters → `chatToolStatus.ts`/`chatToolTrace.ts`; then `executeAgentTool` / `executeConcurrentTools` whole-function moves (<800), `executeSerialTool` later (<500). Permission/preflight fns verbatim, same awaits | Yes | Yes |
-| AG-25 | `src-tauri/src/tools/registry.rs` | **1060** | **Open — careful (tool metadata feeds policy).** Step 1 ✅ #204: inline tests (L1059-1304) moved verbatim → `registry/tests.rs` (246) (1304→1060; production byte-identical, 7 tests before/after). Next: split `register_builtin_tools` (~700 LOC) into `builtin_fs.rs` / `builtin_search.rs` / `builtin_command.rs` called in the same order (<500); `ToolMetadata` literals byte-identical | Yes | Yes |
+| AG-25 | `src-tauri/src/tools/registry.rs` | **394** | **Fixed** — #204 moved the 7 inline tests to `registry/tests.rs`; #212 extracted the 12 built-in registration blocks and 7 bootstrap registration blocks verbatim into static `builtin_fs.rs` (197), `builtin_search.rs` (209), `builtin_command.rs` (174), and `builtin_bootstrap.rs` (129) modules (1060→394; every file <500). Registry API, `register_bootstrap_tool`, and `test_barrier_tool` stay in `registry.rs`; family call order, ToolMetadata/schema literals, and registration token strings are unchanged; production await count 1→1; all 7 tests retained (2026-09-26) | No | Done — #204 + #212 |
 | AG-26 | `src-tauri/src/tools/autoresearch_bootstrap/mod.rs` | **493** | **Fixed** — #208 extracted bootstrap data models + `IfEmptyThen` to `types.rs` and the two existing inline tests to `tests.rs` (697→493; `types.rs` 171, `tests.rs` 41; serde attributes/serialized field names, dispatch order and runtime logic unchanged; 18 awaits unchanged) (2026-09-25) | No | Done — #202 + #208 |
 | AG-27 | `src/pages/AutoResearch.tsx` | **339** | **Fixed** — #211 extracted the original AutoResearchView state/effects/handlers into static custom hook `autoResearch/useAutoResearchViewController.ts` (761→338; controller 458; both <500). Hook state stays owned by AutoResearchView; 47 hook calls and their order, effect timing, and async/await counts (5/5) are preserved by source guards | No | Done — #206 + #211 |
 | AG-28 | `src-tauri/src/commands/browser.rs` | **1098** | **Open — careful (`proxy_http_request`).** web.rs pattern: keep all 26 `#[tauri::command]` wrappers, move bodies to `browser/embedded_surface.rs` / `browser/window.rs`, `BrowserState` → `browser/state.rs` (<800 → <500); proxy verbatim only | Yes | Yes |
@@ -711,22 +711,22 @@ LOC = live `wc -l` on `main` (`99113a6`, 2026-09-24), including inline Rust `#[c
 
 ## Summary counts
 
-Recomputed from `docs/audit/remediation-backlog.json` by `status` / `severity` / `lane` — **as of 2026-09-26, base main `e1b9de6` + PR #211** (AG-27 `AutoResearch.tsx` 761→338; controller extracted into a 458-line custom hook with its 47-hook sequence and 5/5 async/await counts preserved). Items tracked only in round docs are not counted here.
+Recomputed from `docs/audit/remediation-backlog.json` by `status` / `severity` / `lane` — **as of 2026-09-26, base main `53340fc` + PR #212** (AG-25 `registry.rs` 1060→394 LOC; the 12 built-in registrations and 7 bootstrap registration blocks moved into four static modules under 500; policy metadata/schema literals and family registration order preserved; production await count 1→1). Items tracked only in round docs are not counted here.
 
 | Category | Count |
 | -------- | ----- |
 | **Total tracked in backlog JSON** | 113 |
-| **Fixed** (`status: fixed`; many still need regression tests) | 93 |
-| **Open** (`status: open`) | 6 — AG-22, AG-24–AG-25, AG-28, AG-31–AG-32 (architecture governance, severity Governance) |
+| **Fixed** (`status: fixed`; many still need regression tests) | 94 |
+| **Open** (`status: open`) | 5 — AG-22, AG-24, AG-28, AG-31, AG-32 (architecture governance, severity Governance) |
 | **Partially fixed** (`status: partially fixed`) | 5 — R5-14, R5-15, R7-15, TOP-15-08, TOP-15-09 |
 | **Test gap only** (`status: test gap only`) | 9 — TOP-15-03/04/05/06/07/10/11/14/15 |
 | **Open P0 / Critical** (`status: open`) | 0 |
 | **Open High+** (`status: open`, severity P0/Critical/High) | 0 |
 | **Not fixed with P0/Critical/High severity** (partially fixed / test gap only) | 10 — all TOP-15 regression-suite items in lane H (TOP-15-04/05/06/07/08/09/10/11/14/15): P0 ×2, Critical ×5, High ×3 |
-| **Architecture governance lane (I)** | 33 — 27 fixed, 6 open |
+| **Architecture governance lane (I)** | 33 — 28 fixed, 5 open |
 | **Test infrastructure lane (H)** | 19 — 6 fixed, 4 partially fixed, 9 test gap only |
 
-Previous snapshot (before PR #211): Fixed 92, Total 113 — after #210 was merged to main; backlog had 92 fixed / 7 open / 5 partially fixed / 9 test gap only.
+Previous snapshot (before PR #212): Fixed 93, Total 113 — after #211 was merged to main; backlog had 93 fixed / 6 open / 5 partially fixed / 9 test gap only.
 
 ---
 
