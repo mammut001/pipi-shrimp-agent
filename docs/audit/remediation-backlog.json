@@ -2222,8 +2222,8 @@
     "title": "Split tools/execution_policy.rs (tool execution policy gate)",
     "lane": "I. Architecture Governance",
     "severity": "Governance",
-    "status": "partially fixed",
-    "fixNote": "2026-09-26: #214 executed all three planned steps: inline tests -> execution_policy/tests.rs; WRITE_TOOLS/WORKSPACE_BOUND_TOOLS/APPROVAL_TTL + is_*_tool classifiers + command_uses_network/command_is_long_running -> execution_policy/classify.rs (is_destructive_mcp_tool re-exported at the same path); SSH remote-path helpers -> execution_policy/ssh_paths.rs. 1901 -> 856 LOC, still over 800. Remaining root is the evaluate_*/enforce_* decision functions and the APPROVALS store, so a further split needs a new plan.",
+    "status": "fixed",
+    "fixNote": "2026-09-26: #214 executed the three planned steps (tests.rs, classify.rs, ssh_paths.rs: 1901 -> 856). Step 4 (this change) moves only non-decision helpers verbatim: the approval-argument canonicalization (canonicalize_json_value and friends) and inject_work_dir_into_args/normalize_work_dir -> execution_policy/args.rs; ToolExecutionSource::as_str -> tools/mod.rs next to the enum. evaluate_*/enforce_*/preview_request_policy, mode_auto_approves_browser, the APPROVALS store and store_approval/consume_matching_approval stay in the root unchanged. 856 -> 796 LOC; 31/31 execution_policy tests pass.",
     "whyItMatters": "Over the >800 'requires refactor plan' limit (1901 LOC on main 99113a6, 2026-09-24). Target: under 800 first, then under 500. Central tool policy gate (approval store/TTL, workspace binding, command/SSH/CDP-script policy, preview + enforce entry points); every tool call and R3-06/R2-08/R2-12 depend on it.",
     "files": [
       "src-tauri/src/tools/execution_policy.rs"

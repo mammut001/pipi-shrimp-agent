@@ -35,6 +35,20 @@ pub enum ToolExecutionSource {
     Unknown,
 }
 
+impl ToolExecutionSource {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ToolExecutionSource::AssistantToolCall => "assistant_tool_call",
+            ToolExecutionSource::UserRequestedCommand => "user_requested_command",
+            ToolExecutionSource::AutoresearchPhase => "autoresearch_phase",
+            ToolExecutionSource::HeadlessAgent => "headless_agent",
+            ToolExecutionSource::WorkflowAgent => "workflow_agent",
+            ToolExecutionSource::ManualTerminal => "manual_terminal",
+            ToolExecutionSource::Unknown => "unknown",
+        }
+    }
+}
+
 /// Tool call request extracted from API response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
