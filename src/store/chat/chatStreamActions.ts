@@ -305,7 +305,7 @@ export const createChatStopGenerationAction: (
         });
 
         if (flushed.content || flushed.reasoning) {
-          await get().updateLastMessage(flushed.content, undefined, flushed.reasoning, undefined, owningSessionId);
+          await get().updateLastMessage(flushed.content, undefined, flushed.reasoning, undefined, owningSessionId ?? undefined);
         }
 
         set({ pendingToolCalls: 0, pendingToolResults: [] });

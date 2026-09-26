@@ -501,7 +501,7 @@ export function SetupModalShell({
   modalRef,
   children,
 }: {
-  modalRef: RefObject<HTMLDivElement | null>;
+  modalRef: RefObject<HTMLDivElement>;
   children: ReactNode;
 }) {
   return (

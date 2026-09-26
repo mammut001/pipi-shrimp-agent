@@ -17,6 +17,9 @@ pub(crate) use classify::is_destructive_mcp_tool;
 mod ssh_paths;
 use ssh_paths::{require_remote_work_dir, validate_remote_path};
 
+mod args;
+use args::{canonicalize_json_value, inject_work_dir_into_args, normalize_work_dir};
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PolicyAction {
     Allow,
@@ -62,20 +65,6 @@ struct ToolExecutionPolicy {
     require_bound_workspace: bool,
     allow_write_tools: bool,
     allow_read_tools: bool,
-}
-
-impl ToolExecutionSource {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            ToolExecutionSource::AssistantToolCall => "assistant_tool_call",
-            ToolExecutionSource::UserRequestedCommand => "user_requested_command",
-            ToolExecutionSource::AutoresearchPhase => "autoresearch_phase",
-            ToolExecutionSource::HeadlessAgent => "headless_agent",
-            ToolExecutionSource::WorkflowAgent => "workflow_agent",
-            ToolExecutionSource::ManualTerminal => "manual_terminal",
-            ToolExecutionSource::Unknown => "unknown",
-        }
-    }
 }
 
 fn policy_for_source(source: ToolExecutionSource) -> ToolExecutionPolicy {
@@ -127,38 +116,6 @@ fn mode_auto_approves_browser(execution_mode: Option<&str>) -> bool {
             value.eq_ignore_ascii_case("bypass") || value.eq_ignore_ascii_case("agent")
         })
         .unwrap_or(false)
-}
-
-fn canonicalize_approval_arguments(arguments: &str) -> String {
-    let Ok(value) = serde_json::from_str::<serde_json::Value>(arguments) else {
-        return arguments.to_string();
-    };
-    canonicalize_json_value(&value).to_string()
-}
-
-fn canonicalize_json_value(value: &serde_json::Value) -> serde_json::Value {
-    match value {
-        serde_json::Value::Object(map) => {
-            let mut keys: Vec<&String> = map.keys().collect();
-            keys.sort();
-            let mut out = serde_json::Map::new();
-            for key in keys {
-                if key == "executionId" || key == "execution_id" {
-                    continue;
-                }
-                out.insert(key.clone(), canonicalize_json_value(&map[key]));
-            }
-            serde_json::Value::Object(out)
-        }
-        serde_json::Value::Array(items) => {
-            serde_json::Value::Array(items.iter().map(canonicalize_json_value).collect())
-        }
-        other => other.clone(),
-    }
-}
-
-fn approval_arguments_match(stored: &str, incoming: &str) -> bool {
-    canonicalize_approval_arguments(stored) == canonicalize_approval_arguments(incoming)
 }
 
 /// Outcome of attempting to consume a one-shot approval token.
@@ -662,23 +619,6 @@ fn evaluate_ssh_read_policy(
         ToolExecutionSource::Unknown => reject("Unknown execution source cannot read over SSH."),
         _ => allow(None),
     })
-}
-
-fn inject_work_dir_into_args(req: &ToolCallRequest, args: &mut serde_json::Value) {
-    if let Some(object) = args.as_object_mut() {
-        if let Some(work_dir) = req.work_dir.as_ref().map(|v| v.trim()).filter(|v| !v.is_empty()) {
-            object
-                .entry("work_dir".to_string())
-                .or_insert_with(|| serde_json::Value::String(work_dir.to_string()));
-        }
-    }
-}
-
-fn normalize_work_dir(work_dir: &Option<String>) -> Option<String> {
-    work_dir
-        .as_ref()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
 }
 
 pub fn preview_request_policy(

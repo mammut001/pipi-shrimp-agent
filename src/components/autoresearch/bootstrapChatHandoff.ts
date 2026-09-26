@@ -133,7 +133,7 @@ export async function performBootstrapHandoff(
     }).setPrimaryMetric?.(result.plan.primaryMetric);
 
     if (shouldAutoOpenAutoResearchTerminal({
-      selection: windowsShellProfile,
+      selection: windowsShellProfile === 'powershell' || windowsShellProfile === 'wsl' ? windowsShellProfile : 'auto',
       mode: started.resolvedConfig.mode,
       workDir: started.resolvedConfig.remoteWorkDir,
     })) {

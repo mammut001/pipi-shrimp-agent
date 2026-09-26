@@ -20,8 +20,8 @@ use paper_tools::{
 };
 use scaffold_template::{normalize_scaffold_vars, render_known_scaffold_template};
 use types::{
-    AutoResearchBootstrapResult, BaselineMethod, BootstrapPlan, ExtractedBaseline, IfEmptyThen,
-    PaperReference, RenderedScaffoldFile, ReportedMetric, Reproducibility, ScaffoldFile,
+    AutoResearchBootstrapResult, BootstrapPlan, ExtractedBaseline, IfEmptyThen, PaperReference,
+    RenderedScaffoldFile, ScaffoldFile,
     ScaffoldPlan, ScaffoldRenderResult, TemplateDefinition, TemplateFileSource,
 };
 

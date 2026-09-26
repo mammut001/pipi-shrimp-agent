@@ -2,7 +2,7 @@ use super::*;
 use crate::browser::actions;
 use crate::browser::actions::common::BrowserActionError;
 use crate::browser::actions::test_support::{
-    load_page_state_fixture, CheckoutFlowServer, FixtureActionHarness, LiveActionHarness,
+    FixtureActionHarness, LiveActionHarness,
 };
 use crate::browser::actions::ElementReference;
 use crate::browser::dom::InteractiveElement;

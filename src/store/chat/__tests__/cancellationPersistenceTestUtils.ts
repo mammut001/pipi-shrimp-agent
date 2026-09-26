@@ -161,7 +161,7 @@ export function makeChatState(
     pendingToolCalls: 0,
     pendingToolResults: [],
     streamingSessionId: null,
-  } as ChatState;
+  } as unknown as ChatState;
 }
 
 export function bindState(initial: ChatState) {
