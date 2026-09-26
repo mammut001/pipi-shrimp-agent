@@ -16,6 +16,7 @@ export type ProviderName =
   | 'minimax'
   | 'gemini'
   | 'deepseek'
+  | 'commandcode'
   | 'anthropic-compatible'
   | 'openai-compatible';
 
@@ -289,6 +290,26 @@ const deepseekProvider: ProviderDef = {
   },
 };
 
+const commandcodeProvider: ProviderDef = {
+  id: 'commandcode',
+  label: 'Command Code',
+  defaultBaseUrl: 'https://api.commandcode.ai/provider/v1',
+  defaultApiFormat: 'openai',
+  requiresApiKey: true,
+  supportsModelFetch: true,
+  supportsCustomModel: true,
+  modelsEndpointStyle: 'openai',
+  showBaseUrl: true,
+  requiresBaseUrl: true,
+  baseUrlPlaceholder: 'https://api.commandcode.ai/provider/v1',
+  baseUrlHelp: 'Command Code Provider API — routes to DeepSeek/Kimi/GLM/Qwen/GPT etc. via OpenAI-compatible /chat/completions. Anthropic models on Command Code use Bearer auth on /messages, which this OpenAI-format route does not send — not supported yet.',
+  // No fabricated model IDs: Command Code hosts a large, changing catalog.
+  // Use "fetch models" (hits the public /provider/v1/models endpoint) or
+  // type a custom model ID (e.g. "deepseek/deepseek-v4-flash").
+  defaultModels: [],
+  defaultPricing: {},
+};
+
 const anthropicCompatibleProvider: ProviderDef = {
   id: 'anthropic-compatible',
   label: 'Anthropic Compatible',
@@ -332,6 +353,7 @@ export const PROVIDER_REGISTRY: Record<ProviderName, ProviderDef> = {
   minimax: minimaxProvider,
   gemini: geminiProvider,
   deepseek: deepseekProvider,
+  commandcode: commandcodeProvider,
   'anthropic-compatible': anthropicCompatibleProvider,
   'openai-compatible': openaiCompatibleProvider,
 };

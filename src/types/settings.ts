@@ -24,7 +24,7 @@ export interface ModelPricing {
   cacheWritePrice?: number;   // $/1M tokens（缓存写入，Anthropic 特有）
   maxTokens?: number;         // 模型单次输出上限
   contextWindow: number;       // 模型上下文窗口大小（tokens）
-  provider: 'anthropic' | 'openai' | 'minimax' | 'gemini' | 'deepseek' | 'other';
+  provider: 'anthropic' | 'openai' | 'minimax' | 'gemini' | 'deepseek' | 'commandcode' | 'other';
 }
 
 /** API configuration interface */

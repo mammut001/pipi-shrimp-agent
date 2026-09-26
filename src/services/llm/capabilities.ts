@@ -107,6 +107,17 @@ const PROVIDER_CAPABILITIES: Record<ProviderCapabilityId, ProviderCapability> = 
     maxContextTokens: 128_000,
     recommendedFor: ['reflection', 'agent', 'chat'],
   },
+  commandcode: {
+    id: 'commandcode',
+    displayName: 'Command Code',
+    streaming: true,
+    toolCalls: 'openai',
+    jsonMode: false,
+    jsonSchema: false,
+    vision: false,
+    maxContextTokens: 128_000,
+    recommendedFor: ['agent', 'chat'],
+  },
   'anthropic-compatible': {
     id: 'anthropic-compatible',
     displayName: 'Anthropic Compatible',
