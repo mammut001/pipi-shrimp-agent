@@ -10,12 +10,12 @@
 | --- | ---- | -------- | ------------ |
 | T-01 | Chat | 流式中 `selectSession`：内容不串会话、选中会话 chrome 清空；后台 turn 继续写 owning session（不在切换时 cancel）✅ Fixed 2026-09-17 | R1-01, R1-02 |
 | T-02 | Shell | `browserDockMode=split` 时 ChatInput 可见性或明确 UX ✅ Fixed 2026-09-17 | R1-03 |
-| T-03 | Core | `QueryEngine` tool_batch 无 resolve → timeout/reject | R4-03 |
-| T-04 | AutoResearch | `chatAdapter` AbortSignal 传到 `runHeadlessAgentTurn` | R5-01 |
-| T-05 | AutoResearch | `deleteRun` + in-flight loop 停止 | R5-05 |
-| T-06 | Workflow | `createRunDirectory` reject → run 不继续 | R6-01 |
-| T-07 | Security | `pathValidation.ts` sibling-prefix | R7-01 |
-| T-08 | Security | `ChatMessage` / `MarkdownDocumentPreview` XSS 向量 | R7-07, R7-08 |
+| T-03 | Core | `QueryEngine` tool_batch 无 resolve → timeout/reject ✅ 已覆盖 2026-09-26（`src/core/__tests__/QueryEngine.test.ts`） | R4-03 |
+| T-04 | AutoResearch | `chatAdapter` AbortSignal 传到 `runHeadlessAgentTurn` ✅ 已覆盖 2026-09-26（`src/services/autoresearch/__tests__/chatAdapter.test.ts`） | R5-01 |
+| T-05 | AutoResearch | `deleteRun` + in-flight loop 停止 ✅ 已覆盖 2026-09-26（`src/store/__tests__/autoresearchStore.test.ts`） | R5-05 |
+| T-06 | Workflow | `createRunDirectory` reject → run 不继续 ✅ 已覆盖 2026-09-26（`src/services/workflowEngine/__tests__/engine.test.ts`） | R6-01 |
+| T-07 | Security | `pathValidation.ts` sibling-prefix ✅ 已覆盖 2026-09-26（`src/services/tools/__tests__/pathValidation.test.ts`） | R7-01 |
+| T-08 | Security | `ChatMessage` / `MarkdownDocumentPreview` XSS 向量 ✅ 已覆盖 2026-09-26（`src/utils/__tests__/markdownSafety.test.tsx`） | R7-07, R7-08 |
 
 ---
 
@@ -23,16 +23,16 @@
 
 | # | 模块 | 测试描述 | 关联 |
 | --- | ---- | -------- | ---- |
-| T-09 | App | bootstrap 顺序、lazy route、init 失败 UI | R10-01, R9-06 |
-| T-10 | Shell | `ChatBrowserWorkspaceShell` permission 队列 FIFO | R10-02 |
-| T-11 | Shell | questionnaire `activeQuestionnaireSessionId` 过滤 | R1-15 |
-| T-12 | Store | `listenerGuard` 乱序 unmount | R4-01 |
-| T-13 | Store | `StreamingToolExecutor` requiresConfirmation 路径 | R4-07 |
-| T-14 | Workflow | `engine.stop()` 后 `getIsRunning()` 与 restart | R4-02, R6-02 |
+| T-09 | App | bootstrap 顺序、lazy route、init 失败 UI ✅ 已覆盖 2026-09-26（`src/__tests__/App.bootstrap-routing.test.tsx`） | R10-01, R9-06 |
+| T-10 | Shell | `ChatBrowserWorkspaceShell` permission 队列 FIFO ✅ 已覆盖 2026-09-26（`src/components/__tests__/ChatBrowserWorkspaceShell.splitChatInput.test.tsx`） | R10-02 |
+| T-11 | Shell | questionnaire `activeQuestionnaireSessionId` 过滤 ✅ 已覆盖 2026-09-26（`src/components/__tests__/ChatBrowserWorkspaceShell.splitChatInput.test.tsx`） | R1-15 |
+| T-12 | Store | `listenerGuard` 乱序 unmount ✅ 已覆盖 2026-09-26（`src/store/__tests__/listenerGuard.test.ts`） | R4-01 |
+| T-13 | Store | `StreamingToolExecutor` requiresConfirmation 路径 ✅ 已覆盖 2026-09-26（`src/services/__tests__/StreamingToolExecutor.test.ts`） | R4-07 |
+| T-14 | Workflow | `engine.stop()` 后 `getIsRunning()` 与 restart ✅ 已覆盖 2026-09-26（`src/services/workflowEngine/__tests__/engine.test.ts`） | R4-02, R6-02 |
 | T-15 | Telegram | `telegramService` invoke 与 `lib.rs` 注册表 parity ✅ Fixed 2026-09-17 | R7-12, R9-01, R10-05 |
 | T-16 | Telegram | `allowedChats` 在 commandRouter 执行 ✅ Fixed 2026-09-24（chatAuthorization 拒绝未列入的 chat；commandRouter 在分发前拒绝未授权聊天） | R7-11 |
-| T-17 | Browser | `stopTask` 停止 CDP loop | R3-05 |
-| T-18 | Rust | legacy `execute_tool` 与 batch 策略一致 | R2-01 |
+| T-17 | Browser | `stopTask` 停止 CDP loop ✅ 已覆盖 2026-09-26（`src/store/browser/__tests__/browserTaskStop.test.ts`） | R3-05 |
+| T-18 | Rust | legacy `execute_tool` 与 batch 策略一致 ✅ 已覆盖 2026-09-26（`src-tauri/src/commands/legacy_execute_tool.rs`） | R2-01 |
 
 ---
 
@@ -40,7 +40,7 @@
 
 | # | 模块 | 测试描述 | 关联 |
 | --- | ---- | -------- | ---- |
-| T-19 | Hook | `useChatMessageScroll` debounce + unmount | R1-11, R10-13 |
+| T-19 | Hook | `useChatMessageScroll` debounce + unmount ✅ 已覆盖 2026-09-26（`src/hooks/__tests__/useChatMessageScroll.test.tsx`） | R1-11, R10-13 |
 | T-20 | Hook | `useResponsiveLayout` 断点 | R9-08, R10-12 |
 | T-21 | UI | `ScrollToBottomButton` visible when scrolled up | 近期功能 |
 | T-22 | UI | `TerminalPanel` shell profile + error banner | R8-13 |
@@ -61,7 +61,7 @@
 | T-30 | streamAdapter | listen/invoke mock 全套 | R4-29 |
 | T-31 | artifactDetector | workDir undefined + Windows paths | R7-03, R7-04 |
 | T-32 | i18n | Settings 按钮用 `settings.fetchModels` | R8-01 |
-| T-33 | CI | 修复 24 个失败 suite 并加 regression | 00-baseline |
+| T-33 | CI | 修复 24 个失败 suite 并加 regression ✅ 2026-09-26：jest 356/356 suites 全绿 | 00-baseline |
 
 ---
 
