@@ -13,12 +13,12 @@
 import { lazy, Suspense, useState, useEffect, useCallback } from 'react';
 import { useSettingsStore, useUIStore } from '@/store';
 import type { ApiConfig } from '@/types/settings';
-import { DEFAULT_MODEL_PRICING } from '@/types/settings';
 import { resolveAgentConfig, validateApiKeyForConnection } from '@/services/agentConfig';
 import { testResolvedChatConnection } from '@/services/resolvedChatRequest';
 import { formatError } from '@/utils/errorFormat';
 import {
   isApiKeyRequired,
+  resolvePricing,
   validateProviderFields,
   validateFetchModelsPrereqs,
   type ProviderName,
@@ -213,7 +213,7 @@ export function Settings() {
 
   /** Use default pricing for the current model */
   const useDefaultPricing = () => {
-    const defaultPricing = DEFAULT_MODEL_PRICING[formData.model];
+    const defaultPricing = resolvePricing(formData.model, formData.provider);
     if (defaultPricing) {
       setFormData((prev) => ({
         ...prev,

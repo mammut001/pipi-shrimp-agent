@@ -17,6 +17,7 @@ mod database;
 mod errors;
 mod mcp;
 mod models;
+mod pricing;
 mod providers;
 mod services;
 mod tools;
@@ -211,6 +212,8 @@ pub fn run() {
             commands::claude_sdk::stop_subprocess,
             commands::claude_sdk::test_connection,
             commands::fetch_available_models,
+            commands::get_model_pricing_table,
+            commands::refresh_model_pricing,
             // Database commands
             commands::database_bridge::db_save_session,
             commands::database_bridge::db_get_diagnostics,

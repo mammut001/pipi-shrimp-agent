@@ -1,12 +1,13 @@
 import type { Dispatch, SetStateAction } from 'react';
 import type { ApiConfig, AutoResearchLlmSettings, ModelEntry, ModelPricing } from '@/types/settings';
-import { DEFAULT_MODEL_PRICING } from '@/types/settings';
 import { AutoResearchLlmSettingsSection } from '@/components/settings/AutoResearchLlmSettings';
+import { ModelPricingSource } from '@/components/settings/ModelPricingSource';
 import {
   canFetchModels,
   getProvider,
   getProviderNames,
   isApiKeyRequired,
+  resolvePricing,
   supportsCustomModel,
 } from '@/shared/providers';
 import { formatCost } from '@/utils/pricing';
@@ -98,6 +99,7 @@ export function ApiConfigurationSettings({
     handleSaveConfig,
   },
 }: ApiConfigurationSettingsProps) {
+  const defaultPricing = resolvePricing(formData.model, formData.provider);
   return (
     <>
           {/* ====== API Configurations Section ====== */}
@@ -352,7 +354,7 @@ export function ApiConfigurationSettings({
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center gap-2">
                     <span className="text-sm font-medium text-green-800">{t('settings.modelPricing')}</span>
-                    {DEFAULT_MODEL_PRICING[formData.model] && (
+                    {defaultPricing && (
                       <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">
                         {t('settings.defaultAvailable')}
                       </span>
@@ -379,6 +381,8 @@ export function ApiConfigurationSettings({
                   </div>
                 )}
 
+                <ModelPricingSource />
+
                 {/* Pricing configuration */}
                 {showPricingSection && (
                   <div className="space-y-3">
@@ -396,9 +400,9 @@ export function ApiConfigurationSettings({
                           type="number"
                           step="0.001"
                           min="0"
-                          value={formData.pricing.inputPrice ?? DEFAULT_MODEL_PRICING[formData.model]?.inputPrice ?? ''}
+                          value={formData.pricing.inputPrice ?? defaultPricing?.inputPrice ?? ''}
                           onChange={(e) => handlePricingChange('inputPrice', e.target.value)}
-                          placeholder={String(DEFAULT_MODEL_PRICING[formData.model]?.inputPrice ?? '0')}
+                          placeholder={String(defaultPricing?.inputPrice ?? '0')}
                           className="w-full px-2 py-1.5 text-xs border border-green-300 rounded focus:ring-1 focus:ring-green-500 focus:border-green-500"
                         />
                       </div>
@@ -410,9 +414,9 @@ export function ApiConfigurationSettings({
                           type="number"
                           step="0.001"
                           min="0"
-                          value={formData.pricing.outputPrice ?? DEFAULT_MODEL_PRICING[formData.model]?.outputPrice ?? ''}
+                          value={formData.pricing.outputPrice ?? defaultPricing?.outputPrice ?? ''}
                           onChange={(e) => handlePricingChange('outputPrice', e.target.value)}
-                          placeholder={String(DEFAULT_MODEL_PRICING[formData.model]?.outputPrice ?? '0')}
+                          placeholder={String(defaultPricing?.outputPrice ?? '0')}
                           className="w-full px-2 py-1.5 text-xs border border-green-300 rounded focus:ring-1 focus:ring-green-500 focus:border-green-500"
                         />
                       </div>
@@ -423,7 +427,7 @@ export function ApiConfigurationSettings({
                       <button
                         type="button"
                         onClick={useDefaultPricing}
-                        disabled={!DEFAULT_MODEL_PRICING[formData.model]}
+                        disabled={!defaultPricing}
                         className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded hover:bg-green-200 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         {t('settings.useDefault')}

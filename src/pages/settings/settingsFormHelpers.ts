@@ -1,5 +1,4 @@
 import type { ApiConfig, ModelPricing, ModelEntry } from '@/types/settings';
-import { DEFAULT_MODEL_PRICING } from '@/types/settings';
 import { resolveDraftApiKeyValue } from '@/services/agentConfig';
 import { formatError } from '@/utils/errorFormat';
 import {
@@ -8,6 +7,7 @@ import {
   getProviderDefaultModelIds,
   getProviderDefaultBaseUrl,
   getProviderDefaultApiFormat,
+  resolvePricing,
   validateProviderFields,
 } from '@/shared/providers';
 import type { ProviderName } from '@/shared/providers';
@@ -126,7 +126,7 @@ export function getSettingsPricingDisplay(formData: SettingsFormData): {
   outputPrice: number;
   isCustom: boolean;
 } {
-  const defaultPricing = DEFAULT_MODEL_PRICING[formData.model];
+  const defaultPricing = resolvePricing(formData.model, formData.provider);
   const hasCustomPricing = Object.keys(formData.pricing).length > 0;
 
   if (hasCustomPricing) {

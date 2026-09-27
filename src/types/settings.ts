@@ -9,6 +9,7 @@ import {
   getProviderDefaultModelId,
   getProviderNames,
   type ProviderName,
+  type RemotePricingMeta,
 } from '@/shared/providers';
 import type { VisionSettings } from './vision';
 import { DEFAULT_VISION_SETTINGS } from './vision';
@@ -116,6 +117,8 @@ export interface SettingsState {
   autoResearchLlmSettings: AutoResearchLlmSettings;
   visionSettings: VisionSettings;
   windowsShellProfile: WindowsShellProfile;
+  /** OpenRouter price table metadata (null until the backend table loads) */
+  pricingTableMeta: RemotePricingMeta | null;
 
   // ========== Action Methods ==========
 

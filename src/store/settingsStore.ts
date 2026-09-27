@@ -90,6 +90,7 @@ export const useSettingsStore = create<SettingsState>((set, get) => ({
   autoResearchLlmSettings: DEFAULT_AUTORESEARCH_LLM_SETTINGS,
   visionSettings: DEFAULT_VISION_SETTINGS_STATE,
   windowsShellProfile: DEFAULT_WINDOWS_SHELL_PROFILE,
+  pricingTableMeta: null,
 
   // ========== Imported Files Methods ==========
 
