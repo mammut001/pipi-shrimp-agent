@@ -90,6 +90,15 @@ jest.mock('../../../services/prompt/promptBuilder', () => ({
   buildPrompt: (...args: unknown[]) => mockBuildPrompt(...args),
 }));
 
+const mockRunQueryEngineTurn = jest.fn<(...args: unknown[]) => AsyncGenerator<unknown>>();
+jest.mock('../../../core/runtime/queryLoop', () => {
+  const actual = jest.requireActual('../../../core/runtime/queryLoop') as Record<string, unknown>;
+  return {
+    ...actual,
+    runQueryEngineTurn: (...args: unknown[]) => mockRunQueryEngineTurn(...args),
+  };
+});
+
 jest.mock('../../../core/QueryEngine', () => ({
   runChatTurn: (...args: unknown[]) => mockRunChatTurn(...args),
 }));
@@ -435,6 +444,33 @@ describe('chatStore sendMessage integration', () => {
     }));
   });
 
+  it('completes and persists a turn driven through the real SessionRuntime', async () => {
+    // Production runChatTurn goes through SessionRuntime.runTurn, which tags
+    // chunks with a turnId and clears the active turn when the stream ends.
+    const { getSessionHandle } = jest.requireActual(
+      '../../../core/runtime/SessionRuntime',
+    ) as typeof import('../../../core/runtime/SessionRuntime');
+    mockRunQueryEngineTurn.mockImplementation(() => streamOneAssistantReply());
+    mockRunChatTurn.mockImplementation((...args: unknown[]) => {
+      const [sessionId, initialMessages, systemPrompt] = args as [string, unknown[], string];
+      return getSessionHandle(sessionId).runTurn({ initialMessages, systemPrompt });
+    });
+
+    await useChatStore.getState().sendMessage('hello world');
+
+    const state = useChatStore.getState();
+    const session = state.sessions.find((candidate) => candidate.id === 'session-1');
+    expect(session?.messages.map((message) => [message.role, message.content])).toEqual([
+      ['user', 'hello world'],
+      ['assistant', 'Hello from model'],
+    ]);
+    expect(state.isStreaming).toBe(false);
+    expect(mockInvoke).toHaveBeenCalledWith('db_save_message', expect.objectContaining({
+      message: expect.objectContaining({ role: 'assistant', content: 'Hello from model' }),
+    }));
+    expect(mockInvoke).toHaveBeenCalledWith('db_save_token_usage', expect.anything());
+  });
+
   it('clears a stale error banner when a new turn succeeds', async () => {
     useChatStore.setState({ error: 'Every tool call in the last round was rejected by the safety policy.' });
 
@@ -446,6 +482,23 @@ describe('chatStore sendMessage integration', () => {
       ['user', 'hello again'],
       ['assistant', 'Hello from model'],
     ]);
+  });
+
+  it('leaves the composer idle once a tool-using turn completes', async () => {
+    resetChatState({ executionMode: 'agent', permissionMode: 'auto-edits' });
+    mockRunChatTurn.mockImplementation(() => streamWithToolBatch());
+
+    await useChatStore.getState().sendMessage('generate artifact');
+
+    const state = useChatStore.getState();
+    expect(state.isStreaming).toBe(false);
+    expect(state.pendingToolCalls).toBe(0);
+    expect(state.pendingToolResults).toEqual([]);
+    expect(shouldShowStopControl({
+      isStreaming: state.isStreaming,
+      pendingToolCalls: state.pendingToolCalls,
+      pendingToolResultsLength: state.pendingToolResults.length,
+    })).toBe(false);
   });
 
   it('routes tool batch execution through the extracted coordinator and artifact detector', async () => {

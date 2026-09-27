@@ -29,6 +29,7 @@ import {
 } from '@/services/executionMode';
 import { useCdpStore } from '@/store/cdpStore';
 import {
+  clearSessionToolResults,
   clearSessionToolRuntime,
   syncSessionToolRuntimeToCurrentSession,
 } from './toolRuntimeState';
@@ -436,7 +437,14 @@ export function createSendMessageActionMethod(
           }
         }
 
-        if (activeTurnId && !getSessionHandle(activeSessionId).isTurnActive(activeTurnId)) {
+        // SessionRuntime.runTurn clears its active turn when the stream ends, so
+        // after a turn_complete the turn is never "active" here; only an explicit
+        // Stop (the cancel marker below) cancels a completed turn.
+        if (
+          !sawTurnComplete
+          && activeTurnId
+          && !getSessionHandle(activeSessionId).isTurnActive(activeTurnId)
+        ) {
           throw new ChatGenerationCancelledError(activeSessionId);
         }
         if (consumeChatGenerationCancel(activeSessionId)) {
@@ -560,6 +568,7 @@ export function createSendMessageActionMethod(
         // Background session A completing while B is selected must not flip B chrome.
         if (getChatSessionTurnEpoch(activeSessionId) === turnEpoch) {
           clearStreamingBuffer(activeSessionId);
+          clearSessionToolResults(activeSessionId, set, get);
           clearStreamChromeIfSelected(set, get, activeSessionId);
           if (ownsSelectedStreamChrome(activeSessionId, get().currentSessionId)) {
             useUIStore.getState().setActiveSkill(null);
