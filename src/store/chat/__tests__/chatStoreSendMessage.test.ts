@@ -471,6 +471,29 @@ describe('chatStore sendMessage integration', () => {
     expect(mockInvoke).toHaveBeenCalledWith('db_save_token_usage', expect.anything());
   });
 
+  it('titles a new chat after its first message, once', async () => {
+    resetChatState({ title: 'Chat 3' });
+
+    await useChatStore.getState().sendMessage('帮我整理一下 README');
+    await useChatStore.getState().sendMessage('再改短一点');
+
+    const session = useChatStore.getState().sessions.find((candidate) => candidate.id === 'session-1');
+    expect(session?.title).toBe('帮我整理一下 README');
+    const titleUpdates = mockInvoke.mock.calls.filter(([command]) => command === 'update_session_title');
+    expect(titleUpdates).toEqual([
+      ['update_session_title', { sessionId: 'session-1', title: '帮我整理一下 README' }],
+    ]);
+  });
+
+  it('keeps a title the user chose', async () => {
+    resetChatState({ title: 'My release notes' });
+
+    await useChatStore.getState().sendMessage('draft the changelog');
+
+    expect(useChatStore.getState().sessions[0]?.title).toBe('My release notes');
+    expect(mockInvoke).not.toHaveBeenCalledWith('update_session_title', expect.anything());
+  });
+
   it('clears a stale error banner when a new turn succeeds', async () => {
     useChatStore.setState({ error: 'Every tool call in the last round was rejected by the safety policy.' });
 
@@ -580,7 +603,7 @@ describe('chatStore sendMessage integration', () => {
       planMarkdown: expect.stringContaining('## Execution Plan: Ship Plan Mode'),
       sessionId: 'session-1',
     });
-    expect(mockAddNotification).toHaveBeenCalledWith('success', 'Plan saved to Docs: 021-plan.md', 'session-1');
+    expect(mockAddNotification).toHaveBeenCalledWith('success', 'runtime.planSaved', 'session-1');
   });
 
   it('wires tool runtime events into chat task state during init', async () => {
@@ -907,7 +930,7 @@ describe('chatStore sendMessage integration', () => {
     // The user is told the plan was generated but could not be saved.
     expect(mockAddNotification).toHaveBeenCalledWith(
       'warning',
-      expect.stringMatching(/no working directory was available/i),
+      'runtime.planNoOutputFolder',
       'session-1',
     );
   });

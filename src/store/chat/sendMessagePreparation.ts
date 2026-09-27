@@ -18,6 +18,7 @@ import { getSessionProjectDir as resolveSessionProjectDir, resolveRealSessionPip
 import { t } from '@/i18n';
 import { useSessionGoalStore } from '@/store/sessionGoalStore';
 import type { ChatActionFactoryDeps } from './chatActions';
+import { deriveSessionTitle, isDefaultSessionTitle } from '@/utils/sessionTitle';
 
 type SendMessagePreparationInput = {
   content: string;
@@ -81,6 +82,17 @@ export async function prepareSendMessageContext(
 
   const userMessage = createMessage('user', content, undefined, options?.attachments);
   await addMessage(userMessage);
+
+  const session = get().sessions.find((candidate) => candidate.id === activeSessionId);
+  const userTurns = session?.messages.filter((message) => message.role === 'user').length ?? 0;
+  if (session && userTurns === 1 && isDefaultSessionTitle(session.title)) {
+    const title = deriveSessionTitle(content);
+    if (title) {
+      void get().renameSession(activeSessionId, title).catch((error: unknown) => {
+        console.warn('Failed to auto-title session:', error);
+      });
+    }
+  }
 
   const activeGoal = useSessionGoalStore.getState().getGoalForSession(activeSessionId);
   if (activeGoal && activeGoal.status !== 'paused' && activeGoal.status !== 'completed' && !options?.goalLoopContinuation) {

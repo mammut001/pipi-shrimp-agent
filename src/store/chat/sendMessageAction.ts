@@ -615,17 +615,13 @@ export function createSendMessageActionMethod(
                   sessionId: activeSessionId,
                 });
 
-                uiStore.addNotification('success', `Plan saved to Docs: ${savedDoc.filename}`, activeSessionId);
+                uiStore.addNotification('success', t('runtime.planSaved', { filename: savedDoc.filename }), activeSessionId);
               } else {
-                uiStore.addNotification(
-                  'warning',
-                  'Plan generated, but no working directory was available to save it to Docs.',
-                  activeSessionId,
-                );
+                uiStore.addNotification('warning', t('runtime.planNoOutputFolder'), activeSessionId);
               }
             } catch (planSaveError) {
               console.warn('[PlanMode] Failed to save plan document:', planSaveError);
-              uiStore.addNotification('warning', 'Plan generated, but failed to save it to Docs.', activeSessionId);
+              uiStore.addNotification('warning', t('runtime.planSaveFailed'), activeSessionId);
             }
           }
         }

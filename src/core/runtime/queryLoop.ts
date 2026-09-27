@@ -37,6 +37,7 @@ import {
 import { prepareMessagesForVision } from '@/services/vision/visionMessagePrep';
 import { DEFAULT_AGENT_SETTINGS } from '@/types/settings';
 import { toError } from '@/utils/errorFormat';
+import { t } from '@/i18n';
 import type { ToolResultChannel, ToolExecutionResult } from './ToolResultChannel';
 
 const OPENAI_TOOL_CALL_PROTOCOL_ADDENDUM = `## Tool Calling Protocol
@@ -53,9 +54,10 @@ const MALFORMED_TOOL_CALL_RETRY_NOTES = [
 const DISALLOWED_TOOL_RETRY_NOTES_PREFIX = 'Your previous tool calls were rejected because they are outside the allowed tool lane for this turn.';
 
 function buildMalformedToolCallRetryMessage(attempt: number): string {
-  return attempt === 1
-    ? 'Model emitted text-form tool calls. Retrying with a structured tool-calling reminder.'
-    : 'Model repeated text-form tool calls. Retrying with a stricter structured tool-calling reminder.';
+  return t('runtime.malformedToolCallRetry', {
+    attempt,
+    max: MALFORMED_TOOL_CALL_RETRY_NOTES.length,
+  });
 }
 
 function buildAllowedToolsRetryMessage(allowedTools: string[]): string {
@@ -125,13 +127,10 @@ function isMalformedToolCallError(error: unknown): boolean {
 
 export function buildExhaustedMalformedToolCallError(error: unknown): Error {
   const detail = toError(error, 'Chat request failed').message;
-  return new Error(
-    'The model kept emitting text-form or XML tool calls instead of structured tool_calls '
-    + `after ${MALFORMED_TOOL_CALL_RETRY_NOTES.length} automatic retries. `
-    + 'This turn stopped with an explicit reason (not a silent interrupt). '
-    + 'Try a different model/provider that supports structured tools, or rephrase the request. '
-    + `Detail: ${detail}`,
-  );
+  return new Error(t('runtime.malformedToolCallExhausted', {
+    retries: MALFORMED_TOOL_CALL_RETRY_NOTES.length,
+    detail,
+  }));
 }
 
 /**
@@ -331,7 +330,7 @@ export async function* runQueryEngineTurn(
       if (modelRound >= maxModelRounds) {
         yield {
           type: 'error',
-          error: `The agent exceeded its reasoning/tool loop limit (${maxModelRounds} rounds). Try Ask mode for questions or Agent mode for tasks. If the model keeps looping, switch execution mode and retry.`,
+          error: t('runtime.modelRoundLimit', { max: maxModelRounds }),
         };
         return;
       }
@@ -391,7 +390,7 @@ export async function* runQueryEngineTurn(
               }
               yield {
                 type: 'status_update',
-                message: 'Reply truncated — provider stream ended before a clean finish.',
+                message: t('runtime.replyTruncated'),
               };
             }
           }
@@ -412,7 +411,7 @@ export async function* runQueryEngineTurn(
           && pendingToolCalls.length === 0
         ) {
           strictBudgetRetry = true;
-          yield { type: 'status_update', message: 'Context too large, retrying with a pruned request.' };
+          yield { type: 'status_update', message: t('runtime.contextTooLargeRetry') };
           continue;
         }
 
@@ -488,7 +487,7 @@ export async function* runQueryEngineTurn(
       ) {
         currentMessages.pop();
         currentMessages.push({ role: 'user', content: LAZY_TOOL_CALL_NUDGE });
-        yield { type: 'status_update', message: 'Model described tool actions without executing them. Retrying with a nudge.' };
+        yield { type: 'status_update', message: t('runtime.lazyToolCallRetry') };
         continue;
       }
 
@@ -519,7 +518,10 @@ export async function* runQueryEngineTurn(
     if (pendingToolCalls.length > 0) {
       yield {
         type: 'status_update',
-        message: `Executing ${pendingToolCalls.length} tool(s): ${pendingToolCalls.map(t => t.name).join(', ')}`,
+        message: t('runtime.executingTools', {
+          count: pendingToolCalls.length,
+          names: pendingToolCalls.map((tool) => tool.name).join(', '),
+        }),
       };
 
       if (ownershipLost(options, effectiveTurnId) || options?.signal?.aborted) {
@@ -612,7 +614,7 @@ export async function* runQueryEngineTurn(
         });
         yield {
           type: 'status_update',
-          message: `Model called disallowed tools. Retrying with a stricter allowlist reminder (${effectiveOptions.allowedTools.join(', ')}).`,
+          message: t('runtime.disallowedToolsRetry', { tools: effectiveOptions.allowedTools.join(', ') }),
         };
         continue;
       }
@@ -688,11 +690,10 @@ export async function* runQueryEngineTurn(
       type: 'error',
       error: errorMessage(withToolBudgetSummary(
         new Error(
-          `The agent exceeded its tool loop limit (${maxToolBudget} tool rounds). `
+          `${t('runtime.toolRoundLimit', { max: maxToolBudget })} `
           + `tool_budget_used=${toolBudgetSummary.toolBudgetUsed}; `
           + `failed_calls=${toolBudgetSummary.failedCalls}; `
-          + `successful_calls=${toolBudgetSummary.successfulCalls}. `
-          + 'Try Ask mode for questions or Agent mode for tasks.',
+          + `successful_calls=${toolBudgetSummary.successfulCalls}.`,
         ),
         toolBudgetSummary,
       )),
@@ -705,11 +706,10 @@ export async function* runQueryEngineTurn(
       type: 'error',
       error: errorMessage(withToolBudgetSummary(
         new Error(
-          `The agent exceeded its reasoning/tool loop limit (${maxModelRounds} model rounds). `
+          `${t('runtime.modelRoundLimit', { max: maxModelRounds })} `
           + `tool_budget_used=${toolBudgetSummary.toolBudgetUsed}; `
           + `failed_calls=${toolBudgetSummary.failedCalls}; `
-          + `successful_calls=${toolBudgetSummary.successfulCalls}. `
-          + 'Try Ask mode for questions or Agent mode for tasks.',
+          + `successful_calls=${toolBudgetSummary.successfulCalls}.`,
         ),
         toolBudgetSummary,
       )),
