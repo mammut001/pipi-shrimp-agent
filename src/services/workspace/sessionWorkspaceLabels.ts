@@ -39,6 +39,18 @@ export function getWorkspaceDisplayName(path: string | null | undefined, fallbac
 }
 
 /**
+ * The app-managed default PiPi Output Folder, `<Documents>/PiPi-Shrimp/chats/<session id>`
+ * (see `get_app_default_dir`). Its last segment is an opaque session id.
+ */
+export function isDefaultPipiOutputDir(path: string | null | undefined): boolean {
+  if (!path) return false;
+  const segments = splitSegments(path);
+  return segments.length >= 3
+    && segments[segments.length - 3] === 'PiPi-Shrimp'
+    && segments[segments.length - 2] === 'chats';
+}
+
+/**
  * Treat two paths as equal if they point at the same file/folder on disk,
  * ignoring trailing separators and the slash style. Returns false for
  * empty inputs.

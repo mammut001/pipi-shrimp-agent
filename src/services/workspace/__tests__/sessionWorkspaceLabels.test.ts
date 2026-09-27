@@ -10,6 +10,7 @@
 import { describe, it, expect } from '@jest/globals';
 import {
   formatContextFilePath,
+  isDefaultPipiOutputDir,
   getParentDirectory,
   getWorkspaceDisplayName,
   isContextFileInsideWorkspace,
@@ -122,5 +123,18 @@ describe('getParentDirectory', () => {
     expect(getParentDirectory('main.ts')).toBe('');
     expect(getParentDirectory('')).toBe('');
     expect(getParentDirectory(null)).toBe('');
+  });
+});
+
+describe('isDefaultPipiOutputDir', () => {
+  it('recognizes the app-managed per-session output folder', () => {
+    expect(isDefaultPipiOutputDir('/home/me/Documents/PiPi-Shrimp/chats/8a5f923e-0aa2')).toBe(true);
+    expect(isDefaultPipiOutputDir('C:\\Users\\me\\Documents\\PiPi-Shrimp\\chats\\abc\\')).toBe(true);
+  });
+
+  it('leaves user-chosen folders alone', () => {
+    expect(isDefaultPipiOutputDir('/home/me/work/reports')).toBe(false);
+    expect(isDefaultPipiOutputDir('/home/me/Documents/PiPi-Shrimp/chats')).toBe(false);
+    expect(isDefaultPipiOutputDir(null)).toBe(false);
   });
 });

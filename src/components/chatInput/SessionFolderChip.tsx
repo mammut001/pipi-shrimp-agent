@@ -15,7 +15,7 @@
  * and the accent color of the "open in Finder" hint.
  */
 
-import { getWorkspaceDisplayName } from '@/services/workspace/sessionWorkspaceLabels';
+import { getWorkspaceDisplayName, isDefaultPipiOutputDir } from '@/services/workspace/sessionWorkspaceLabels';
 import { t } from '@/i18n';
 
 export type SessionFolderKind = 'project' | 'output';
@@ -127,7 +127,9 @@ export function SessionFolderChip({
       </svg>
 
       <span className="truncate max-w-[180px]">
-        {getWorkspaceDisplayName(value, value)}
+        {kind === 'output' && isDefaultPipiOutputDir(value)
+          ? t('chat.defaultPipiOutputFolder')
+          : getWorkspaceDisplayName(value, value)}
       </span>
 
       <span
