@@ -91,7 +91,7 @@ export function t(key: keyof TranslationKeys, options?: Record<string, string | 
 export function getSupportedLocales(): { value: Locale; label: string; flag: string }[] {
   return [
     { value: 'zh-CN', label: '中文', flag: '🇨🇳' },
-    { value: 'en-US', label: 'English', flag: '🇺🇸' },
+    { value: 'en-US', label: 'English', flag: '🇨🇦' },
   ];
 }
 

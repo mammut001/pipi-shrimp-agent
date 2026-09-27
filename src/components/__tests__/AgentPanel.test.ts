@@ -278,7 +278,7 @@ describe('AgentPanel', () => {
 
     const view = renderPanel();
     const cancelButton = Array.from(view.container.querySelectorAll('button'))
-      .find((button) => button.textContent?.trim() === 'Cancel');
+      .find((button) => button.textContent?.trim() === 'agentPanel.progress.cancel');
 
     expect(cancelButton).toBeTruthy();
 
@@ -315,7 +315,7 @@ describe('AgentPanel', () => {
 
     const view = renderPanel();
     const cancelButton = Array.from(view.container.querySelectorAll('button'))
-      .find((button) => button.textContent?.trim() === 'Cancel');
+      .find((button) => button.textContent?.trim() === 'agentPanel.progress.cancel');
 
     expect(cancelButton).toBeUndefined();
     expect(view.container.textContent).toContain('Thinking');

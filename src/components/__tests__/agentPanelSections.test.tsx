@@ -66,7 +66,7 @@ describe('agentPanelSections', () => {
         );
       });
 
-      expect(container.textContent).toContain('Main');
+      expect(container.textContent).toContain('agentPanel.tabs.main');
       const buttons = container.querySelectorAll('button');
       // Main, Browser, Goal buttons
       expect(buttons.length).toBe(3);
@@ -102,7 +102,7 @@ describe('agentPanelSections', () => {
 
       const buttons = container.querySelectorAll('button');
       expect(buttons.length).toBe(4);
-      const artifactBtn = container.querySelector('button[title="Artifact Preview"]');
+      const artifactBtn = container.querySelector('button[title="agentPanel.tabs.artifactPreview"]');
       expect(artifactBtn).toBeTruthy();
 
       act(() => {
@@ -123,7 +123,7 @@ describe('agentPanelSections', () => {
         );
       });
 
-      expect(container.textContent).toContain('Progress');
+      expect(container.textContent).toContain('agentPanel.progress.title');
       // When taskProgress is empty, defaultExpanded is false. Click Section toggle to expand.
       const sectionToggle = container.querySelector('button');
       expect(sectionToggle).toBeTruthy();
@@ -131,7 +131,7 @@ describe('agentPanelSections', () => {
         sectionToggle?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       });
 
-      expect(container.textContent).toContain('No Active Task');
+      expect(container.textContent).toContain('agentPanel.progress.noActiveTask');
     });
 
     it('renders task steps with status and cancel button when running with executionId', () => {
@@ -164,14 +164,14 @@ describe('agentPanelSections', () => {
         );
       });
 
-      expect(container.textContent).toContain('1 of 3');
+      expect(container.textContent).toContain('agentPanel.progress.count');
       expect(container.textContent).toContain('read_file index.ts');
       expect(container.textContent).toContain('execute_command cargo test');
       expect(container.textContent).toContain('Thinking');
-      expect(container.textContent).toContain('Awaiting confirmation');
+      expect(container.textContent).toContain('agentPanel.progress.status.awaitingConfirmation');
 
       const cancelBtn = Array.from(container.querySelectorAll('button')).find(
-        (b) => b.textContent?.trim() === 'Cancel',
+        (b) => b.textContent?.trim() === 'agentPanel.progress.cancel',
       );
       expect(cancelBtn).toBeTruthy();
 
@@ -201,11 +201,11 @@ describe('agentPanelSections', () => {
       });
 
       expect(container.textContent).toContain('Cancelling');
-      expect(container.textContent).toContain('Validating');
-      expect(container.textContent).toContain('Approved');
+      expect(container.textContent).toContain('agentPanel.progress.status.validating');
+      expect(container.textContent).toContain('agentPanel.progress.status.approved');
       expect(container.textContent).toContain('Cancelled');
-      expect(container.textContent).toContain('Timed out');
-      expect(container.textContent).toContain('Rejected');
+      expect(container.textContent).toContain('agentPanel.progress.status.timedOut');
+      expect(container.textContent).toContain('agentPanel.progress.status.rejected');
     });
   });
 
@@ -361,17 +361,17 @@ describe('agentPanelSections', () => {
         );
       });
 
-      expect(container.textContent).toContain('Skills');
+      expect(container.textContent).toContain('agentPanel.context.skills');
       expect(container.textContent).toContain('Custom_skill');
       expect(container.textContent).toContain('Web Browser');
-      expect(container.textContent).toContain('+ 2 more');
-      expect(container.textContent).toContain('Connectors');
-      expect(container.textContent).toContain('Chrome Browser');
-      expect(container.textContent).toContain('Click to Connect');
+      expect(container.textContent).toContain('agentPanel.context.moreCount');
+      expect(container.textContent).toContain('agentPanel.context.connectors');
+      expect(container.textContent).toContain('agentPanel.context.chromeBrowser');
+      expect(container.textContent).toContain('agentPanel.context.clickToConnect');
 
       // Click connector modal button
       const connectorBtn = Array.from(container.querySelectorAll('button')).find(
-        (b) => b.textContent?.includes('Chrome Browser'),
+        (b) => b.textContent?.includes('agentPanel.context.chromeBrowser'),
       );
       expect(connectorBtn).toBeTruthy();
       act(() => {
@@ -381,7 +381,7 @@ describe('agentPanelSections', () => {
 
       // Save changes button when local != agent instructions
       const saveBtn = Array.from(container.querySelectorAll('button')).find(
-        (b) => b.textContent?.trim() === 'Save Changes',
+        (b) => b.textContent?.trim() === 'agentPanel.context.saveSoulChanges',
       );
       expect(saveBtn).toBeTruthy();
       act(() => {
@@ -422,12 +422,12 @@ describe('agentPanelSections', () => {
         );
       });
 
-      expect(container.textContent).toContain('Pipi Shrimp in Chrome');
+      expect(container.textContent).toContain('agentPanel.context.pipiShrimpInChrome');
       expect(container.textContent).toContain('Healthy');
-      expect(container.textContent).toContain('Launched by PiPi');
+      expect(container.textContent).toContain('agentPanel.context.launchedByPipi');
 
       const connectorBtn = Array.from(container.querySelectorAll('button')).find(
-        (b) => b.textContent?.includes('Pipi Shrimp in Chrome'),
+        (b) => b.textContent?.includes('agentPanel.context.pipiShrimpInChrome'),
       );
       expect(connectorBtn).toBeTruthy();
       act(() => {
@@ -446,7 +446,7 @@ describe('agentPanelSections', () => {
           }),
         );
       });
-      expect(container.textContent).toContain('System Ready');
+      expect(container.textContent).toContain('agentPanel.footer.systemReady');
       expect(container.textContent).toContain('v0.1.0-alpha');
     });
 
@@ -459,7 +459,7 @@ describe('agentPanelSections', () => {
           }),
         );
       });
-      expect(container.textContent).toContain('Processing');
+      expect(container.textContent).toContain('agentPanel.footer.processing');
       expect(container.textContent).toContain('v0.2.0');
     });
 

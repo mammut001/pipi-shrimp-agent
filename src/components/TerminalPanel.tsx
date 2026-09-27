@@ -364,7 +364,7 @@ export function TerminalPanel({
             />
           </svg>
           <span className="text-[11px] font-semibold tracking-wide text-white/90 uppercase">
-            Terminal
+            {t('terminal.title')}
           </span>
           <span
             className={`w-1.5 h-1.5 rounded-full ${statusDotClass}`}
@@ -392,35 +392,35 @@ export function TerminalPanel({
             type="button"
             onClick={handleCopy}
             className="px-2 h-6 text-[11px] text-white/60 hover:text-white hover:bg-white/10 rounded transition-colors flex items-center gap-1"
-            title="Copy terminal content"
+            title={t('terminal.copyTooltip')}
           >
             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
             </svg>
-            <span>Copy</span>
+            <span>{t('terminal.copy')}</span>
           </button>
           <button
             type="button"
             onClick={handleClear}
             className="px-2 h-6 text-[11px] text-white/60 hover:text-white hover:bg-white/10 rounded transition-colors flex items-center gap-1"
-            title="Clear terminal"
+            title={t('terminal.clearTooltip')}
           >
             <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
               <path strokeLinecap="round" strokeLinejoin="round" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
             </svg>
-            <span>Clear</span>
+            <span>{t('terminal.clear')}</span>
           </button>
           {onClose && (
             <button
               type="button"
               onClick={onClose}
               className="px-2 h-6 text-[11px] text-white/60 hover:text-white hover:bg-white/10 rounded transition-colors flex items-center gap-1"
-              title="Close Terminal"
+              title={t('terminal.closeTooltip')}
             >
               <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
               </svg>
-              <span>Close</span>
+              <span>{t('terminal.close')}</span>
             </button>
           )}
         </div>

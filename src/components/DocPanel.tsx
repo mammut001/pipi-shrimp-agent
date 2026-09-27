@@ -17,6 +17,7 @@ import {
   type DocContent,
 } from '@/services/docService';
 import { invoke } from '@tauri-apps/api/core';
+import { t } from '@/i18n';
 import { Section } from './ui/Section';
 import { DocListSkeleton } from './ui/Skeleton';
 import {
@@ -185,7 +186,7 @@ export function DocPanel({ workDir }: DocPanelProps) {
 
   return (
     <Section
-      title="Docs"
+      title={t('agentPanel.docs.title')}
       count={docs.length > 0 ? docs.length.toString() : undefined}
       defaultExpanded={false}
     >
@@ -197,7 +198,7 @@ export function DocPanel({ workDir }: DocPanelProps) {
               type="text"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search docs..."
+              placeholder={t('agentPanel.docs.searchPlaceholder')}
               className="w-full text-[11px] pl-7 pr-3 py-2 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-blue-200 transition-colors"
             />
             <svg 
@@ -269,15 +270,15 @@ export function DocPanel({ workDir }: DocPanelProps) {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
             <p className="text-[10px] text-gray-400 font-medium text-center">
-              No documents yet
+              {t('agentPanel.docs.emptyTitle')}
             </p>
             <p className="text-[9px] text-gray-400 mt-1 text-center px-2">
-              AI will auto-create docs when you ask
+              {t('agentPanel.docs.emptyHint')}
             </p>
           </div>
         ) : (
           <div className="py-4 text-center">
-            <p className="text-[10px] text-gray-400">No results for "{searchQuery}"</p>
+            <p className="text-[10px] text-gray-400">{t('agentPanel.docs.noResults', { query: searchQuery })}</p>
           </div>
         )}
 
@@ -298,7 +299,7 @@ export function DocPanel({ workDir }: DocPanelProps) {
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
-              Default Editor
+              {t('agentPanel.docs.defaultEditor')}
             </button>
             <button
               onClick={handleOpenVSCode}
@@ -316,7 +317,7 @@ export function DocPanel({ workDir }: DocPanelProps) {
               <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z" />
               </svg>
-              Show in Finder
+              {t('agentPanel.docs.showInFinder')}
             </button>
           </div>
         )}
@@ -331,9 +332,9 @@ export function DocPanel({ workDir }: DocPanelProps) {
             <DocumentDetailShell
               title={selectedDoc.meta.title}
               subtitle={selectedDoc.meta.summary}
-              badge={`Doc ${selectedDoc.meta.number}`}
+              badge={t('agentPanel.docs.badge', { number: selectedDoc.meta.number })}
               filename={selectedDoc.meta.filename}
-              backLabel="Back to Docs"
+              backLabel={t('agentPanel.docs.backToDocs')}
               onBack={() => setSelectedDoc(null)}
               onOpen={() => void handleOpenSelectedDocDefault()}
               onClose={() => setSelectedDoc(null)}

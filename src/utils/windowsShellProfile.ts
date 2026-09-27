@@ -1,4 +1,5 @@
 import type { WindowsShellProfile } from '@/types/settings';
+import { t } from '@/i18n';
 
 export type WindowsShellPathKind = 'windows' | 'wsl' | 'unknown';
 
@@ -99,7 +100,7 @@ export function resolveWindowsShellProfile(
 
 export function formatShellProfileLabel(resolution: WindowsShellResolution): string {
   if (!resolution.isWindows) {
-    return 'Default shell';
+    return t('terminal.shell.default');
   }
   const name = resolution.resolved === 'wsl' ? 'WSL' : 'PowerShell';
   const suffix = resolution.selection === 'auto' ? 'Auto' : 'Selected';

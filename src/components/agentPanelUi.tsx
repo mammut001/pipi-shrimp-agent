@@ -5,6 +5,7 @@
 
 import React, { useMemo } from 'react';
 import { formatCancelInterruptLabel } from '@/store/chat/cancelInterruptVocab';
+import { t } from '@/i18n';
 import { ChatImage } from './ChatImage';
 
 export type SyncedWorkspaceEntry = {
@@ -23,10 +24,10 @@ export function formatCdpHealthLabel(healthOrStatus: string): string {
 
 export function formatCdpLaunchLabel(launchMode: string | null | undefined): string | null {
   if (launchMode === 'launch') {
-    return 'Launched by PiPi';
+    return t('agentPanel.context.launchedByPipi');
   }
   if (launchMode === 'attach') {
-    return 'Attached to Existing Chrome';
+    return t('agentPanel.context.attachedToExistingChrome');
   }
   return null;
 }
@@ -132,9 +133,9 @@ export function footerStatusLabel(taskProgress: Array<{ status: string }>): stri
     return formatCancelInterruptLabel('cancelling');
   }
   if (taskProgress.some((s) => s.status === 'running')) {
-    return 'Processing';
+    return t('agentPanel.footer.processing');
   }
-  return 'System Ready';
+  return t('agentPanel.footer.systemReady');
 }
 
 export function findArtifactInMessages(artifactId: string | undefined, messages: any[]): any | null {

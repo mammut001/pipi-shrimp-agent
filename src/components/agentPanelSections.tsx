@@ -56,7 +56,7 @@ export const AgentPanelTabBar: React.FC<AgentPanelTabBarProps> = ({
             : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
         }`}
       >
-        Main
+        {t('agentPanel.tabs.main')}
       </button>
 
       {/* Browser tab */}
@@ -67,7 +67,7 @@ export const AgentPanelTabBar: React.FC<AgentPanelTabBarProps> = ({
             ? 'bg-gray-100 text-gray-900'
             : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
         }`}
-        title="Browser"
+        title={t('agentPanel.tabs.browser')}
       >
         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
           <path
@@ -88,7 +88,7 @@ export const AgentPanelTabBar: React.FC<AgentPanelTabBarProps> = ({
               ? 'bg-gray-100 text-gray-900'
               : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'
           }`}
-          title="Artifact Preview"
+          title={t('agentPanel.tabs.artifactPreview')}
         >
           <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path
@@ -137,8 +137,8 @@ export const AgentPanelProgressSection: React.FC<AgentPanelProgressSectionProps>
 
   return (
     <Section
-      title="Progress"
-      count={totalSteps > 0 ? `${completedSteps} of ${totalSteps}` : undefined}
+      title={t('agentPanel.progress.title')}
+      count={totalSteps > 0 ? t('agentPanel.progress.count', { completed: completedSteps, total: totalSteps }) : undefined}
       defaultExpanded={totalSteps > 0}
     >
       {taskProgress.length > 0 ? (
@@ -184,7 +184,7 @@ export const AgentPanelProgressSection: React.FC<AgentPanelProgressSectionProps>
                       onClick={() => onCancelToolExecution(step.id, step.executionId!)}
                       className="rounded-md border border-slate-200 px-2 py-0.5 text-[9px] font-bold uppercase tracking-tight text-slate-600 transition-colors hover:border-rose-200 hover:bg-rose-50 hover:text-rose-600"
                     >
-                      Cancel
+                      {t('agentPanel.progress.cancel')}
                     </button>
                   )}
                 </div>
@@ -192,17 +192,17 @@ export const AgentPanelProgressSection: React.FC<AgentPanelProgressSectionProps>
                 {step.status === 'cancelling' && <CancellingPulse />}
                 {step.status === 'awaiting_confirmation' && (
                   <p className="mt-1 text-[9px] font-bold uppercase tracking-tight text-amber-600">
-                    Awaiting confirmation
+                    {t('agentPanel.progress.status.awaitingConfirmation')}
                   </p>
                 )}
                 {step.status === 'validating' && (
                   <p className="mt-1 text-[9px] font-bold uppercase tracking-tight text-slate-600">
-                    Validating
+                    {t('agentPanel.progress.status.validating')}
                   </p>
                 )}
                 {step.status === 'approved' && (
                   <p className="mt-1 text-[9px] font-bold uppercase tracking-tight text-emerald-600">
-                    Approved
+                    {t('agentPanel.progress.status.approved')}
                   </p>
                 )}
                 {step.status === 'cancelled' && (
@@ -212,12 +212,12 @@ export const AgentPanelProgressSection: React.FC<AgentPanelProgressSectionProps>
                 )}
                 {step.status === 'timed_out' && (
                   <p className="mt-1 text-[9px] font-bold uppercase tracking-tight text-orange-600">
-                    Timed out
+                    {t('agentPanel.progress.status.timedOut')}
                   </p>
                 )}
                 {step.status === 'rejected' && (
                   <p className="mt-1 text-[9px] font-bold uppercase tracking-tight text-rose-600">
-                    Rejected
+                    {t('agentPanel.progress.status.rejected')}
                   </p>
                 )}
               </div>
@@ -240,7 +240,7 @@ export const AgentPanelProgressSection: React.FC<AgentPanelProgressSectionProps>
               d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"
             />
           </svg>
-          <span className="text-[10px] font-bold uppercase tracking-widest">No Active Task</span>
+          <span className="text-[10px] font-bold uppercase tracking-widest">{t('agentPanel.progress.noActiveTask')}</span>
         </div>
       )}
     </Section>
@@ -419,10 +419,10 @@ export const AgentPanelContextSection: React.FC<AgentPanelContextSectionProps> =
   const cdpLaunchLabel = formatCdpLaunchLabel(cdpConnectionState?.launch_mode);
 
   return (
-    <Section title="Context">
+    <Section title={t('agentPanel.context.title')}>
       <div className="pt-2 space-y-4">
         <div>
-          <h4 className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-2.5">Skills</h4>
+          <h4 className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-2.5">{t('agentPanel.context.skills')}</h4>
           <div className="flex flex-wrap gap-2">
             {/* Show active skill badge if it doesn't match any core skill */}
             {activeSkill != null && !coreSkills.some((s) => skillMatchesActive(s, activeSkill)) && (
@@ -455,14 +455,14 @@ export const AgentPanelContextSection: React.FC<AgentPanelContextSectionProps> =
             })}
             {remainingCount > 0 && (
               <div className="px-2 py-1 bg-gray-50 border border-dashed border-gray-200 rounded-lg text-[10px] font-medium text-gray-400">
-                + {remainingCount} more
+                {t('agentPanel.context.moreCount', { count: remainingCount })}
               </div>
             )}
           </div>
         </div>
 
         <div>
-          <h4 className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-2.5">Connectors</h4>
+          <h4 className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-2.5">{t('agentPanel.context.connectors')}</h4>
           <div className="space-y-2">
             <button
               onClick={() => {
@@ -491,13 +491,13 @@ export const AgentPanelContextSection: React.FC<AgentPanelContextSectionProps> =
                 </div>
                 <div>
                   <p className="text-[11px] font-bold text-gray-800">
-                    {cdpStatus === 'connected' ? 'Pipi Shrimp in Chrome' : 'Chrome Browser'}
+                    {cdpStatus === 'connected' ? t('agentPanel.context.pipiShrimpInChrome') : t('agentPanel.context.chromeBrowser')}
                   </p>
                   <p className="text-[9px] text-gray-400 font-medium uppercase tracking-tight">
                     {cdpStatus === 'connected' && cdpHealthLabel}
-                    {cdpStatus === 'connecting' && 'Connecting...'}
-                    {cdpStatus === 'disconnected' && 'Click to Connect'}
-                    {cdpStatus === 'error' && 'Connection Failed — Retry'}
+                    {cdpStatus === 'connecting' && t('agentPanel.context.connecting')}
+                    {cdpStatus === 'disconnected' && t('agentPanel.context.clickToConnect')}
+                    {cdpStatus === 'error' && t('agentPanel.context.connectionFailedRetry')}
                   </p>
                   {cdpConnectionState && (
                     <div className="mt-1 space-y-0.5">
@@ -513,7 +513,7 @@ export const AgentPanelContextSection: React.FC<AgentPanelContextSectionProps> =
                       )}
                       {cdpConnectionState.health_failures > 0 && (
                         <p className="text-[9px] text-amber-600">
-                          {cdpConnectionState.health_failures} recent health failures
+                          {t('agentPanel.context.recentHealthFailures', { count: cdpConnectionState.health_failures })}
                         </p>
                       )}
                     </div>
@@ -527,13 +527,13 @@ export const AgentPanelContextSection: React.FC<AgentPanelContextSectionProps> =
 
         <div>
           <div className="flex items-center justify-between mb-2.5">
-            <h4 className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">Agent Soul (Default)</h4>
+            <h4 className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">{t('agentPanel.context.agentSoul')}</h4>
             {localInstructions !== agentInstructions && (
               <button
                 onClick={onSaveSoul}
                 className="text-[9px] font-bold text-blue-600 uppercase tracking-tight hover:underline"
               >
-                {isSavingSoul ? 'Saving...' : 'Save Changes'}
+                {isSavingSoul ? t('agentPanel.context.savingSoul') : t('agentPanel.context.saveSoulChanges')}
               </button>
             )}
           </div>
@@ -541,7 +541,7 @@ export const AgentPanelContextSection: React.FC<AgentPanelContextSectionProps> =
             value={localInstructions}
             onChange={(e) => onChangeLocalInstructions(e.target.value)}
             className="w-full text-[11px] text-gray-600 leading-relaxed bg-gray-100/50 p-3 rounded-xl border border-transparent focus:border-blue-200 focus:bg-white focus:outline-none transition-all resize-none min-h-[80px]"
-            placeholder="Agent identity and background..."
+            placeholder={t('agentPanel.context.soulPlaceholder')}
           />
         </div>
       </div>
