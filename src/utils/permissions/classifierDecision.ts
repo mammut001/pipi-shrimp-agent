@@ -98,8 +98,14 @@ export class PermissionClassifier {
    */
   private getToolRiskLevel(toolName: string): number {
     const riskLevels: Record<string, number> = {
-      // Low risk - read-only operations
+      // Low risk - read-only operations (PiPi tool names first)
       'read_file': 0.1,
+      'list_files': 0.1,
+      'path_exists': 0.1,
+      'search_files': 0.1,
+      'glob_search': 0.1,
+      'grep_files': 0.1,
+      'get_current_workspace': 0.1,
       'list_dir': 0.1,
       'grep_search': 0.1,
       'file_search': 0.1,
@@ -233,20 +239,29 @@ export class PermissionClassifier {
    * Calculate overall risk score from features
    */
   private calculateRiskScore(features: Record<string, number>): number {
-    // Weighted combination of features
+    // Weighted combination of features. Only tool_risk grows with risk; the
+    // other features are trust scores (1 = safe), so they count as 1 - score.
+    // Adding them raw made safe arguments look risky and risky ones safe.
+    const risks: Record<string, number | undefined> = {
+      tool_risk: features.tool_risk,
+      argument_risk: features.argument_safety === undefined ? undefined : 1 - features.argument_safety,
+      context_risk: features.context_patterns === undefined ? undefined : 1 - features.context_patterns,
+      history_risk: features.user_history === undefined ? undefined : 1 - features.user_history,
+    };
     const weights = {
       tool_risk: 0.4,
-      argument_safety: 0.4,
-      context_patterns: 0.1,
-      user_history: 0.1
+      argument_risk: 0.4,
+      context_risk: 0.1,
+      history_risk: 0.1
     };
 
     let totalScore = 0;
     let totalWeight = 0;
 
     for (const [feature, weight] of Object.entries(weights)) {
-      if (features[feature] !== undefined) {
-        totalScore += features[feature] * weight;
+      const risk = risks[feature];
+      if (risk !== undefined) {
+        totalScore += risk * weight;
         totalWeight += weight;
       }
     }

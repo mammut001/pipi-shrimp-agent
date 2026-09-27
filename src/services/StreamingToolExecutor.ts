@@ -15,6 +15,7 @@ import {
   type ToolPolicyPreviewResult,
 } from '@/services/tools/toolExecutionPolicy';
 import { runPreToolUseHooks } from '@/services/tools/preToolUseHooks';
+import { t } from '@/i18n';
 import { withWindowsShellProfileArgs } from '@/utils/windowsShellProfile';
 import { BROWSER_TOOL_NAMES } from './browser/browserTools';
 import { loadToolRuntimeMetadata } from '@/services/tools/toolMetadata';
@@ -267,7 +268,7 @@ export class StreamingToolExecutor {
           id: request.id,
           name: request.name,
           arguments: JSON.stringify(request.arguments),
-          reason: 'A frontend tool policy requires explicit approval.',
+          reason: t('permission.policyConfirmReason'),
           source,
           workDir,
         });

@@ -30,6 +30,7 @@ jest.mock('@/services/tools/autoresearchBootstrap', () => ({
 }));
 
 import { StreamingToolExecutor } from '@/services/StreamingToolExecutor';
+import { t } from '@/i18n';
 import { partitionToolsByMetadata, invalidateToolRuntimeMetadataCache } from '@/services/tools/toolMetadata';
 
 describe('partitionToolsByMetadata', () => {
@@ -189,7 +190,7 @@ describe('StreamingToolExecutor.executeBatch', () => {
       id: 'tool-hook-confirm',
       name: 'execute_command',
       arguments: '{"command":"rm -rf /tmp/example","windowsShellProfile":"auto"}',
-      reason: 'A frontend tool policy requires explicit approval.',
+      reason: t('permission.policyConfirmReason'),
       source: 'assistant_tool_call',
       workDir: undefined,
     });
