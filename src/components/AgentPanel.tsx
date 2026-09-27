@@ -6,6 +6,7 @@
 
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { useUIStore, useSettingsStore, useChatStore, useSkillStore } from '@/store';
+import { t } from '@/i18n';
 import { usePolling } from '@/hooks/usePolling';
 import { useBrowserAgentStore } from '@/store/browserAgentStore';
 import { useCdpStore } from '@/store/cdpStore';
@@ -194,9 +195,9 @@ export const AgentPanel: React.FC = () => {
     try {
       await new Promise((resolve) => setTimeout(resolve, 800));
       setAgentInstructions(localInstructions);
-      addNotification('success', 'Agent Soul saved successfully');
+      addNotification('success', t('agentPanel.context.soulSaveSuccess'));
     } catch {
-      addNotification('error', 'Failed to save Agent Soul');
+      addNotification('error', t('agentPanel.context.soulSaveFailed'));
     } finally {
       setIsSaving(false);
     }

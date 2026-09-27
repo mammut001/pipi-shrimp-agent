@@ -40,8 +40,8 @@ describe('agentPanelUi helpers', () => {
 
   describe('formatCdpLaunchLabel', () => {
     it('returns appropriate labels for launch and attach modes, null otherwise', () => {
-      expect(formatCdpLaunchLabel('launch')).toBe('Launched by PiPi');
-      expect(formatCdpLaunchLabel('attach')).toBe('Attached to Existing Chrome');
+      expect(formatCdpLaunchLabel('launch')).toBe('agentPanel.context.launchedByPipi');
+      expect(formatCdpLaunchLabel('attach')).toBe('agentPanel.context.attachedToExistingChrome');
       expect(formatCdpLaunchLabel(null)).toBeNull();
       expect(formatCdpLaunchLabel(undefined)).toBeNull();
       expect(formatCdpLaunchLabel('unknown')).toBeNull();
@@ -170,12 +170,12 @@ describe('agentPanelUi helpers', () => {
         { status: 'done' },
         { status: 'running' },
       ];
-      expect(footerStatusLabel(progress)).toBe('Processing');
+      expect(footerStatusLabel(progress)).toBe('agentPanel.footer.processing');
     });
 
     it('returns System Ready when no steps are running or cancelling', () => {
-      expect(footerStatusLabel([])).toBe('System Ready');
-      expect(footerStatusLabel([{ status: 'done' }, { status: 'cancelled' }])).toBe('System Ready');
+      expect(footerStatusLabel([])).toBe('agentPanel.footer.systemReady');
+      expect(footerStatusLabel([{ status: 'done' }, { status: 'cancelled' }])).toBe('agentPanel.footer.systemReady');
     });
   });
 

@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { t } from '@/i18n';
 import { MAIN_LAYOUT_EDGE_TOGGLE_GUTTER_CLASS } from '@/layout/edgeToggleGutter';
 
 interface DocumentDetailShellProps {
@@ -23,9 +24,9 @@ export function DocumentDetailShell({
   badge,
   filename,
   onBack,
-  backLabel = 'Back',
+  backLabel = t('common.back'),
   onOpen,
-  openLabel = 'Open',
+  openLabel = t('common.open'),
   onClose,
   sidebar,
   children,
@@ -91,7 +92,7 @@ export function DocumentDetailShell({
                 type="button"
                 onClick={onClose}
                 className="rounded-xl border border-slate-200 bg-white p-1.5 text-slate-500 shadow-sm transition-all hover:bg-slate-50 hover:text-slate-800"
-                title="Close"
+                title={t('common.close')}
               >
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                   <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />

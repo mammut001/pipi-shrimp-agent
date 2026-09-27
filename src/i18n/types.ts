@@ -17,6 +17,12 @@ export type TranslationKeys = {
   'common.success': string;
   'common.retry': string;
   'common.close': string;
+  'common.back': string;
+  'document.metadata.timeline': string;
+  'document.metadata.created': string;
+  'document.metadata.updated': string;
+  'document.metadata.path': string;
+  'document.metadata.tags': string;
   'common.or': string;
   'common.preview': string;
   'common.copy': string;
@@ -82,6 +88,14 @@ export type TranslationKeys = {
   'terminal.shell.wslWarning': string;
   'terminal.shell.wslMixedPathWarning': string;
   'terminal.shell.wslReady': string;
+  'terminal.shell.default': string;
+  'terminal.title': string;
+  'terminal.copy': string;
+  'terminal.copyTooltip': string;
+  'terminal.clear': string;
+  'terminal.clearTooltip': string;
+  'terminal.close': string;
+  'terminal.closeTooltip': string;
 
   // Diagnostics
   'diagnostics.dbHealth': string;
@@ -318,6 +332,8 @@ export type TranslationKeys = {
   // Workflow
   'workflow.title': string;
   'workflow.newWorkflow': string;
+  'workflow.emptyStateTitle': string;
+  'workflow.emptyStateDescription': string;
   'workflow.clearCanvas': string;
   'workflow.clearCanvasConfirm': string;
   'workflow.clearCanvasWarning': string;
@@ -853,6 +869,29 @@ export type TranslationKeys = {
   'skill.saveChanges': string;
   'skill.addSkill': string;
 
+  // Runtime skills page (src/pages/Skill.tsx)
+  'skill.runtime.subtitle': string;
+  'skill.runtime.badge': string;
+  'skill.runtime.filterPlaceholder': string;
+  'skill.runtime.discovering': string;
+  'skill.runtime.noMatch': string;
+  'skill.runtime.loadCustomLabel': string;
+  'skill.runtime.load': string;
+  'skill.runtime.instructionsTitle': string;
+  'skill.runtime.readOnlyPreview': string;
+  'skill.runtime.runThisSkill': string;
+  'skill.runtime.runDescription': string;
+  'skill.runtime.taskPlaceholder': string;
+  'skill.runtime.startingRuntime': string;
+  'skill.runtime.runInDanger': string;
+  'skill.runtime.noEditApiNote': string;
+  'skill.runtime.noSkillSelectedTitle': string;
+  'skill.runtime.noSkillSelectedDescription': string;
+  'skill.runtime.nameValidationError': string;
+  'skill.runtime.notFoundError': string;
+  'skill.runtime.loadFailedError': string;
+  'skill.runtime.defaultDescription': string;
+
   // Skill Documentation Content
   'skill.pdf.name': string;
   'skill.pdf.description': string;
@@ -926,6 +965,51 @@ export type TranslationKeys = {
   'agentPanel.workingFolders.title': string;
   'agentPanel.workingFolders.emptyTitle': string;
   'agentPanel.workingFolders.emptyHint': string;
+
+  // AgentPanel — Tabs / Progress / Context (right-hand panel)
+  'agentPanel.tabs.main': string;
+  'agentPanel.tabs.browser': string;
+  'agentPanel.tabs.artifactPreview': string;
+  'agentPanel.progress.title': string;
+  'agentPanel.progress.count': string;
+  'agentPanel.progress.noActiveTask': string;
+  'agentPanel.progress.cancel': string;
+  'agentPanel.progress.status.awaitingConfirmation': string;
+  'agentPanel.progress.status.validating': string;
+  'agentPanel.progress.status.approved': string;
+  'agentPanel.progress.status.timedOut': string;
+  'agentPanel.progress.status.rejected': string;
+  'agentPanel.context.title': string;
+  'agentPanel.context.skills': string;
+  'agentPanel.context.connectors': string;
+  'agentPanel.context.moreCount': string;
+  'agentPanel.context.chromeBrowser': string;
+  'agentPanel.context.pipiShrimpInChrome': string;
+  'agentPanel.context.connecting': string;
+  'agentPanel.context.clickToConnect': string;
+  'agentPanel.context.connectionFailedRetry': string;
+  'agentPanel.context.recentHealthFailures': string;
+  'agentPanel.context.launchedByPipi': string;
+  'agentPanel.context.attachedToExistingChrome': string;
+  'agentPanel.context.agentSoul': string;
+  'agentPanel.context.savingSoul': string;
+  'agentPanel.context.saveSoulChanges': string;
+  'agentPanel.context.soulPlaceholder': string;
+  'agentPanel.context.soulSaveSuccess': string;
+  'agentPanel.context.soulSaveFailed': string;
+  'agentPanel.footer.processing': string;
+  'agentPanel.footer.systemReady': string;
+
+  // AgentPanel — Docs section (right-hand panel)
+  'agentPanel.docs.title': string;
+  'agentPanel.docs.searchPlaceholder': string;
+  'agentPanel.docs.emptyTitle': string;
+  'agentPanel.docs.emptyHint': string;
+  'agentPanel.docs.noResults': string;
+  'agentPanel.docs.defaultEditor': string;
+  'agentPanel.docs.showInFinder': string;
+  'agentPanel.docs.backToDocs': string;
+  'agentPanel.docs.badge': string;
 
   // Browser Intent
   'browserIntent.confirmTitle': string;

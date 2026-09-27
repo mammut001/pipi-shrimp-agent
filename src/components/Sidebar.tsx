@@ -322,6 +322,9 @@ export function Sidebar() {
         handleConfirmBatchDeleteWorkflows={handleConfirmBatchDeleteWorkflows}
         handleConfirmWorkflowDelete={handleConfirmWorkflowDelete}
         contextMenu={contextMenu}
+        closeContextMenu={closeContextMenu}
+        handleOpenMoveChatModal={handleOpenMoveChatModal}
+        handleOpenDeleteConfirm={handleOpenDeleteConfirm}
         handleDeleteProject={handleDeleteProject}
         renderSidebarModal={renderSidebarModal}
       />

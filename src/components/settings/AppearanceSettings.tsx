@@ -8,42 +8,18 @@ type AppearanceSettingsProps = {
 };
 
 export function AppearanceSettings({
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- kept in the props contract; the
+  // light/dark switch is hidden until a real dark theme exists (nothing in the app actually
+  // applies `theme` to the DOM yet, so the toggle was a dead control).
   theme,
   language,
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars -- see `theme` above
   onThemeChange,
   onLanguageChange,
 }: AppearanceSettingsProps) {
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4">
       <h2 className="text-sm font-semibold text-gray-900 mb-3">{t('settings.appearance')}</h2>
-
-      <div className="mb-3">
-        <label className="block text-xs font-medium text-gray-600 mb-1">{t('settings.theme')}</label>
-        <div className="flex gap-4">
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="radio"
-              name="theme"
-              value="light"
-              checked={theme === 'light'}
-              onChange={() => onThemeChange('light')}
-              className="text-gray-900 focus:ring-gray-900"
-            />
-            <span className="text-sm text-gray-700">{t('common.light')}</span>
-          </label>
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="radio"
-              name="theme"
-              value="dark"
-              checked={theme === 'dark'}
-              onChange={() => onThemeChange('dark')}
-              className="text-gray-900 focus:ring-gray-900"
-            />
-            <span className="text-sm text-gray-700">{t('common.dark')}</span>
-          </label>
-        </div>
-      </div>
 
       <div>
         <label className="block text-xs font-medium text-gray-600 mb-1">{t('settings.language')}</label>

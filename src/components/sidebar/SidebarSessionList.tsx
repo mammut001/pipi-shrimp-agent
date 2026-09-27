@@ -158,6 +158,7 @@ export function SidebarSessionList({
                   tabIndex={0}
                   onClick={() => isMultiSelectMode ? handleToggleSessionSelection(session.id) : handleSelectSession(session.id)}
                   onKeyDown={activateOnKey(() => isMultiSelectMode ? handleToggleSessionSelection(session.id) : handleSelectSession(session.id))}
+                  onContextMenu={(e) => handleContextMenu(e, 'session', session.id)}
                   className={`w-full px-3 py-2 text-left rounded-xl transition-all group relative cursor-pointer ${session.id === currentSessionId
                       ? 'bg-gray-100 shadow-sm'
                       : 'hover:bg-gray-50'
