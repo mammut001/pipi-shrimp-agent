@@ -7,8 +7,24 @@ pub fn save_session(session: &DbSession) -> SqliteResult<()> {
     let guard = get_db()?;
     if let Some(conn) = guard.as_ref() {
         conn.execute(
-            "INSERT OR REPLACE INTO sessions (id, title, created_at, updated_at, cwd, project_id, model, work_dir, working_files, permission_mode, project_dir, pipi_output_dir, execution_mode)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            // Upsert, not INSERT OR REPLACE: REPLACE deletes the existing row
+            // first, and with foreign_keys=ON that cascades to every message
+            // of the session, wiping the chat history on each session update.
+            "INSERT INTO sessions (id, title, created_at, updated_at, cwd, project_id, model, work_dir, working_files, permission_mode, project_dir, pipi_output_dir, execution_mode)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+             ON CONFLICT(id) DO UPDATE SET
+                title = excluded.title,
+                created_at = excluded.created_at,
+                updated_at = excluded.updated_at,
+                cwd = excluded.cwd,
+                project_id = excluded.project_id,
+                model = excluded.model,
+                work_dir = excluded.work_dir,
+                working_files = excluded.working_files,
+                permission_mode = excluded.permission_mode,
+                project_dir = excluded.project_dir,
+                pipi_output_dir = excluded.pipi_output_dir,
+                execution_mode = excluded.execution_mode",
             params![
                 session.id,
                 session.title,
