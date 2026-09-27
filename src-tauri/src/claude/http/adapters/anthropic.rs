@@ -180,27 +180,16 @@ impl ProviderAdapter for AnthropicAdapter {
                         let id = content_block["id"].as_str().unwrap_or("").to_string();
                         let name = content_block["name"].as_str().unwrap_or("").to_string();
 
-                        let initial_args = if let Some(input) = content_block.get("input") {
-                            if input.is_object() {
-                                serde_json::to_string(input).unwrap_or_default()
-                            } else if let Some(s) = input.as_str() {
-                                s.to_string()
-                            } else {
-                                String::new()
-                            }
-                        } else {
-                            String::new()
-                        };
-
                         ctx.tool_calls.push(ToolCall {
                             tool_call_id: id,
                             name,
-                            arguments: initial_args,
+                            arguments: initial_tool_arguments(content_block.get("input")),
                         });
                     }
                 }
             }
             "content_block_stop" => {
+                default_empty_tool_arguments(ctx);
                 events.extend(ctx.emit_pending_tool_calls()?);
             }
             "message_delta" => {
@@ -218,6 +207,7 @@ impl ProviderAdapter for AnthropicAdapter {
             }
             "message_stop" => {
                 if ctx.has_unfinalized_tool_calls() {
+                    default_empty_tool_arguments(ctx);
                     events.extend(ctx.emit_pending_tool_calls()?);
                 }
                 if ctx.finish_reason.is_none() {
@@ -236,6 +226,7 @@ impl ProviderAdapter for AnthropicAdapter {
         mut ctx: StreamContext,
         _config: &ResolvedProviderConfig,
     ) -> AppResult<ChatResponse> {
+        default_empty_tool_arguments(&mut ctx);
         let _ = ctx.emit_pending_tool_calls();
         let artifacts = detect_artifacts(&ctx.content);
 
@@ -260,3 +251,31 @@ impl ProviderAdapter for AnthropicAdapter {
         .with_finish(ctx.finish_reason))
     }
 }
+
+/// Streamed `tool_use` blocks open with an `input: {}` placeholder and then
+/// send the real arguments as `input_json_delta` fragments. Seeding the
+/// arguments with that placeholder made the fragments append after it
+/// (`{}{"path":...}`), so only a non-empty start `input` is kept.
+fn initial_tool_arguments(input: Option<&serde_json::Value>) -> String {
+    match input {
+        Some(serde_json::Value::Object(map)) if !map.is_empty() => {
+            serde_json::to_string(map).unwrap_or_default()
+        }
+        Some(serde_json::Value::String(text)) => text.clone(),
+        _ => String::new(),
+    }
+}
+
+/// A tool that takes no arguments may stream no `input_json_delta` at all;
+/// its arguments are the empty object.
+fn default_empty_tool_arguments(ctx: &mut StreamContext) {
+    let start = ctx.emitted_tool_calls;
+    for tool_call in ctx.tool_calls.iter_mut().skip(start) {
+        if tool_call.arguments.trim().is_empty() {
+            tool_call.arguments = "{}".to_string();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;
