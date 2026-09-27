@@ -48,7 +48,8 @@ const UNKNOWN_PROVIDER_CAPABILITY: ProviderCapability = {
   recommendedFor: [],
 };
 
-const ANTHROPIC_THINKING_MODEL_PATTERN = /claude-3-7|claude-opus-4|claude-sonnet-4|claude-haiku-4|claude-5|claude-fable|claude-mythos/i;
+// Keep in sync with `anthropic_thinking` in src-tauri/src/claude/provider.rs.
+const ANTHROPIC_THINKING_MODEL_PATTERN = /claude-3-7|claude-(?:opus|sonnet|haiku)-(?:[4-9]|\d{2})|claude-fable|claude-mythos/i;
 
 function isDeepSeekReasoningModel(modelLower: string): boolean {
   return /reasoner|reasoning|(^|[-_.\s/])r1($|[-_.\s/])|v4/i.test(modelLower);

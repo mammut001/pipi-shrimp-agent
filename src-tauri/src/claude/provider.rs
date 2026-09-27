@@ -11,6 +11,8 @@
  * - Capability-based routing
  * - Consistent baseURL resolution
  */
+use once_cell::sync::Lazy;
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 /// Provider identifier
@@ -272,13 +274,7 @@ impl ResolvedProviderConfig {
         match provider_id {
             ProviderId::Anthropic => {
                 // Anthropic models: check for thinking support
-                let supports_thinking = model_lower.contains("claude-3-7")
-                    || model_lower.contains("claude-opus-4")
-                    || model_lower.contains("claude-sonnet-4")
-                    || model_lower.contains("claude-haiku-4")
-                    || model_lower.contains("claude-5")
-                    || model_lower.contains("claude-fable")
-                    || model_lower.contains("claude-mythos");
+                let supports_thinking = supports_thinking(&model_lower);
 
                 ProviderCapabilities {
                     supports_thinking,
@@ -432,16 +428,54 @@ impl ResolvedProviderConfig {
     }
 }
 
+/// How an Anthropic model takes extended thinking.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AnthropicThinking {
+    /// `{type: "enabled", budget_tokens}` — Claude 3.7 through the 4.5 generation.
+    Budget,
+    /// `{type: "adaptive"}` — Claude 4.6 and later; 4.7+, 5.x and Fable reject
+    /// `budget_tokens` with a 400. Those newer models also omit the thinking
+    /// summary unless `display: "summarized"` is requested.
+    Adaptive { summarized_by_default: bool },
+}
+
+static CLAUDE_VERSION: Lazy<Regex> = Lazy::new(|| {
+    // claude-opus-4-8, claude-sonnet-5, claude-haiku-4-5-20251001, claude-opus-4.8
+    Regex::new(r"claude-(opus|sonnet|haiku)-(\d+)(?:[-.](\d{1,2}))?(?:\D|$)").unwrap()
+});
+
+pub fn anthropic_thinking(model: &str) -> Option<AnthropicThinking> {
+    let model_lower = model.to_lowercase();
+    if model_lower.contains("claude-fable") || model_lower.contains("claude-mythos") {
+        return Some(AnthropicThinking::Adaptive {
+            summarized_by_default: false,
+        });
+    }
+    if model_lower.contains("claude-3-7") {
+        return Some(AnthropicThinking::Budget);
+    }
+    let captures = CLAUDE_VERSION.captures(&model_lower)?;
+    let family = captures.get(1)?.as_str();
+    let major: u32 = captures.get(2)?.as_str().parse().ok()?;
+    let minor: u32 = captures
+        .get(3)
+        .and_then(|value| value.as_str().parse().ok())
+        .unwrap_or(0);
+    match (major, minor) {
+        (major, _) if major >= 5 => Some(AnthropicThinking::Adaptive {
+            summarized_by_default: false,
+        }),
+        (4, minor) if family != "haiku" && minor >= 6 => Some(AnthropicThinking::Adaptive {
+            summarized_by_default: minor == 6,
+        }),
+        (4, _) => Some(AnthropicThinking::Budget),
+        _ => None,
+    }
+}
+
 /// Check if a model supports extended thinking
 pub fn supports_thinking(model: &str) -> bool {
-    let model_lower = model.to_lowercase();
-    model_lower.contains("claude-3-7")
-        || model_lower.contains("claude-opus-4")
-        || model_lower.contains("claude-sonnet-4")
-        || model_lower.contains("claude-haiku-4")
-        || model_lower.contains("claude-5")
-        || model_lower.contains("claude-fable")
-        || model_lower.contains("claude-mythos")
+    anthropic_thinking(model).is_some()
 }
 
 /// Get default thinking budget for models that support it
@@ -653,5 +687,32 @@ mod tests {
         assert!(super::supports_thinking("claude-opus-4-5-20250501"));
         assert!(!super::supports_thinking("claude-3-5-sonnet-20241022"));
         assert!(!super::supports_thinking("gpt-4o"));
+    }
+
+    #[test]
+    fn test_anthropic_thinking_mode_per_generation() {
+        use super::{anthropic_thinking, AnthropicThinking::*};
+        let adaptive = Some(Adaptive { summarized_by_default: false });
+
+        // budget_tokens is still how 3.7 through 4.5 think.
+        assert_eq!(anthropic_thinking("claude-3-7-sonnet-20250219"), Some(Budget));
+        assert_eq!(anthropic_thinking("claude-sonnet-4-20250514"), Some(Budget));
+        assert_eq!(anthropic_thinking("claude-sonnet-4-5"), Some(Budget));
+        assert_eq!(anthropic_thinking("claude-haiku-4-5-20251001"), Some(Budget));
+        // 4.6 is adaptive with summaries on; 4.7+ / 5.x / Fable reject budgets.
+        assert_eq!(
+            anthropic_thinking("claude-opus-4-6"),
+            Some(Adaptive { summarized_by_default: true })
+        );
+        assert_eq!(anthropic_thinking("claude-opus-4-8"), adaptive);
+        assert_eq!(anthropic_thinking("anthropic/claude-opus-4.7"), adaptive);
+        assert_eq!(anthropic_thinking("claude-opus-5"), adaptive);
+        assert_eq!(anthropic_thinking("claude-opus-5-5"), adaptive);
+        assert_eq!(anthropic_thinking("claude-sonnet-5"), adaptive);
+        assert_eq!(anthropic_thinking("claude-fable-5-1"), adaptive);
+        assert_eq!(anthropic_thinking("claude-mythos-5-1"), adaptive);
+        // No extended thinking.
+        assert_eq!(anthropic_thinking("claude-3-5-sonnet-20241022"), None);
+        assert_eq!(anthropic_thinking("gpt-5.5"), None);
     }
 }

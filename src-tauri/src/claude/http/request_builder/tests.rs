@@ -374,3 +374,44 @@ fn builds_openai_body_with_strict_tools_when_supported() {
         "OpenAI provider should emit strict tool definitions"
     );
 }
+
+fn anthropic_thinking_body(model: &str) -> Value {
+    let config = crate::claude::provider::ResolvedProviderConfig::resolve(
+        model,
+        "token",
+        None,
+        Some(ProviderId::Anthropic),
+    );
+    let body = build_anthropic_body(
+        &config,
+        &[sample_message("user", "hi")],
+        None,
+        false,
+        true,
+        true,
+    );
+    body.get("thinking").cloned().unwrap_or(Value::Null)
+}
+
+#[test]
+fn anthropic_body_sends_adaptive_thinking_to_models_that_reject_budgets() {
+    for model in ["claude-opus-5", "claude-opus-5-5", "claude-sonnet-5", "claude-fable-5-1", "claude-opus-4-8"] {
+        assert_eq!(
+            anthropic_thinking_body(model),
+            serde_json::json!({ "type": "adaptive", "display": "summarized" }),
+            "{model}"
+        );
+    }
+    assert_eq!(
+        anthropic_thinking_body("claude-sonnet-4-6"),
+        serde_json::json!({ "type": "adaptive" })
+    );
+}
+
+#[test]
+fn anthropic_body_keeps_budget_thinking_for_older_models() {
+    let thinking = anthropic_thinking_body("claude-haiku-4-5-20251001");
+    assert_eq!(thinking["type"], "enabled");
+    assert!(thinking["budget_tokens"].as_u64().is_some());
+    assert_eq!(anthropic_thinking_body("claude-3-5-sonnet-20241022"), Value::Null);
+}
