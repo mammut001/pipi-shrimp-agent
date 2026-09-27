@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import { t } from '@/i18n';
 import { DocumentTagList } from './DocumentTagList';
 
 export interface DocumentMetadataSection {
@@ -54,15 +55,15 @@ export function DocumentMetadataSidebar({
       <div className="space-y-5 text-sm text-[#6f6e69]">
         {hasTimeline && (
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#9b9a97]">Timeline</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#9b9a97]">{t('document.metadata.timeline')}</p>
             <div className="mt-3 space-y-3">
               {createdAt && (
-                <MetadataCard label="Created">
+                <MetadataCard label={t('document.metadata.created')}>
                   {formatDateTime(createdAt)}
                 </MetadataCard>
               )}
               {updatedAt && (
-                <MetadataCard label="Updated">
+                <MetadataCard label={t('document.metadata.updated')}>
                   {formatDateTime(updatedAt)}
                 </MetadataCard>
               )}
@@ -81,7 +82,7 @@ export function DocumentMetadataSidebar({
 
         {path && (
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#9b9a97]">Path</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#9b9a97]">{t('document.metadata.path')}</p>
             <p className="mt-3 break-all rounded-2xl border border-[#e9e7e2] bg-white px-3 py-3 text-[12px] leading-5 text-[#6f6e69]">
               {path}
             </p>
@@ -90,7 +91,7 @@ export function DocumentMetadataSidebar({
 
         {tags.length > 0 && (
           <div>
-            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#9b9a97]">Tags</p>
+            <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-[#9b9a97]">{t('document.metadata.tags')}</p>
             <div className="mt-3">
               <DocumentTagList tags={tags} />
             </div>

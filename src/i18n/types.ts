@@ -17,6 +17,12 @@ export type TranslationKeys = {
   'common.success': string;
   'common.retry': string;
   'common.close': string;
+  'common.back': string;
+  'document.metadata.timeline': string;
+  'document.metadata.created': string;
+  'document.metadata.updated': string;
+  'document.metadata.path': string;
+  'document.metadata.tags': string;
   'common.or': string;
   'common.preview': string;
   'common.copy': string;
