@@ -313,6 +313,24 @@ export function failUnresolvedSessionTools(
   syncCurrentSessionToolRuntime(set, get);
 }
 
+/**
+ * A finished turn has handed every tool result back to the model, so none are
+ * pending any more. Drop them (Stop stays visible while pendingToolResults is
+ * non-empty) but keep the steps so the progress panel still shows the turn.
+ */
+export function clearSessionToolResults(
+  sessionId: string,
+  set: ChatSetState,
+  get: () => ChatState,
+): void {
+  const runtime = toolRuntimeBySession.get(sessionId);
+  if (!runtime || runtime.results.size === 0) {
+    return;
+  }
+  runtime.results.clear();
+  syncCurrentSessionToolRuntime(set, get);
+}
+
 export function clearSessionToolRuntime(
   sessionId: string,
   set: ChatSetState,

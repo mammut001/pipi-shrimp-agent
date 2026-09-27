@@ -48,7 +48,8 @@ const UNKNOWN_PROVIDER_CAPABILITY: ProviderCapability = {
   recommendedFor: [],
 };
 
-const ANTHROPIC_THINKING_MODEL_PATTERN = /claude-3-7|claude-opus-4|claude-sonnet-4|claude-haiku-4|claude-5|claude-fable|claude-mythos/i;
+// Keep in sync with `anthropic_thinking` in src-tauri/src/claude/provider.rs.
+const ANTHROPIC_THINKING_MODEL_PATTERN = /claude-3-7|claude-(?:opus|sonnet|haiku)-(?:[4-9]|\d{2})|claude-fable|claude-mythos/i;
 
 function isDeepSeekReasoningModel(modelLower: string): boolean {
   return /reasoner|reasoning|(^|[-_.\s/])r1($|[-_.\s/])|v4/i.test(modelLower);
@@ -106,6 +107,17 @@ const PROVIDER_CAPABILITIES: Record<ProviderCapabilityId, ProviderCapability> = 
     vision: false,
     maxContextTokens: 128_000,
     recommendedFor: ['reflection', 'agent', 'chat'],
+  },
+  commandcode: {
+    id: 'commandcode',
+    displayName: 'Command Code',
+    streaming: true,
+    toolCalls: 'openai',
+    jsonMode: false,
+    jsonSchema: false,
+    vision: false,
+    maxContextTokens: 128_000,
+    recommendedFor: ['agent', 'chat'],
   },
   'anthropic-compatible': {
     id: 'anthropic-compatible',

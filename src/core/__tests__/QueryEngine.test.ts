@@ -45,6 +45,7 @@ jest.mock('@/services/tools/toolResultSanitizer', () => ({
 }));
 
 import { runChatTurn } from '../QueryEngine';
+import { t } from '@/i18n';
 import { getSessionHandle, submitSessionToolResults } from '../runtime';
 import { runQueryEngineTurn } from '../runtime/queryLoop';
 import { ToolResultChannel } from '../runtime/ToolResultChannel';
@@ -171,7 +172,7 @@ describe('QueryEngine context overflow fallback', () => {
     }
 
     expect(events).toMatchObject([
-      { type: 'status_update', message: 'Context too large, retrying with a pruned request.' },
+      { type: 'status_update', message: t('runtime.contextTooLargeRetry') },
       { type: 'text_delta', content: 'OK' },
       {
         type: 'turn_complete',
@@ -226,7 +227,7 @@ describe('QueryEngine context overflow fallback', () => {
     const statusEvent = await iterator.next();
     expect(statusEvent.value).toMatchObject({
       type: 'status_update',
-      message: 'Executing 1 tool(s): read_file',
+      message: t('runtime.executingTools', { count: 1, names: 'read_file' }),
     });
 
     const toolBatchEvent = await iterator.next();
@@ -341,7 +342,7 @@ describe('QueryEngine context overflow fallback', () => {
     expect(events).toMatchObject([
       {
         type: 'status_update',
-        message: 'Model emitted text-form tool calls. Retrying with a structured tool-calling reminder.',
+        message: t('runtime.malformedToolCallRetry', { attempt: 1, max: 2 }),
       },
       { type: 'text_delta', content: 'Recovered' },
       {
@@ -397,19 +398,17 @@ describe('QueryEngine context overflow fallback', () => {
     expect(events.slice(0, 2)).toMatchObject([
       {
         type: 'status_update',
-        message: 'Model emitted text-form tool calls. Retrying with a structured tool-calling reminder.',
+        message: t('runtime.malformedToolCallRetry', { attempt: 1, max: 2 }),
       },
       {
         type: 'status_update',
-        message: 'Model repeated text-form tool calls. Retrying with a stricter structured tool-calling reminder.',
+        message: t('runtime.malformedToolCallRetry', { attempt: 2, max: 2 }),
       },
     ]);
     const errorEvent = events[events.length - 1];
     expect(errorEvent.type).toBe('error');
     const errorMessage = typeof errorEvent.error === 'string' ? errorEvent.error : (errorEvent.error as Error).message;
-    expect(errorMessage).toMatch(/after 2 automatic retries/i);
-    expect(errorMessage).toMatch(/not a silent interrupt/i);
-    expect(errorMessage).toMatch(/malformed_tool_call/);
+    expect(errorMessage).toBe('runtime.malformedToolCallExhausted');
     expect(mockBuildResolvedChatRequest).toHaveBeenCalledTimes(3);
   });
 
@@ -444,11 +443,11 @@ describe('QueryEngine context overflow fallback', () => {
     expect(events).toMatchObject([
       {
         type: 'status_update',
-        message: 'Model emitted text-form tool calls. Retrying with a structured tool-calling reminder.',
+        message: t('runtime.malformedToolCallRetry', { attempt: 1, max: 2 }),
       },
       {
         type: 'status_update',
-        message: 'Model repeated text-form tool calls. Retrying with a stricter structured tool-calling reminder.',
+        message: t('runtime.malformedToolCallRetry', { attempt: 2, max: 2 }),
       },
       { type: 'text_delta', content: 'Recovered after second retry' },
       {
@@ -561,7 +560,7 @@ describe('QueryEngine all-failed tool batch short-circuit', () => {
     const status = await iterator.next();
     expect(status.value).toMatchObject({
       type: 'status_update',
-      message: 'Executing 2 tool(s): read_file, execute_command',
+      message: t('runtime.executingTools', { count: 2, names: 'read_file, execute_command' }),
     });
 
     const batch = await iterator.next();
@@ -618,7 +617,7 @@ describe('QueryEngine all-failed tool batch short-circuit', () => {
     const status = await iterator.next();
     expect(status.value).toMatchObject({
       type: 'status_update',
-      message: 'Executing 1 tool(s): read_file',
+      message: t('runtime.executingTools', { count: 1, names: 'read_file' }),
     });
 
     const batch = await iterator.next();
@@ -902,7 +901,7 @@ describe('QueryEngine Ask-mode noTools contract', () => {
     const status = await iterator.next();
     expect(status.value).toMatchObject({
       type: 'status_update',
-      message: 'Executing 1 tool(s): execute_command',
+      message: t('runtime.executingTools', { count: 1, names: 'execute_command' }),
     });
 
     const batch = await iterator.next();
@@ -914,7 +913,7 @@ describe('QueryEngine Ask-mode noTools contract', () => {
     const retryStatus = await iterator.next();
     expect(retryStatus.value).toMatchObject({
       type: 'status_update',
-      message: 'Model called disallowed tools. Retrying with a stricter allowlist reminder (read_file, list_files, search_files).',
+      message: t('runtime.disallowedToolsRetry', { tools: 'read_file, list_files, search_files' }),
     });
 
     let event = await iterator.next();
@@ -1137,7 +1136,7 @@ describe('QueryEngine Ask-mode noTools contract', () => {
       if (
         event.type === 'status_update'
         && typeof (event as { message?: string }).message === 'string'
-        && (event as { message?: string }).message?.includes('Executing')
+        && (event as { message?: string }).message === 'runtime.executingTools'
       ) {
         turnActive = false;
       }

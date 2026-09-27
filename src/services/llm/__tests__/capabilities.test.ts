@@ -22,6 +22,22 @@ describe('buildProviderExecutionCapabilities', () => {
     expect(deepseekV3Caps.supportsToolCalls).toBe(true);
   });
 
+  it('enables thinking for current Claude generations and not for older ones', () => {
+    const thinks = (model: string) => buildProviderExecutionCapabilities({
+      provider: 'anthropic',
+      apiFormat: 'anthropic',
+      model,
+    }).supportsThinking;
+
+    for (const model of [
+      'claude-opus-5', 'claude-opus-5-5', 'claude-sonnet-5', 'claude-fable-5-1',
+      'claude-opus-4-8', 'claude-haiku-4-5-20251001', 'claude-3-7-sonnet-20250219',
+    ]) {
+      expect(thinks(model)).toBe(true);
+    }
+    expect(thinks('claude-3-5-sonnet-20241022')).toBe(false);
+  });
+
   it('disables supportsToolCalls for reasoning models like DeepSeek-R1 that do not support tool calling protocol', () => {
     const r1Caps = buildProviderExecutionCapabilities({
       provider: 'deepseek',

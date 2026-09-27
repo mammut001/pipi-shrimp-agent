@@ -7,6 +7,7 @@ use super::provider_adapter::ProviderCapabilities;
 use super::telemetry::sanitize_endpoint;
 use super::tool_catalog::{convert_tools_to_openai_format, get_tools, merge_system_prompt};
 use crate::claude::message::{Message, ToolCall};
+use crate::claude::provider::{anthropic_thinking, AnthropicThinking};
 
 mod artifacts;
 mod openai_history;
@@ -72,13 +73,6 @@ fn build_anthropic_user_content(message: &Message) -> Value {
     } else {
         Value::Array(content)
     }
-}
-
-pub fn supports_thinking(model: &str) -> bool {
-    model.contains("claude-3-7")
-        || model.contains("claude-opus-4")
-        || model.contains("claude-sonnet-4")
-        || model.contains("claude-haiku-4")
 }
 
 pub fn format_messages_for_anthropic(messages: &[Message]) -> Vec<Value> {
@@ -378,10 +372,21 @@ pub fn build_anthropic_body(
     }
 
     if thinking_enabled {
-        body["thinking"] = serde_json::json!({
-            "type": "enabled",
-            "budget_tokens": config.capabilities.thinking_budget.unwrap_or(16_000),
-        });
+        body["thinking"] = match anthropic_thinking(&config.model) {
+            Some(AnthropicThinking::Adaptive {
+                summarized_by_default,
+            }) => {
+                let mut thinking = serde_json::json!({ "type": "adaptive" });
+                if !summarized_by_default {
+                    thinking["display"] = serde_json::json!("summarized");
+                }
+                thinking
+            }
+            _ => serde_json::json!({
+                "type": "enabled",
+                "budget_tokens": config.capabilities.thinking_budget.unwrap_or(16_000),
+            }),
+        };
     }
 
     body

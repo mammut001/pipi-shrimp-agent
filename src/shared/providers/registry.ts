@@ -6,6 +6,8 @@
  * this registry instead of maintaining separate constants.
  */
 
+import { resolveRemoteModelPrice } from './remotePricing';
+
 // ============== Core Types ==============
 
 export type ApiFormat = 'anthropic' | 'openai';
@@ -16,6 +18,7 @@ export type ProviderName =
   | 'minimax'
   | 'gemini'
   | 'deepseek'
+  | 'commandcode'
   | 'anthropic-compatible'
   | 'openai-compatible';
 
@@ -78,73 +81,61 @@ const anthropicProvider: ProviderDef = {
   showBaseUrl: false,
   requiresBaseUrl: false,
   defaultModels: [
-    { id: 'claude-fable-5', name: 'Claude Fable 5' },
+    { id: 'claude-opus-5', name: 'Claude Opus 5' },
+    { id: 'claude-opus-5-5', name: 'Claude Opus 5.5' },
+    { id: 'claude-fable-5-1', name: 'Claude Fable 5.1' },
+    { id: 'claude-sonnet-5', name: 'Claude Sonnet 5' },
+    { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5' },
     { id: 'claude-opus-4-8', name: 'Claude Opus 4.8' },
+    { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
+    { id: 'claude-fable-5', name: 'Claude Fable 5' },
     { id: 'claude-sonnet-4-5', name: 'Claude Sonnet 4.5' },
-    { id: 'claude-sonnet-4-5-20250929', name: 'Claude Sonnet 4.5 (Sept 2025)' },
-    { id: 'claude-sonnet-4-latest', name: 'Claude Sonnet 4 Latest' },
-    { id: 'claude-3-5-sonnet-latest', name: 'Claude 3.5 Sonnet Latest' },
-    { id: 'claude-3-5-haiku-latest', name: 'Claude 3.5 Haiku Latest' },
-    { id: 'claude-sonnet-4-20250514', name: 'Claude Sonnet 4 (May 2025)' },
-    { id: 'claude-sonnet-4-20250508', name: 'Claude Sonnet 4 (May 8 2025)' },
-    { id: 'claude-3-5-sonnet-20241022', name: 'Claude 3.5 Sonnet (Oct 2024)' },
-    { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku (Oct 2024)' },
   ],
   defaultPricing: {
-    'claude-fable-5': {
+    'claude-opus-5': {
+      inputPrice: 5, outputPrice: 25,
+      cacheReadPrice: 0.5, cacheWritePrice: 6.25,
+      contextWindow: 1_000_000,
+    },
+    'claude-opus-5-5': {
+      inputPrice: 4, outputPrice: 20,
+      cacheReadPrice: 0.2, cacheWritePrice: 5,
+      contextWindow: 1_000_000,
+    },
+    'claude-fable-5-1': {
       inputPrice: 10, outputPrice: 50,
-      cacheReadPrice: 1.0, cacheWritePrice: 12.5,
-      contextWindow: 1000000,
+      cacheReadPrice: 0.25, cacheWritePrice: 12.5,
+      contextWindow: 1_000_000,
+    },
+    'claude-sonnet-5': {
+      inputPrice: 2, outputPrice: 10,
+      cacheReadPrice: 0.2, cacheWritePrice: 2.5,
+      contextWindow: 1_000_000,
+    },
+    'claude-haiku-4-5': {
+      inputPrice: 1, outputPrice: 5,
+      cacheReadPrice: 0.1, cacheWritePrice: 1.25,
+      contextWindow: 200_000,
     },
     'claude-opus-4-8': {
-      inputPrice: 15, outputPrice: 75,
-      cacheReadPrice: 1.5, cacheWritePrice: 18.75,
-      contextWindow: 200000,
+      inputPrice: 5, outputPrice: 25,
+      cacheReadPrice: 0.5, cacheWritePrice: 6.25,
+      contextWindow: 1_000_000,
+    },
+    'claude-sonnet-4-6': {
+      inputPrice: 3, outputPrice: 15,
+      cacheReadPrice: 0.3, cacheWritePrice: 3.75,
+      contextWindow: 1_000_000,
+    },
+    'claude-fable-5': {
+      inputPrice: 10, outputPrice: 50,
+      cacheReadPrice: 1, cacheWritePrice: 12.5,
+      contextWindow: 1_000_000,
     },
     'claude-sonnet-4-5': {
       inputPrice: 3, outputPrice: 15,
       cacheReadPrice: 0.3, cacheWritePrice: 3.75,
-      contextWindow: 200000,
-    },
-    'claude-sonnet-4-5-20250929': {
-      inputPrice: 3, outputPrice: 15,
-      cacheReadPrice: 0.3, cacheWritePrice: 3.75,
-      contextWindow: 200000,
-    },
-    'claude-sonnet-4-latest': {
-      inputPrice: 3, outputPrice: 15,
-      cacheReadPrice: 0.3, cacheWritePrice: 3.75,
-      contextWindow: 200000,
-    },
-    'claude-3-5-sonnet-latest': {
-      inputPrice: 3, outputPrice: 15,
-      cacheReadPrice: 0.3, cacheWritePrice: 3.75,
-      contextWindow: 200000,
-    },
-    'claude-3-5-haiku-latest': {
-      inputPrice: 0.25, outputPrice: 1.25,
-      cacheReadPrice: 0.03, cacheWritePrice: 0.03,
-      contextWindow: 200000,
-    },
-    'claude-sonnet-4-20250514': {
-      inputPrice: 3, outputPrice: 15,
-      cacheReadPrice: 0.3, cacheWritePrice: 3.75,
-      contextWindow: 200000,
-    },
-    'claude-sonnet-4-20250508': {
-      inputPrice: 3, outputPrice: 15,
-      cacheReadPrice: 0.3, cacheWritePrice: 3.75,
-      contextWindow: 200000,
-    },
-    'claude-3-5-sonnet-20241022': {
-      inputPrice: 3, outputPrice: 15,
-      cacheReadPrice: 0.3, cacheWritePrice: 3.75,
-      contextWindow: 200000,
-    },
-    'claude-3-5-haiku-20241022': {
-      inputPrice: 0.25, outputPrice: 1.25,
-      cacheReadPrice: 0.03, cacheWritePrice: 0.03,
-      contextWindow: 200000,
+      contextWindow: 200_000,
     },
   },
 };
@@ -289,6 +280,26 @@ const deepseekProvider: ProviderDef = {
   },
 };
 
+const commandcodeProvider: ProviderDef = {
+  id: 'commandcode',
+  label: 'Command Code',
+  defaultBaseUrl: 'https://api.commandcode.ai/provider/v1',
+  defaultApiFormat: 'openai',
+  requiresApiKey: true,
+  supportsModelFetch: true,
+  supportsCustomModel: true,
+  modelsEndpointStyle: 'openai',
+  showBaseUrl: true,
+  requiresBaseUrl: true,
+  baseUrlPlaceholder: 'https://api.commandcode.ai/provider/v1',
+  baseUrlHelp: 'Command Code Provider API — routes to DeepSeek/Kimi/GLM/Qwen/GPT etc. via OpenAI-compatible /chat/completions. Anthropic models on Command Code use Bearer auth on /messages, which this OpenAI-format route does not send — not supported yet.',
+  // No fabricated model IDs: Command Code hosts a large, changing catalog.
+  // Use "fetch models" (hits the public /provider/v1/models endpoint) or
+  // type a custom model ID (e.g. "deepseek/deepseek-v4-flash").
+  defaultModels: [],
+  defaultPricing: {},
+};
+
 const anthropicCompatibleProvider: ProviderDef = {
   id: 'anthropic-compatible',
   label: 'Anthropic Compatible',
@@ -332,6 +343,7 @@ export const PROVIDER_REGISTRY: Record<ProviderName, ProviderDef> = {
   minimax: minimaxProvider,
   gemini: geminiProvider,
   deepseek: deepseekProvider,
+  commandcode: commandcodeProvider,
   'anthropic-compatible': anthropicCompatibleProvider,
   'openai-compatible': openaiCompatibleProvider,
 };
@@ -375,11 +387,7 @@ export function getProviderDefaultApiFormat(providerName: string): ApiFormat | '
   return '';
 }
 
-/**
- * Resolve pricing for a model across all providers.
- * Returns the first matching pricing definition.
- */
-export function resolvePricing(
+function resolveRegistryPricing(
   modelId: string,
   providerName?: string,
 ): ProviderPricingDef | null {
@@ -397,6 +405,33 @@ export function resolvePricing(
     }
   }
   return null;
+}
+
+const FALLBACK_CONTEXT_WINDOW = 128_000;
+
+/**
+ * Resolve pricing for a model. Prices from the OpenRouter table (kept fresh
+ * by the backend) win over the registry defaults, which remain the offline
+ * fallback and the source of context-window / max-token limits.
+ */
+export function resolvePricing(
+  modelId: string,
+  providerName?: string,
+): ProviderPricingDef | null {
+  const registry = resolveRegistryPricing(modelId, providerName);
+  const remote = resolveRemoteModelPrice(modelId);
+  if (!remote) {
+    return registry;
+  }
+  const { price } = remote;
+  return {
+    inputPrice: price.in,
+    outputPrice: price.out,
+    cacheReadPrice: price.cache_read || registry?.cacheReadPrice,
+    cacheWritePrice: price.cache_write || registry?.cacheWritePrice,
+    maxTokens: registry?.maxTokens,
+    contextWindow: registry?.contextWindow ?? price.context_length ?? FALLBACK_CONTEXT_WINDOW,
+  };
 }
 
 /**

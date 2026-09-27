@@ -12,6 +12,23 @@ const truncatePath = (path: string, maxLength: number = 20): string => {
   return '.../' + parts.slice(-2).join('/');
 };
 
+/**
+ * Session rows hold their own action buttons and the rename input, so the row
+ * itself cannot be a <button>. Enter/Space activate it only when the row, not
+ * a nested control, has focus.
+ */
+function activateOnKey(action: () => void) {
+  return (event: React.KeyboardEvent<HTMLElement>) => {
+    if (event.target !== event.currentTarget) {
+      return;
+    }
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      action();
+    }
+  };
+}
+
 interface TokenUsage {
   input: number;
   output: number;
@@ -136,9 +153,12 @@ export function SidebarSessionList({
             <>
               {ungroupedSessions.map((session) => (
               <li key={session.id}>
-                <button
+                <div
+                  role="button"
+                  tabIndex={0}
                   onClick={() => isMultiSelectMode ? handleToggleSessionSelection(session.id) : handleSelectSession(session.id)}
-                  className={`w-full px-3 py-2 text-left rounded-xl transition-all group relative ${session.id === currentSessionId
+                  onKeyDown={activateOnKey(() => isMultiSelectMode ? handleToggleSessionSelection(session.id) : handleSelectSession(session.id))}
+                  className={`w-full px-3 py-2 text-left rounded-xl transition-all group relative cursor-pointer ${session.id === currentSessionId
                       ? 'bg-gray-100 shadow-sm'
                       : 'hover:bg-gray-50'
                     }`}
@@ -261,7 +281,7 @@ export function SidebarSessionList({
                       </button>
                     </div>
                   </div>
-                </button>
+                </div>
               </li>
             ))}
           </>
@@ -318,10 +338,13 @@ export function SidebarSessionList({
                   <ul className="ml-6 space-y-1 mt-1">
                     {[...getSessionsByProject(project.id)].map((session) => (
                       <li key={session.id}>
-                        <button
+                        <div
+                          role="button"
+                          tabIndex={0}
                           onClick={() => isMultiSelectMode ? handleToggleSessionSelection(session.id) : handleSelectSession(session.id)}
+                          onKeyDown={activateOnKey(() => isMultiSelectMode ? handleToggleSessionSelection(session.id) : handleSelectSession(session.id))}
                           onContextMenu={(e) => handleContextMenu(e, 'session', session.id)}
-                          className={`w-full px-3 py-1.5 text-left rounded-xl transition-all group relative ${session.id === currentSessionId
+                          className={`w-full px-3 py-1.5 text-left rounded-xl transition-all group relative cursor-pointer ${session.id === currentSessionId
                               ? 'bg-gray-100 shadow-sm'
                               : 'hover:bg-gray-50'
                             }`}
@@ -362,12 +385,13 @@ export function SidebarSessionList({
                                 title={t('sidebar.moveToProjectAction')}
                               >
                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
-                                  <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+                                  <path d="M8 5a1 1 0 100 2h5.586l-1.293 1.293a1 1 0 001.414 1.414l3-3a1 1 0 000-1.414l-3-3a1 1 0 10-1.414 1.414L13.586 7H8a1 1 0 100 2z" />
+                                  <path d="M3 9a1 1 0 011-1h12a1 1 0 110 2H4a1 1 0 01-1-1V9z" />
                                 </svg>
                               </button>
                             </div>
                           </div>
-                        </button>
+                        </div>
                       </li>
                     ))}
                   </ul>

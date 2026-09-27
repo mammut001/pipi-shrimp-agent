@@ -3,7 +3,7 @@
  * `src-tauri/src/claude/http/request_builder.rs` into its file modules.
  *
  * request_builder.rs is now under the <500 LOC target after extracting artifact detection and
- * OpenAI history helpers. Asserts it carries no test bodies and that all 10
+ * OpenAI history helpers. Asserts it carries no test bodies and that all
  * tests + the `sample_message` helper exist exactly once in tests.rs.
  */
 import fs from 'fs';
@@ -32,6 +32,8 @@ const TESTS = [
   'builds_deepseek_openai_body_with_tools_and_tool_choice',
   'builds_minimax_m3_body_with_reasoning_split',
   'builds_openai_body_with_strict_tools_when_supported',
+  'anthropic_body_sends_adaptive_thinking_to_models_that_reject_budgets',
+  'anthropic_body_keeps_budget_thinking_for_older_models',
 ];
 
 describe('AG-33 request_builder module extract guards', () => {
@@ -50,7 +52,7 @@ describe('AG-33 request_builder module extract guards', () => {
     expect(builder).not.toMatch(/fn sample_message\b/);
   });
 
-  it('tests.rs keeps the parent glob import, the helper and all 10 tests in order', () => {
+  it('tests.rs keeps the parent glob import, the helper and all tests in order', () => {
     const tests = read(TESTS_RS);
     expect(tests).toMatch(/^use super::\*;$/m);
     expect(tests.match(/^fn sample_message\(/gm)).toHaveLength(1);

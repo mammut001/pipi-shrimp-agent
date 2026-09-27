@@ -34,3 +34,15 @@ export {
 } from './runtime';
 
 export type { ProviderValidationErrors } from './runtime';
+
+export {
+  getRemotePricingMeta,
+  resolveRemoteModelPrice,
+  setRemotePricingTable,
+} from './remotePricing';
+
+export type {
+  RemoteModelPrice,
+  RemotePricingMeta,
+  RemotePricingTable,
+} from './remotePricing';

@@ -206,6 +206,19 @@ export type TranslationKeys = {
   'chat.folderDialogFailed': string;
   // Two-folder model — PiPi Output Folder (app-owned output root).
   'chat.pipiOutputFolder': string;
+  'chat.defaultPipiOutputFolder': string;
+  'runtime.executingTools': string;
+  'runtime.replyTruncated': string;
+  'runtime.contextTooLargeRetry': string;
+  'runtime.lazyToolCallRetry': string;
+  'runtime.disallowedToolsRetry': string;
+  'runtime.malformedToolCallRetry': string;
+  'runtime.malformedToolCallExhausted': string;
+  'runtime.modelRoundLimit': string;
+  'runtime.toolRoundLimit': string;
+  'runtime.planSaved': string;
+  'runtime.planNoOutputFolder': string;
+  'runtime.planSaveFailed': string;
   'chat.pipiOutputFolderTooltip': string;
   'chat.setPipiOutputFolder': string;
   'chat.noPipiOutputFolderHint': string;
@@ -878,6 +891,7 @@ export type TranslationKeys = {
   'permission.title': string;
   'permission.request': string;
   'permission.riskLevel': string;
+  'permission.policyConfirmReason': string;
   'permission.low': string;
   'permission.medium': string;
   'permission.high': string;
@@ -996,6 +1010,12 @@ export type TranslationKeys = {
   'settings.fetchingModels': string;
   'settings.modelPricing': string;
   'settings.defaultAvailable': string;
+  'settings.pricingSource': string;
+  'settings.pricingSourceMissing': string;
+  'settings.refreshPrices': string;
+  'settings.refreshingPrices': string;
+  'settings.pricesRefreshed': string;
+  'settings.pricesRefreshFailed': string;
   'settings.configure': string;
   'settings.pricingDescription': string;
   'settings.inputPricePerMillion': string;

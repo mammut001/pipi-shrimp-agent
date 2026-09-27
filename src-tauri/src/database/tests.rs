@@ -485,3 +485,59 @@ fn delete_session_then_late_save_messages_does_not_resurrect() {
         assert_eq!(kept[0].content, "keep me");
     });
 }
+
+#[test]
+fn updating_a_session_keeps_its_messages() {
+    with_temp_data_dir(|_| {
+        {
+            let mut guard = DATABASE.lock().expect("db lock");
+            *guard = None;
+        }
+        init_database().expect("init database");
+
+        let mut session = DbSession {
+            id: "sess-update".to_string(),
+            title: "Chat 1".to_string(),
+            created_at: 1,
+            updated_at: 1,
+            cwd: None,
+            project_id: None,
+            model: None,
+            work_dir: None,
+            working_files: None,
+            permission_mode: None,
+            project_dir: None,
+            pipi_output_dir: None,
+            execution_mode: None,
+        };
+        save_session(&session).expect("save session");
+        save_message(&DbMessage {
+            id: "m-keep".to_string(),
+            session_id: "sess-update".to_string(),
+            role: "user".to_string(),
+            content: "hello".to_string(),
+            reasoning: None,
+            attachments: None,
+            artifacts: None,
+            tool_calls: None,
+            token_usage: None,
+            created_at: 2,
+        })
+        .expect("save message");
+
+        // e.g. binding a project folder re-saves the whole session row.
+        session.project_dir = Some("/tmp/project".to_string());
+        session.updated_at = 3;
+        save_session(&session).expect("re-save session");
+
+        let messages = get_messages_for_session("sess-update").expect("load messages");
+        assert_eq!(messages.len(), 1, "session update must not cascade-delete messages");
+        let stored = get_all_sessions()
+            .expect("load sessions")
+            .into_iter()
+            .find(|s| s.id == "sess-update")
+            .expect("session exists");
+        assert_eq!(stored.project_dir.as_deref(), Some("/tmp/project"));
+        assert_eq!(stored.updated_at, 3);
+    });
+}

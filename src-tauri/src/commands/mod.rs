@@ -26,6 +26,7 @@ pub mod models;
 pub mod path_security; // Path validation - defense in depth
 #[cfg(test)]
 mod path_security_test; // Tests for path_security
+pub mod pricing; // Model pricing table (OpenRouter)
 pub mod project_file; // Project-relative file helpers
 pub mod search;
 pub mod secure_storage;
@@ -47,6 +48,7 @@ pub use config::*;
 pub use doc::*; // Document management
 pub use file::*;
 pub use models::*;
+pub use pricing::*;
 pub use search::*;
 pub use secure_storage::*;
 pub use session_memory::*;

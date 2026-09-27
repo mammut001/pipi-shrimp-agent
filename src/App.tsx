@@ -20,6 +20,7 @@ import { setupBrowserObservabilityWiring } from '@/store/browserObservabilityWir
 import { useSwarmStore } from '@/store/swarmStore';
 import { initializeTelegramStore } from '@/store/telegramStore';
 import { setupTaskDiagnosticsWiring } from '@/services/taskDiagnosticsWiring';
+import { initModelPricingTable } from '@/services/modelPricingTable';
 import { ChatBrowserWorkspaceShell } from '@/components/ChatBrowserWorkspaceShell';
 import { useKeyboardShortcuts, KeyboardShortcutsModal } from '@/components/KeyboardShortcutsModal';
 import { NewChatProjectPickerModal } from '@/components/NewChatProjectPickerModal';
@@ -103,6 +104,10 @@ export default function App() {
 
       Promise.resolve().then(() => initSwarm()).catch((error) => {
         console.warn('Swarm background initialization failed:', error);
+      });
+
+      Promise.resolve().then(() => initModelPricingTable()).catch((error) => {
+        console.warn('Model pricing initialization failed:', error);
       });
 
       try {
