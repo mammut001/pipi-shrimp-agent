@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { useChatStore, useUIStore } from '@/store';
+import { t } from '@/i18n';
 
 interface SkillRuntimeResult {
   success: boolean;
@@ -37,7 +38,7 @@ function cleanFrontmatterValue(value: string): string {
 
 function parseSkill(id: string, content: string): RuntimeSkill {
   let name = id;
-  let description = 'Runtime skill loaded from SKILL.md';
+  let description = t('skill.runtime.defaultDescription');
   const lines = content.split(/\r?\n/);
 
   if (lines[0]?.trim() === '---') {
@@ -133,7 +134,7 @@ export function Skill() {
     const id = customSkillName.trim();
     if (!id) return;
     if (!/^[\p{L}\p{N}_-]+$/u.test(id)) {
-      setError('Skill name can only contain letters, numbers, dash, or underscore.');
+      setError(t('skill.runtime.nameValidationError'));
       return;
     }
 
@@ -142,7 +143,7 @@ export function Skill() {
     try {
       const loaded = await loadRuntimeSkill(id);
       if (!loaded) {
-        setError(`Skill "${id}" was not found in the runtime skill directories.`);
+        setError(t('skill.runtime.notFoundError', { id }));
         return;
       }
       setSkills((current) => {
@@ -180,7 +181,7 @@ export function Skill() {
       });
 
       if (!runtime.success || !runtime.output) {
-        throw new Error(runtime.error || `Failed to load ${selectedSkill.id}`);
+        throw new Error(runtime.error || t('skill.runtime.loadFailedError', { id: selectedSkill.id }));
       }
 
       // Skill execution is an explicit action, so move the session into the
@@ -210,29 +211,29 @@ export function Skill() {
         <div className="border-b border-gray-200 px-6 py-5">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <h1 className="text-lg font-semibold">Skills</h1>
+              <h1 className="text-lg font-semibold">{t('skill.title')}</h1>
               <p className="mt-1 text-xs leading-relaxed text-gray-500">
-                Only skills that successfully load a real SKILL.md are shown.
+                {t('skill.runtime.subtitle')}
               </p>
             </div>
             <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-1 text-[10px] font-bold uppercase tracking-wider text-emerald-700">
-              Runtime
+              {t('skill.runtime.badge')}
             </span>
           </div>
 
           <input
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder="Filter loaded skills…"
+            placeholder={t('skill.runtime.filterPlaceholder')}
             className="mt-4 w-full rounded-xl border border-gray-200 bg-white px-3 py-2 text-sm outline-none transition focus:border-gray-400"
           />
         </div>
 
         <div className="flex-1 overflow-y-auto p-3">
           {loadingCatalog ? (
-            <div className="px-3 py-8 text-center text-xs text-gray-500">Discovering runtime skills…</div>
+            <div className="px-3 py-8 text-center text-xs text-gray-500">{t('skill.runtime.discovering')}</div>
           ) : filteredSkills.length === 0 ? (
-            <div className="px-3 py-8 text-center text-xs text-gray-500">No loaded skills match this filter.</div>
+            <div className="px-3 py-8 text-center text-xs text-gray-500">{t('skill.runtime.noMatch')}</div>
           ) : (
             <div className="space-y-1.5">
               {filteredSkills.map((skill) => (
@@ -258,7 +259,7 @@ export function Skill() {
         </div>
 
         <div className="border-t border-gray-200 p-4">
-          <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">Load installed/custom skill</label>
+          <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400">{t('skill.runtime.loadCustomLabel')}</label>
           <div className="mt-2 flex gap-2">
             <input
               value={customSkillName}
@@ -275,7 +276,7 @@ export function Skill() {
               onClick={() => void probeCustomSkill()}
               className="rounded-lg bg-gray-900 px-3 py-2 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
             >
-              Load
+              {t('skill.runtime.load')}
             </button>
           </div>
         </div>
@@ -299,15 +300,15 @@ export function Skill() {
                 onClick={() => setCurrentView('chat')}
                 className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-50"
               >
-                Back to chat
+                {t('skill.backToChat')}
               </button>
             </header>
 
             <div className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_360px]">
               <section className="min-h-0 overflow-y-auto border-r border-gray-200 p-7">
                 <div className="mb-3 flex items-center justify-between">
-                  <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400">Real runtime instructions</h3>
-                  <span className="text-[10px] text-gray-400">Read-only preview</span>
+                  <h3 className="text-xs font-bold uppercase tracking-wider text-gray-400">{t('skill.runtime.instructionsTitle')}</h3>
+                  <span className="text-[10px] text-gray-400">{t('skill.runtime.readOnlyPreview')}</span>
                 </div>
                 <pre className="whitespace-pre-wrap break-words rounded-2xl border border-gray-200 bg-gray-50 p-5 font-mono text-[11px] leading-relaxed text-gray-700">
                   {selectedSkill.content}
@@ -316,15 +317,15 @@ export function Skill() {
 
               <section className="flex min-h-0 flex-col p-6">
                 <div>
-                  <h3 className="text-sm font-semibold">Run this skill</h3>
+                  <h3 className="text-sm font-semibold">{t('skill.runtime.runThisSkill')}</h3>
                   <p className="mt-1 text-[11px] leading-relaxed text-gray-500">
-                    The task is appended to the real SKILL.md and sent into a Danger-mode chat. Risky actions still keep approvals; destructive actions are double-checked by the mode harness.
+                    {t('skill.runtime.runDescription')}
                   </p>
                 </div>
                 <textarea
                   value={task}
                   onChange={(event) => setTask(event.target.value)}
-                  placeholder="Describe the concrete task for this skill…"
+                  placeholder={t('skill.runtime.taskPlaceholder')}
                   className="mt-4 min-h-[180px] flex-1 resize-none rounded-2xl border border-gray-200 p-3 text-sm leading-relaxed outline-none transition focus:border-gray-400"
                 />
                 <button
@@ -333,10 +334,10 @@ export function Skill() {
                   onClick={() => void runSelectedSkill()}
                   className="mt-3 rounded-xl bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-rose-700 disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  {running ? 'Starting runtime…' : 'Run in Danger'}
+                  {running ? t('skill.runtime.startingRuntime') : t('skill.runtime.runInDanger')}
                 </button>
                 <p className="mt-2 text-center text-[10px] text-gray-400">
-                  No Skill delete/edit API is exposed from this page.
+                  {t('skill.runtime.noEditApiNote')}
                 </p>
               </section>
             </div>
@@ -344,9 +345,9 @@ export function Skill() {
         ) : (
           <div className="flex flex-1 items-center justify-center p-8 text-center">
             <div className="max-w-md">
-              <h2 className="text-base font-semibold">No runtime skill selected</h2>
+              <h2 className="text-base font-semibold">{t('skill.runtime.noSkillSelectedTitle')}</h2>
               <p className="mt-2 text-xs leading-relaxed text-gray-500">
-                Load an installed skill by name, or check that the packaged SKILL.md directories are available.
+                {t('skill.runtime.noSkillSelectedDescription')}
               </p>
             </div>
           </div>

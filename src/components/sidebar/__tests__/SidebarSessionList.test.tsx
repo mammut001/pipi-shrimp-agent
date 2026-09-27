@@ -66,4 +66,16 @@ describe('SidebarSessionList', () => {
     expect(props.handleSelectSession).toHaveBeenCalledTimes(2);
     expect(props.handleOpenMoveChatModal).toHaveBeenCalledWith('loose');
   });
+
+  it('opens the session context menu on right-click, for ungrouped and grouped rows alike', () => {
+    const { props } = renderList();
+    const looseRow = screen.getByText('Loose chat').closest('[role="button"]') as HTMLElement;
+    const groupedRow = screen.getByText('Grouped chat').closest('[role="button"]') as HTMLElement;
+
+    fireEvent.contextMenu(looseRow);
+    expect(props.handleContextMenu).toHaveBeenCalledWith(expect.anything(), 'session', 'loose');
+
+    fireEvent.contextMenu(groupedRow);
+    expect(props.handleContextMenu).toHaveBeenCalledWith(expect.anything(), 'session', 'grouped');
+  });
 });

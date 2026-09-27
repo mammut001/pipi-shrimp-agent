@@ -318,6 +318,8 @@ export type TranslationKeys = {
   // Workflow
   'workflow.title': string;
   'workflow.newWorkflow': string;
+  'workflow.emptyStateTitle': string;
+  'workflow.emptyStateDescription': string;
   'workflow.clearCanvas': string;
   'workflow.clearCanvasConfirm': string;
   'workflow.clearCanvasWarning': string;
@@ -852,6 +854,29 @@ export type TranslationKeys = {
   'skill.cancel': string;
   'skill.saveChanges': string;
   'skill.addSkill': string;
+
+  // Runtime skills page (src/pages/Skill.tsx)
+  'skill.runtime.subtitle': string;
+  'skill.runtime.badge': string;
+  'skill.runtime.filterPlaceholder': string;
+  'skill.runtime.discovering': string;
+  'skill.runtime.noMatch': string;
+  'skill.runtime.loadCustomLabel': string;
+  'skill.runtime.load': string;
+  'skill.runtime.instructionsTitle': string;
+  'skill.runtime.readOnlyPreview': string;
+  'skill.runtime.runThisSkill': string;
+  'skill.runtime.runDescription': string;
+  'skill.runtime.taskPlaceholder': string;
+  'skill.runtime.startingRuntime': string;
+  'skill.runtime.runInDanger': string;
+  'skill.runtime.noEditApiNote': string;
+  'skill.runtime.noSkillSelectedTitle': string;
+  'skill.runtime.noSkillSelectedDescription': string;
+  'skill.runtime.nameValidationError': string;
+  'skill.runtime.notFoundError': string;
+  'skill.runtime.loadFailedError': string;
+  'skill.runtime.defaultDescription': string;
 
   // Skill Documentation Content
   'skill.pdf.name': string;

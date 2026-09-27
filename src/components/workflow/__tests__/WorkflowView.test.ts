@@ -160,11 +160,11 @@ describe('WorkflowView', () => {
     workflowState = createWorkflowState(false);
 
     await harness.render(createElement(WorkflowView));
-    expect(harness.container.textContent).toContain('No Active Workflow');
+    expect(harness.container.textContent).toContain('workflow.emptyStateTitle');
 
     await clickElement(findButtonByText(harness.container, 'workflow.newWorkflow'), harness.window);
 
-    expect(harness.container.textContent).not.toContain('No Active Workflow');
+    expect(harness.container.textContent).not.toContain('workflow.emptyStateTitle');
     expect(harness.container.textContent).toContain('goal-panel');
     expect(harness.container.textContent).toContain('execution-bar');
     expect(harness.container.textContent).toContain('workflow-history');

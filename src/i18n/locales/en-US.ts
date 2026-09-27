@@ -734,6 +734,8 @@ const enUS: TranslationKeys = {
   // Workflow
   'workflow.title': 'Workflow',
   'workflow.newWorkflow': 'New Workflow',
+  'workflow.emptyStateTitle': 'No Active Workflow',
+  'workflow.emptyStateDescription': 'Create a new workflow to get started with multi-agent orchestration.',
   'workflow.clearCanvas': 'Clear',
   'workflow.clearCanvasConfirm': 'Are you sure you want to clear the canvas? This cannot be undone.',
   'workflow.clearCanvasWarning': 'The workflow will run using the current Agent Task configuration',
@@ -1268,6 +1270,29 @@ const enUS: TranslationKeys = {
   'skill.cancel': 'Cancel',
   'skill.saveChanges': 'Save changes',
   'skill.addSkill': 'Add Skill',
+
+  // Runtime skills page (src/pages/Skill.tsx)
+  'skill.runtime.subtitle': 'Only skills that successfully load a real SKILL.md are shown.',
+  'skill.runtime.badge': 'Runtime',
+  'skill.runtime.filterPlaceholder': 'Filter loaded skills…',
+  'skill.runtime.discovering': 'Discovering runtime skills…',
+  'skill.runtime.noMatch': 'No loaded skills match this filter.',
+  'skill.runtime.loadCustomLabel': 'Load installed/custom skill',
+  'skill.runtime.load': 'Load',
+  'skill.runtime.instructionsTitle': 'Real runtime instructions',
+  'skill.runtime.readOnlyPreview': 'Read-only preview',
+  'skill.runtime.runThisSkill': 'Run this skill',
+  'skill.runtime.runDescription': 'The task is appended to the real SKILL.md and sent into a Danger-mode chat. Risky actions still keep approvals; destructive actions are double-checked by the mode harness.',
+  'skill.runtime.taskPlaceholder': 'Describe the concrete task for this skill…',
+  'skill.runtime.startingRuntime': 'Starting runtime…',
+  'skill.runtime.runInDanger': 'Run in Danger',
+  'skill.runtime.noEditApiNote': 'No Skill delete/edit API is exposed from this page.',
+  'skill.runtime.noSkillSelectedTitle': 'No runtime skill selected',
+  'skill.runtime.noSkillSelectedDescription': 'Load an installed skill by name, or check that the packaged SKILL.md directories are available.',
+  'skill.runtime.nameValidationError': 'Skill name can only contain letters, numbers, dash, or underscore.',
+  'skill.runtime.notFoundError': 'Skill "{id}" was not found in the runtime skill directories.',
+  'skill.runtime.loadFailedError': 'Failed to load {id}',
+  'skill.runtime.defaultDescription': 'Runtime skill loaded from SKILL.md',
 
   // Skill Documentation Content
   'skill.pdf.name': 'PDF Analyzer',

@@ -36,6 +36,9 @@ interface SidebarModalsProps {
   handleConfirmBatchDeleteWorkflows: () => void | Promise<void>;
   handleConfirmWorkflowDelete: () => void;
   contextMenu: ContextMenu;
+  closeContextMenu: () => void;
+  handleOpenMoveChatModal: (sessionId: string) => void;
+  handleOpenDeleteConfirm: (sessionId: string) => void;
   handleDeleteProject: (projectId: string) => void | Promise<void>;
   renderSidebarModal: (isOpen: boolean, content: React.ReactNode) => React.ReactNode;
 }
@@ -69,6 +72,9 @@ export function SidebarModals({
   handleConfirmBatchDeleteWorkflows,
   handleConfirmWorkflowDelete,
   contextMenu,
+  closeContextMenu,
+  handleOpenMoveChatModal,
+  handleOpenDeleteConfirm,
   handleDeleteProject,
   renderSidebarModal,
 }: SidebarModalsProps) {
@@ -242,6 +248,22 @@ export function SidebarModals({
             >
               {t('sidebar.deleteProject')}
             </button>
+          )}
+          {contextMenu.type === 'session' && (
+            <>
+              <button
+                onClick={() => { handleOpenMoveChatModal(contextMenu.id); closeContextMenu(); }}
+                className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-100"
+              >
+                {t('sidebar.moveToProjectAction')}
+              </button>
+              <button
+                onClick={() => { handleOpenDeleteConfirm(contextMenu.id); closeContextMenu(); }}
+                className="w-full px-4 py-2 text-left text-sm text-red-600 hover:bg-gray-100"
+              >
+                {t('sidebar.deleteChatAction')}
+              </button>
+            </>
           )}
         </div>
       )}

@@ -184,10 +184,10 @@ export function WorkflowView() {
       <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col items-center justify-center bg-gray-50">
         <div className="text-6xl mb-4 opacity-60">🦐</div>
         <h2 className="text-xl font-semibold text-gray-700 mb-2">
-          No Active Workflow
+          {t('workflow.emptyStateTitle')}
         </h2>
         <p className="text-gray-400 mb-6 text-center max-w-sm">
-          Create a new workflow to get started with multi-agent orchestration.
+          {t('workflow.emptyStateDescription')}
         </p>
         <button
           onClick={() => useWorkflowStore.getState().createInstance()}
