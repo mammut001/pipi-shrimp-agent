@@ -170,6 +170,7 @@ export type TranslationKeys = {
   'chat.stopBusyHint': string;
   'chat.thinking': string;
   'chat.aiThinking': string;
+  'chat.charCount': string;
   'chat.tokenUsage': string;
   'chat.newSession': string;
   'chat.sessionTokenUsage': string;

@@ -587,6 +587,7 @@ const enUS: TranslationKeys = {
   'chat.stopBusyHint': 'Turn in progress — Stop is available',
   'chat.thinking': 'Thought process',
   'chat.aiThinking': 'AI is thinking...',
+  'chat.charCount': '{count} chars',
   'chat.tokenUsage': 'Token Usage',
   'chat.newSession': 'New Chat',
   'chat.sessionTokenUsage': 'This session',

@@ -587,6 +587,7 @@ const zhCN: TranslationKeys = {
   'chat.stopBusyHint': '回合进行中 — 可停止',
   'chat.thinking': '思考过程',
   'chat.aiThinking': 'AI 正在思考...',
+  'chat.charCount': '{count} 字符',
   'chat.tokenUsage': 'Token 使用量',
   'chat.newSession': '新建对话',
   'chat.sessionTokenUsage': '本次会话',

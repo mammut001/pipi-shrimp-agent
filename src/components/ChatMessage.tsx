@@ -450,7 +450,7 @@ function ReasoningHeader({
 
       {/* Char count */}
       <span className="text-xs text-gray-400">
-        {charCount > 1000 ? `${(charCount / 1000).toFixed(1)}K` : charCount} chars
+        {t('chat.charCount', { count: charCount > 1000 ? `${(charCount / 1000).toFixed(1)}K` : charCount })}
       </span>
     </div>
   );
