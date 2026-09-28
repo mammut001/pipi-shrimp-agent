@@ -68,6 +68,11 @@ export type TranslationKeys = {
   'settings.apiProvider': string;
   'settings.apiKey': string;
   'settings.apiKeyPlaceholder': string;
+  'settings.apiKeyCharacterCount': string;
+  'settings.apiKeyMayBeTruncated': string;
+  'settings.apiKeyRequiredError': string;
+  'settings.apiKeyMaskedError': string;
+  'settings.apiKeyTruncatedError': string;
   'settings.model': string;
   'settings.language': string;
   'settings.languageDescription': string;

@@ -1,4 +1,5 @@
 import { useSettingsStore } from '@/store';
+import { t } from '@/i18n';
 import { getProvider } from '@/shared/providers';
 import { getCapability } from '@/services/llm/capabilities';
 import {
@@ -204,7 +205,7 @@ export function validateApiKeyForConnection(
   if (length === 0) {
     return {
       ok: false,
-      error: 'API key is required. Paste your full key (empty or whitespace-only values are rejected).',
+      error: t('settings.apiKeyRequiredError'),
       sanitized,
       length,
     };
@@ -213,7 +214,7 @@ export function validateApiKeyForConnection(
   if (looksLikeMaskedSecret(rawValue)) {
     return {
       ok: false,
-      error: 'API key still looks like a masked placeholder (••••). Re-paste the full secret before testing.',
+      error: t('settings.apiKeyMaskedError'),
       sanitized,
       length,
     };
@@ -222,7 +223,7 @@ export function validateApiKeyForConnection(
   if (length < minLength) {
     return {
       ok: false,
-      error: `API key looks truncated (${length} characters; need at least ${minLength}). Re-paste the full key.`,
+      error: t('settings.apiKeyTruncatedError', { length, minLength }),
       sanitized,
       length,
     };
@@ -234,10 +235,7 @@ export function validateApiKeyForConnection(
 /** Non-secret length label for Settings UI. */
 export function formatApiKeyLengthHint(rawValue: string): string {
   const length = sanitizeApiKeyValue(rawValue).length;
-  if (length === 0) {
-    return '0 characters';
-  }
-  return `${length} characters`;
+  return t('settings.apiKeyCharacterCount', { count: length });
 }
 
 export function preserveApiKeyValue(inputValue: string, existingValue?: string): string {

@@ -250,7 +250,7 @@ export function ApiConfigurationSettings({
                   {formatApiKeyLengthHint(formData.apiKey)}
                   {sanitizeApiKeyValue(formData.apiKey).length > 0
                     && sanitizeApiKeyValue(formData.apiKey).length < 8
-                    ? ' — key may be truncated; paste the full secret'
+                    ? ` — ${t('settings.apiKeyMayBeTruncated')}`
                     : ''}
                 </p>
                 {errors.apiKey && <p className="mt-1 text-xs text-red-500">{errors.apiKey}</p>}

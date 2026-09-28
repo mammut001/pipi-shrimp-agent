@@ -136,7 +136,7 @@ describe('agentConfig resolver', () => {
     expect(validateApiKeyForConnection('••••••••').ok).toBe(false);
     expect(validateApiKeyForConnection('short').ok).toBe(false);
     if (!validateApiKeyForConnection('short').ok) {
-      expect(validateApiKeyForConnection('short').error).toMatch(/truncated/i);
+      expect(validateApiKeyForConnection('short').error).toBe('settings.apiKeyTruncatedError');
     }
 
     const good = validateApiKeyForConnection('  Bearer sk-live-abcdefghij\n');
@@ -149,8 +149,8 @@ describe('agentConfig resolver', () => {
   });
 
   it('formats a non-secret length hint for the Settings UI', () => {
-    expect(formatApiKeyLengthHint('')).toBe('0 characters');
-    expect(formatApiKeyLengthHint('  Bearer abcd1234  ')).toBe('8 characters');
+    expect(formatApiKeyLengthHint('')).toBe('settings.apiKeyCharacterCount');
+    expect(formatApiKeyLengthHint('  Bearer abcd1234  ')).toBe('settings.apiKeyCharacterCount');
   });
 
   it('resolves anthropic-compatible adapter name with fallback default', () => {
