@@ -358,7 +358,7 @@ const AgentNode: React.FC<NodeProps> = memo(({ data, selected }) => {
                 }}
                 className="w-full flex items-center gap-1 text-[10px] px-1.5 py-1 bg-gray-50 hover:bg-gray-100 rounded border border-gray-200 transition-colors"
               >
-                <span className="text-gray-500">Model:</span>
+                <span className="text-gray-500">{t('settings.model')}:</span>
                 <span className="text-gray-700 font-medium truncate flex-1 text-left">
                   {currentProvider ? `${currentProvider}/${currentModelId || 'default'}` : t('workflow.usingGlobalConfig')}
                 </span>

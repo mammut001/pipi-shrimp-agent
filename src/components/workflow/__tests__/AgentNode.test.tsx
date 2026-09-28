@@ -98,7 +98,7 @@ describe('AgentNode component', () => {
 
     // Click model selector button to open dropdown popover
     const modelButton = Array.from(harness.container.querySelectorAll('button')).find((b) =>
-      b.textContent?.includes('Model:'),
+      b.textContent?.includes('settings.model:'),
     );
     expect(modelButton).toBeDefined();
     await clickElement(modelButton!, harness.window);

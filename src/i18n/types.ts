@@ -477,6 +477,9 @@ export type TranslationKeys = {
   'workflow.loadTemplate': string;
   'workflow.presetChain': string;
   'workflow.openWorkDir': string;
+  'workflow.addAgent': string;
+  'workflow.addAgentHere': string;
+  'workflow.clearAll': string;
   'workflow.notInWorkflowPage': string;
   'workflow.noWorkflowRunning': string;
   'workflow.cannotOpenDir': string;
