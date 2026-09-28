@@ -21,6 +21,7 @@
 
 import React, { lazy, Suspense } from 'react';
 import { useUIStore } from '@/store';
+import { t } from '@/i18n';
 import { useArtifactsStore } from '@/store/artifactsStore';
 import { useResponsiveLayout } from '@/hooks';
 import { Sidebar, NotificationToast, FileDropOverlay, AgentPanel } from '@/components';
@@ -112,8 +113,8 @@ export function MainLayout({
             type="button"
             onClick={toggleSidebar}
             className="absolute right-3 top-4 z-20 flex h-8 w-8 items-center justify-center rounded-full border border-[#e7e5e1] bg-white/95 text-[#6f6e69] shadow-[0_8px_20px_rgba(15,23,42,0.08)] transition-[background-color,color,box-shadow,transform,border-color] duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] hover:-translate-y-px hover:border-[#ddd8d0] hover:bg-white hover:text-[#37352f] hover:shadow-[0_12px_24px_rgba(15,23,42,0.12)] active:translate-y-0"
-            title={sidebarExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
-            aria-label={sidebarExpanded ? 'Collapse sidebar' : 'Expand sidebar'}
+            title={sidebarExpanded ? t('rail.hideSidebar') : t('rail.showSidebar')}
+            aria-label={sidebarExpanded ? t('rail.hideSidebar') : t('rail.showSidebar')}
           >
             <svg
               className={`h-4 w-4 transition-transform duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${sidebarExpanded ? '' : 'rotate-180'}`}
@@ -162,8 +163,8 @@ export function MainLayout({
             type="button"
             onClick={toggleRightPanel}
             className="absolute right-3 top-4 z-20 flex h-8 w-8 items-center justify-center rounded-full border border-[#e7e5e1] bg-white/95 text-[#6f6e69] shadow-[0_8px_20px_rgba(15,23,42,0.08)] transition-[background-color,color,box-shadow,transform,border-color] duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] hover:-translate-y-px hover:border-[#ddd8d0] hover:bg-white hover:text-[#37352f] hover:shadow-[0_12px_24px_rgba(15,23,42,0.12)] active:translate-y-0"
-            title={shouldShowRightPanel ? 'Hide right panel' : 'Show right panel'}
-            aria-label={shouldShowRightPanel ? 'Hide right panel' : 'Show right panel'}
+            title={shouldShowRightPanel ? t('rail.hideRightPanel') : t('rail.showRightPanel')}
+            aria-label={shouldShowRightPanel ? t('rail.hideRightPanel') : t('rail.showRightPanel')}
           >
             <svg
               className={`h-4 w-4 transition-transform duration-[220ms] ease-[cubic-bezier(0.22,1,0.36,1)] ${shouldShowRightPanel ? 'rotate-180' : ''}`}

@@ -95,9 +95,7 @@ it('renders capability badges for all configured AutoResearch providers', () => 
   });
 
   const normalized = container.textContent?.replace(/\s+/g, ' ').trim();
-  expect(normalized).toMatchInlineSnapshot(
-    `"AutoResearch LLM ProviderPick the default provider snapshot for AutoResearch runs, then override agent and reflection only when needed.Default providerUse active Settings configMiniMax AgentMiniMax · MiniMax-M3OpenAI AgentActiveOpenAI · gpt-5.4Anthropic ReflectionAnthropic · claude-sonnet-4-5Gemini VisionGemini · gemini-3.5-flashAgent model overrideUse AutoResearch defaultMiniMax AgentMiniMax · MiniMax-M3OpenAI AgentActiveOpenAI · gpt-5.4Anthropic ReflectionAnthropic · claude-sonnet-4-5Gemini VisionGemini · gemini-3.5-flashReflection model overrideUse AutoResearch defaultMiniMax AgentMiniMax · MiniMax-M3OpenAI AgentActiveOpenAI · gpt-5.4Anthropic ReflectionAnthropic · claude-sonnet-4-5Gemini VisionGemini · gemini-3.5-flashSelected default snapshotOpenAI AgentOpenAI · gpt-5.4streamingtool:openaijson_modevision"`,
-  );
+  expect(normalized).toMatchInlineSnapshot(`"autoresearch.llmSettings.titleautoresearch.llmSettings.descriptionautoresearch.llmSettings.defaultProviderautoresearch.llmSettings.useActiveConfigMiniMax AgentMiniMax · MiniMax-M3OpenAI Agentsettings.activeOpenAI · gpt-5.4Anthropic ReflectionAnthropic · claude-sonnet-4-5Gemini VisionGemini · gemini-3.5-flashautoresearch.llmSettings.agentOverrideautoresearch.llmSettings.useDefaultMiniMax AgentMiniMax · MiniMax-M3OpenAI Agentsettings.activeOpenAI · gpt-5.4Anthropic ReflectionAnthropic · claude-sonnet-4-5Gemini VisionGemini · gemini-3.5-flashautoresearch.llmSettings.reflectionOverrideautoresearch.llmSettings.useDefaultMiniMax AgentMiniMax · MiniMax-M3OpenAI Agentsettings.activeOpenAI · gpt-5.4Anthropic ReflectionAnthropic · claude-sonnet-4-5Gemini VisionGemini · gemini-3.5-flashautoresearch.llmSettings.selectedSnapshotOpenAI AgentOpenAI · gpt-5.4streamingtool:openaijson_modevision"`);
 });
 
 it('disables provider selection while AutoResearch is active', () => {

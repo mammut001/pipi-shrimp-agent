@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { useMCPStore } from '@/store/mcpStore';
 import { usePolling } from '@/hooks/usePolling';
+import { t } from '@/i18n';
 
 /**
  * MCP button displayed next to the chat input.
@@ -48,7 +49,7 @@ export function MCPChatButton() {
       aria-expanded={dropdownOpen}
       className={`inline-flex items-center gap-1.5 rounded-md border border-gray-200 bg-white px-2 py-1 text-[11px] font-medium transition-colors ${labelClass}`}
       onClick={() => setDropdownOpen(!dropdownOpen)}
-      title="MCP Servers"
+      title={t('mcp.title')}
     >
       <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${dotClass}`} />
       <span>MCP{connectedCount > 0 ? ` ${connectedCount}` : ''}</span>
