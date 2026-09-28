@@ -6,6 +6,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core';
+import { t } from '@/i18n';
 import type {
   TelegramBotInfo,
   TelegramMessage,
@@ -416,21 +417,21 @@ export function getTelegramErrorMessage(error: unknown): string {
 
     switch (code) {
       case 401:
-        return 'Invalid bot token. Please check your token and try again.';
+        return t('telegram.error.invalidToken');
       case 400:
         if (message.includes('chat not found')) {
-          return 'Chat not found. Make sure the bot has been started by the user.';
+          return t('telegram.error.chatNotFound');
         }
         if (message.includes('bot was blocked by the user')) {
-          return 'Bot was blocked by the user.';
+          return t('telegram.error.botBlocked');
         }
-        return `Bad request: ${message}`;
+        return t('telegram.error.badRequest', { message });
       case 403:
-        return 'Access denied. The bot cannot send messages to this user.';
+        return t('telegram.error.accessDenied');
       case 429:
-        return 'Too many requests. Please wait a moment and try again.';
+        return t('telegram.error.tooManyRequests');
       case 500:
-        return 'Telegram server error. Please try again later.';
+        return t('telegram.error.serverError');
       default:
         return message || error.message;
     }
@@ -440,5 +441,5 @@ export function getTelegramErrorMessage(error: unknown): string {
     return error.message;
   }
 
-  return 'An unknown error occurred';
+  return t('telegram.error.unknown');
 }
