@@ -1606,6 +1606,7 @@ export type TranslationKeys = {
   'autoresearch.recipe.notConfigured': string;
   'autoresearch.recipe.confirmGoal': string;
   'autoresearch.recipe.noGoalSet': string;
+  'autoresearch.recipe.defaultGoalOpener': string;
   'autoresearch.recipe.confirmResearchGoal': string;
   'autoresearch.recipe.confirmResearchGoalFirst': string;
   'autoresearch.recipe.selectWorkspaceFirst': string;

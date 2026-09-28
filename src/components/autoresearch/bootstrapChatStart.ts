@@ -1,5 +1,6 @@
 import { AUTORESEARCH_BOOTSTRAP_TEMPLATE } from '@/services/agents/templates/autoresearchBootstrap';
 import { runHeadlessAgentTurn } from '@/services/headless/agentRunner';
+import { t } from '@/i18n';
 import { useBootstrapPlanStore } from '@/services/autoresearch/bootstrap/bootstrapPlanStore';
 import {
   BOOTSTRAP_FINALIZE_NUDGE_ALLOWED_TOOLS,
@@ -53,21 +54,21 @@ export function applyQuickStartTemplateToRecipe(
 
   if (templateId === 'reproduce-paper') {
     taskType = 'reproduce_paper';
-    goalText = 'I want to fully reproduce a paper. Please help me identify the paper claims, lock baselines, target primary metric, and construct scaffold files.';
+    goalText = t('autoresearch.bootstrap.card.reproduce.opener');
     folderName = 'reproduce-project';
   } else if (templateId === 'beat-baseline') {
     taskType = 'beat_baseline';
-    goalText = 'I want to exceed an existing baseline on a known task. Please propose improvements, keep evaluations fair, and setup experiment workspace.';
+    goalText = t('autoresearch.bootstrap.card.baseline.opener');
     folderName = 'baseline-project';
   } else if (templateId === 'ablation') {
     taskType = 'ablation';
-    goalText = 'I want to conduct ablation studies on an existing model or method. Please help me isolate ablation parameters, verify metrics, and bootstrap scaffolding.';
+    goalText = t('autoresearch.bootstrap.card.ablation.opener');
     folderName = 'ablation-project';
     baselineValue = '';
     successCriteria = '';
   } else if (templateId === 'from-scratch') {
     taskType = 'from_scratch';
-    goalText = 'I want to start a brand new AutoResearch project from scratch. Please propose a concrete research objective and scaffold the project workspace.';
+    goalText = t('autoresearch.bootstrap.card.scratch.opener');
     folderName = 'scratch-project';
     baselineValue = '';
     successCriteria = '';

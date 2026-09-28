@@ -20,7 +20,7 @@ describe('bootstrapChatStart', () => {
       const updated = applyQuickStartTemplateToRecipe(baseRecipe, 'reproduce-paper');
       expect(updated.researchGoal.taskType).toBe('reproduce_paper');
       expect(updated.researchGoal.source).toBe('template');
-      expect(updated.researchGoal.goalText).toContain('reproduce a paper');
+      expect(updated.researchGoal.goalText).toBe('autoresearch.bootstrap.card.reproduce.opener');
       expect(updated.workspace.folderName).toBe('reproduce-project');
       expect(updated.verification.commands).toEqual(['pytest']);
       expect(updated.baselineAndMetric.baselineValue).toBe('0.85');
@@ -31,7 +31,7 @@ describe('bootstrapChatStart', () => {
       const updated = applyQuickStartTemplateToRecipe(baseRecipe, 'beat-baseline');
       expect(updated.researchGoal.taskType).toBe('beat_baseline');
       expect(updated.researchGoal.source).toBe('template');
-      expect(updated.researchGoal.goalText).toContain('exceed an existing baseline');
+      expect(updated.researchGoal.goalText).toBe('autoresearch.bootstrap.card.baseline.opener');
       expect(updated.workspace.folderName).toBe('baseline-project');
       expect(updated.verification.commands).toEqual(['pytest']);
       expect(updated.baselineAndMetric.baselineValue).toBe('0.85');
@@ -42,7 +42,7 @@ describe('bootstrapChatStart', () => {
       const updated = applyQuickStartTemplateToRecipe(baseRecipe, 'ablation');
       expect(updated.researchGoal.taskType).toBe('ablation');
       expect(updated.researchGoal.source).toBe('template');
-      expect(updated.researchGoal.goalText).toContain('ablation studies');
+      expect(updated.researchGoal.goalText).toBe('autoresearch.bootstrap.card.ablation.opener');
       expect(updated.workspace.folderName).toBe('ablation-project');
       expect(updated.verification.commands).toEqual(['pytest']);
       expect(updated.baselineAndMetric.baselineValue).toBe('');
@@ -53,7 +53,7 @@ describe('bootstrapChatStart', () => {
       const updated = applyQuickStartTemplateToRecipe(baseRecipe, 'from-scratch');
       expect(updated.researchGoal.taskType).toBe('from_scratch');
       expect(updated.researchGoal.source).toBe('template');
-      expect(updated.researchGoal.goalText).toContain('brand new AutoResearch project');
+      expect(updated.researchGoal.goalText).toBe('autoresearch.bootstrap.card.scratch.opener');
       expect(updated.workspace.folderName).toBe('scratch-project');
       expect(updated.verification.commands).toEqual(['pytest']);
       expect(updated.baselineAndMetric.baselineValue).toBe('');

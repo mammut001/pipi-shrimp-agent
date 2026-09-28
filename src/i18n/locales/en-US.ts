@@ -210,6 +210,7 @@ const enUS: TranslationKeys = {
   'autoresearch.recipe.notConfigured': 'Not Configured',
   'autoresearch.recipe.confirmGoal': 'Confirm goal',
   'autoresearch.recipe.noGoalSet': 'No goal set yet',
+  'autoresearch.recipe.defaultGoalOpener': 'I want to start an AutoResearch task. Please guide me through setting up goals, papers, baselines, and workspace scaffolding.',
   'autoresearch.recipe.confirmResearchGoal': 'Confirm research goal',
   'autoresearch.recipe.confirmResearchGoalFirst': 'Confirm research goal first',
   'autoresearch.recipe.selectWorkspaceFirst': 'Select workspace first',
