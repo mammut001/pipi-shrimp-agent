@@ -1,5 +1,6 @@
 import { getCapability } from '@/services/llm/capabilities';
 import { getProvider } from '@/shared/providers';
+import { t } from '@/i18n';
 import {
   buildAutoResearchRunLockMessage,
   useAutoResearchLifecycleLock,
@@ -53,7 +54,7 @@ function CapabilityBadges({ config, size = 'sm' }: { config: ApiConfig; size?: '
           className={`inline-flex items-center gap-1 rounded-full border border-gray-200 bg-white ${padding} ${text} font-medium ${
             item.enabled ? 'text-gray-700' : 'text-gray-400'
           }`}
-          title={`${item.label}: ${item.enabled ? 'supported' : 'unsupported'}`}
+          title={`${item.label}: ${item.enabled ? t('autoresearch.llmSettings.supported') : t('autoresearch.llmSettings.unsupported')}`}
         >
           <CapabilityDot enabled={item.enabled} tone={item.tone} />
           {item.label}
@@ -102,7 +103,7 @@ function ConfigRow({
           <span className="truncate text-sm font-medium text-gray-900">{config.name}</span>
           {isActive && (
             <span className="inline-flex shrink-0 items-center rounded-full bg-gray-100 px-1.5 py-[1px] text-[10px] font-medium text-gray-600">
-              Active
+              {t('settings.active')}
             </span>
           )}
         </div>
@@ -137,9 +138,9 @@ export function AutoResearchLlmSettingsSection({
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-4 space-y-4">
       <div>
-        <h2 className="text-sm font-semibold text-gray-900">AutoResearch LLM Provider</h2>
+        <h2 className="text-sm font-semibold text-gray-900">{t('autoresearch.llmSettings.title')}</h2>
         <p className="mt-1 text-xs text-gray-500">
-          Pick the default provider snapshot for AutoResearch runs, then override agent and reflection only when needed.
+          {t('autoresearch.llmSettings.description')}
         </p>
       </div>
 
@@ -151,7 +152,7 @@ export function AutoResearchLlmSettingsSection({
 
       {apiConfigs.length === 0 ? (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-          Configure a provider first.
+          {t('autoresearch.llmSettings.configureFirst')}
         </div>
       ) : (
         <>
@@ -159,7 +160,7 @@ export function AutoResearchLlmSettingsSection({
             <div>
               <div className="mb-1.5 flex items-center justify-between">
                 <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
-                  Default provider
+                  {t('autoresearch.llmSettings.defaultProvider')}
                 </span>
                 {settings.defaultConfigId && (
                   <button
@@ -168,7 +169,7 @@ export function AutoResearchLlmSettingsSection({
                     onClick={() => onUpdate({ defaultConfigId: null })}
                     className="text-[11px] font-medium text-gray-500 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Use active Settings config
+                    {t('autoresearch.llmSettings.useActiveConfig')}
                   </button>
                 )}
               </div>
@@ -189,7 +190,7 @@ export function AutoResearchLlmSettingsSection({
             <div>
               <div className="mb-1.5 flex items-center justify-between">
                 <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
-                  Agent model override
+                  {t('autoresearch.llmSettings.agentOverride')}
                 </span>
                 {settings.agentConfigId && (
                   <button
@@ -198,7 +199,7 @@ export function AutoResearchLlmSettingsSection({
                     onClick={() => onUpdate({ agentConfigId: null })}
                     className="text-[11px] font-medium text-gray-500 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Use AutoResearch default
+                    {t('autoresearch.llmSettings.useDefault')}
                   </button>
                 )}
               </div>
@@ -221,7 +222,7 @@ export function AutoResearchLlmSettingsSection({
             <div>
               <div className="mb-1.5 flex items-center justify-between">
                 <span className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
-                  Reflection model override
+                  {t('autoresearch.llmSettings.reflectionOverride')}
                 </span>
                 {settings.reflectionConfigId && (
                   <button
@@ -230,7 +231,7 @@ export function AutoResearchLlmSettingsSection({
                     onClick={() => onUpdate({ reflectionConfigId: null })}
                     className="text-[11px] font-medium text-gray-500 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50"
                   >
-                    Use AutoResearch default
+                    {t('autoresearch.llmSettings.useDefault')}
                   </button>
                 )}
               </div>
@@ -256,7 +257,7 @@ export function AutoResearchLlmSettingsSection({
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
                   <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-500">
-                    Selected default snapshot
+                    {t('autoresearch.llmSettings.selectedSnapshot')}
                   </p>
                   <p className="mt-0.5 truncate text-sm font-medium text-gray-900">
                     {selectedDefaultConfig.name}

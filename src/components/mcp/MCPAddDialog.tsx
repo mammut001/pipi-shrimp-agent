@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useMCPStore } from '@/store/mcpStore';
 import type { MCPServer, ServerConfig, AuthConfig, PresetTemplate } from '@/services/mcp/types';
+import { t } from '@/i18n';
 
 interface MCPAddDialogProps {
   open: boolean;
@@ -140,10 +141,14 @@ export function MCPAddDialog({ open, onClose, editServer }: MCPAddDialogProps) {
         <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-gray-50 shrink-0">
           <div>
             <h2 className="text-base font-semibold text-gray-900">
-              {editServer ? 'Edit MCP Server' : step === 'select' ? 'Add MCP Server' : `Configure ${displayName || name || 'Server'}`}
+              {editServer
+                ? t('mcp.dialog.editTitle')
+                : step === 'select'
+                ? t('mcp.dialog.addTitle')
+                : t('mcp.dialog.configureTitle', { name: displayName || name || t('mcp.dialog.serverFallback') })}
             </h2>
             {step === 'select' && !editServer && (
-              <p className="text-xs text-gray-500 mt-0.5">Choose a preset or add a custom server</p>
+              <p className="text-xs text-gray-500 mt-0.5">{t('mcp.dialog.subtitle')}</p>
             )}
           </div>
           <button
@@ -183,7 +188,7 @@ export function MCPAddDialog({ open, onClose, editServer }: MCPAddDialogProps) {
               {presets.length > 0 && (
                 <div className="flex items-center gap-3 py-1">
                   <div className="flex-1 h-px bg-gray-200" />
-                  <span className="text-xs text-gray-400">or</span>
+                  <span className="text-xs text-gray-400">{t('mcp.dialog.or')}</span>
                   <div className="flex-1 h-px bg-gray-200" />
                 </div>
               )}
@@ -196,8 +201,8 @@ export function MCPAddDialog({ open, onClose, editServer }: MCPAddDialogProps) {
                   🔧
                 </div>
                 <div>
-                  <div className="text-sm font-medium text-gray-900">Custom Server</div>
-                  <div className="text-xs text-gray-500 mt-0.5">Add any MCP-compatible server</div>
+                  <div className="text-sm font-medium text-gray-900">{t('mcp.dialog.customServer')}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">{t('mcp.dialog.customServerHint')}</div>
                 </div>
               </button>
             </div>
@@ -207,7 +212,7 @@ export function MCPAddDialog({ open, onClose, editServer }: MCPAddDialogProps) {
             <div className="space-y-4">
               {/* Name */}
               <div>
-                <label className={labelCls}>Name <span className="text-red-500">*</span></label>
+                <label className={labelCls}>{t('mcp.dialog.name')} <span className="text-red-500">*</span></label>
                 <input
                   value={name}
                   onChange={e => setName(e.target.value)}
@@ -218,7 +223,7 @@ export function MCPAddDialog({ open, onClose, editServer }: MCPAddDialogProps) {
 
               {/* Display Name */}
               <div>
-                <label className={labelCls}>Display Name <span className="text-gray-400 font-normal">(optional)</span></label>
+                <label className={labelCls}>{t('mcp.dialog.displayName')} <span className="text-gray-400 font-normal">{t('mcp.dialog.optional')}</span></label>
                 <input
                   value={displayName}
                   onChange={e => setDisplayName(e.target.value)}
@@ -229,13 +234,13 @@ export function MCPAddDialog({ open, onClose, editServer }: MCPAddDialogProps) {
 
               {/* Transport */}
               <div>
-                <label className={labelCls}>Transport</label>
+                <label className={labelCls}>{t('mcp.dialog.transport')}</label>
                 <select
                   value={transport}
                   onChange={e => setTransport(e.target.value as 'stdio' | 'http' | 'sse')}
                   className={inputCls}
                 >
-                  <option value="stdio">Stdio (local process)</option>
+                  <option value="stdio">{t('mcp.dialog.transportStdio')}</option>
                   <option value="http">HTTP</option>
                   <option value="sse">SSE</option>
                 </select>
@@ -245,7 +250,7 @@ export function MCPAddDialog({ open, onClose, editServer }: MCPAddDialogProps) {
               {transport === 'stdio' && (
                 <>
                   <div>
-                    <label className={labelCls}>Command <span className="text-red-500">*</span></label>
+                    <label className={labelCls}>{t('mcp.dialog.command')} <span className="text-red-500">*</span></label>
                     <input
                       value={command}
                       onChange={e => setCommand(e.target.value)}
@@ -254,7 +259,7 @@ export function MCPAddDialog({ open, onClose, editServer }: MCPAddDialogProps) {
                     />
                   </div>
                   <div>
-                    <label className={labelCls}>Arguments <span className="text-gray-400 font-normal">(space-separated)</span></label>
+                    <label className={labelCls}>{t('mcp.dialog.arguments')} <span className="text-gray-400 font-normal">{t('mcp.dialog.argumentsHint')}</span></label>
                     <input
                       value={args}
                       onChange={e => setArgs(e.target.value)}
@@ -263,7 +268,7 @@ export function MCPAddDialog({ open, onClose, editServer }: MCPAddDialogProps) {
                     />
                   </div>
                   <div>
-                    <label className={labelCls}>Working Directory <span className="text-gray-400 font-normal">(optional)</span></label>
+                    <label className={labelCls}>{t('mcp.dialog.workingDirectory')} <span className="text-gray-400 font-normal">{t('mcp.dialog.optional')}</span></label>
                     <input
                       value={cwd}
                       onChange={e => setCwd(e.target.value)}
@@ -278,7 +283,7 @@ export function MCPAddDialog({ open, onClose, editServer }: MCPAddDialogProps) {
               {(transport === 'http' || transport === 'sse') && (
                 <>
                   <div>
-                    <label className={labelCls}>URL <span className="text-red-500">*</span></label>
+                    <label className={labelCls}>{t('mcp.dialog.url')} <span className="text-red-500">*</span></label>
                     <input
                       value={url}
                       onChange={e => setUrl(e.target.value)}
@@ -287,21 +292,21 @@ export function MCPAddDialog({ open, onClose, editServer }: MCPAddDialogProps) {
                     />
                   </div>
                   <div>
-                    <label className={labelCls}>Authentication</label>
+                    <label className={labelCls}>{t('mcp.dialog.authentication')}</label>
                     <select
                       value={authType}
                       onChange={e => setAuthType(e.target.value as 'none' | 'bearer' | 'api_key')}
                       className={inputCls}
                     >
-                      <option value="none">None</option>
-                      <option value="bearer">Bearer Token</option>
-                      <option value="api_key">API Key</option>
+                      <option value="none">{t('mcp.dialog.authNone')}</option>
+                      <option value="bearer">{t('mcp.dialog.authBearer')}</option>
+                      <option value="api_key">{t('mcp.dialog.authApiKey')}</option>
                     </select>
                   </div>
                   {authType !== 'none' && (
                     <div>
                       <label className={labelCls}>
-                        {authType === 'bearer' ? 'Token' : 'API Key'}
+                        {authType === 'bearer' ? t('mcp.dialog.token') : t('mcp.dialog.authApiKey')}
                       </label>
                       <input
                         type="password"
@@ -329,7 +334,7 @@ export function MCPAddDialog({ open, onClose, editServer }: MCPAddDialogProps) {
                 <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
                   <path fillRule="evenodd" d="M12.707 5.293a1 1 0 010 1.414L9.414 10l3.293 3.293a1 1 0 01-1.414 1.414l-4-4a1 1 0 010-1.414l4-4a1 1 0 011.414 0z" clipRule="evenodd" />
                 </svg>
-                Back
+                {t('common.back')}
               </button>
             )}
           </div>
@@ -338,7 +343,7 @@ export function MCPAddDialog({ open, onClose, editServer }: MCPAddDialogProps) {
               className="px-4 py-2 text-sm text-gray-600 hover:text-gray-900 hover:bg-gray-200 rounded-lg transition-colors"
               onClick={resetAndClose}
             >
-              Cancel
+              {t('common.cancel')}
             </button>
             {step === 'configure' && (
               <button
@@ -346,7 +351,7 @@ export function MCPAddDialog({ open, onClose, editServer }: MCPAddDialogProps) {
                 disabled={!name.trim() || (transport === 'stdio' ? !command.trim() : !url.trim())}
                 onClick={handleSubmit}
               >
-                {editServer ? 'Save Changes' : 'Add Server'}
+                {editServer ? t('mcp.dialog.saveChanges') : t('mcp.addServer')}
               </button>
             )}
           </div>

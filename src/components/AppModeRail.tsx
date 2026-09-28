@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 
 import { APP_BRAND } from '@/shared/brand';
 import { useUIStore } from '@/store';
+import { t } from '@/i18n';
 
 type RailButtonProps = {
   label: string;
@@ -15,43 +16,45 @@ type RailItem = RailButtonProps & {
   id: 'chat' | 'workflow' | 'diagnostics';
 };
 
-const RAIL_ITEMS: RailItem[] = [
-  {
-    id: 'chat',
-    label: 'Chat',
-    title: 'Open chat workspace',
-    icon: (
-      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M7 17H5a2 2 0 01-2-2V7a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-4l-4 4v-4z" />
-      </svg>
-    ),
-  },
-  {
-    id: 'workflow',
-    label: 'Flow',
-    title: 'Open workflow canvas',
-    icon: (
-      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M7 7h.01M17 7h.01M7 17h.01M9 7h6M7 9v6M17 9v2a4 4 0 01-4 4H9" />
-        <rect x="4" y="4" width="6" height="6" rx="2" />
-        <rect x="14" y="4" width="6" height="6" rx="2" />
-        <rect x="4" y="14" width="6" height="6" rx="2" />
-      </svg>
-    ),
-  },
-  {
-    id: 'diagnostics',
-    label: 'Diag',
-    title: 'Open diagnostics workspace',
-    icon: (
-      <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-        <path strokeLinecap="round" strokeLinejoin="round" d="M5 5v14h14" />
-        <path strokeLinecap="round" strokeLinejoin="round" d="M8 15l3-3 2 2 4-5" />
-        <path strokeLinecap="round" strokeLinejoin="round" d="M7 7h10" />
-      </svg>
-    ),
-  },
-];
+function getRailItems(): RailItem[] {
+  return [
+    {
+      id: 'chat',
+      label: t('nav.chat'),
+      title: t('rail.chatTooltip'),
+      icon: (
+        <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M7 17H5a2 2 0 01-2-2V7a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-4l-4 4v-4z" />
+        </svg>
+      ),
+    },
+    {
+      id: 'workflow',
+      label: t('nav.workflow'),
+      title: t('rail.workflowTooltip'),
+      icon: (
+        <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M7 7h.01M17 7h.01M7 17h.01M9 7h6M7 9v6M17 9v2a4 4 0 01-4 4H9" />
+          <rect x="4" y="4" width="6" height="6" rx="2" />
+          <rect x="14" y="4" width="6" height="6" rx="2" />
+          <rect x="4" y="14" width="6" height="6" rx="2" />
+        </svg>
+      ),
+    },
+    {
+      id: 'diagnostics',
+      label: t('nav.diagnostics'),
+      title: t('rail.diagnosticsTooltip'),
+      icon: (
+        <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M5 5v14h14" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M8 15l3-3 2 2 4-5" />
+          <path strokeLinecap="round" strokeLinejoin="round" d="M7 7h10" />
+        </svg>
+      ),
+    },
+  ];
+}
 
 function RailBrandMark({ onClick }: { onClick: () => void }) {
   return (
@@ -114,8 +117,8 @@ export function AppModeRail() {
 
   const utilityItems: RailButtonProps[] = [
     {
-      label: 'Nav',
-      title: sidebarVisible ? 'Hide sidebar panel' : 'Show sidebar panel',
+      label: t('rail.nav'),
+      title: sidebarVisible ? t('rail.hideSidebar') : t('rail.showSidebar'),
       active: sidebarVisible,
       onClick: toggleSidebar,
       icon: (
@@ -126,8 +129,8 @@ export function AppModeRail() {
       ),
     },
     {
-      label: 'Prefs',
-      title: settingsOpen ? 'Close settings' : 'Open settings',
+      label: t('nav.settings'),
+      title: settingsOpen ? t('rail.closeSettings') : t('rail.openSettings'),
       active: settingsOpen,
       onClick: toggleSettings,
       icon: (
@@ -144,7 +147,7 @@ export function AppModeRail() {
       <RailBrandMark onClick={() => setCurrentView('chat')} />
 
       <div className="mt-5 flex w-full flex-1 flex-col items-center gap-2">
-        {RAIL_ITEMS.map((item) => {
+        {getRailItems().map((item) => {
           const active = currentView === item.id;
 
           return (
