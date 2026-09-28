@@ -485,7 +485,13 @@ export type TranslationKeys = {
   'workflow.confirm': string;
   'workflow.template': string;
   'workflow.loadTemplate': string;
+  'workflow.presetMenu': string;
   'workflow.presetChain': string;
+  'workflow.presetChainDesc': string;
+  'workflow.presetReviewChain': string;
+  'workflow.presetReviewChainDesc': string;
+  'workflow.presetSecurityChain': string;
+  'workflow.presetSecurityChainDesc': string;
   'workflow.openWorkDir': string;
   'workflow.addAgent': string;
   'workflow.addAgentHere': string;

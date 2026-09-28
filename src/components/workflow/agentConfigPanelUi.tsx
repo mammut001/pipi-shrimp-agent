@@ -10,7 +10,6 @@ import { getProviderDefaultModelIds, type ProviderName } from '@/shared/provider
 import type {
   AgentExecutionConfig,
   RetryPolicy,
-  RoleModelHint,
   RouteCondition,
   WorkflowAgent,
   WorkflowAgentRole,
@@ -97,23 +96,15 @@ export function buildModelOptions({
   return Array.from(modelSet);
 }
 
-export interface ConfigOption {
-  id: string;
-  label: string;
-  provider: string;
-  model: string;
-}
-
-export function buildConfigOptions(
-  apiConfigs: Array<{ id: string; name: string; provider: string; model: string }>,
-): ConfigOption[] {
-  return apiConfigs.map((config) => ({
-    id: config.id,
-    label: `${config.name} (${config.provider})`,
-    provider: config.provider,
-    model: config.model,
-  }));
-}
+export type {
+  ConfigOption,
+  RecommendedModelSelection,
+  ResolveRecommendedModelSelectionParams,
+} from '@/services/workflow/modelRecommendation';
+export {
+  buildConfigOptions,
+  resolveRecommendedModelSelection,
+} from '@/services/workflow/modelRecommendation';
 
 export interface AgentConfigFormData {
   name: string;
@@ -167,50 +158,6 @@ export function createAgentConfigFormData(
       ...agent.retryPolicy,
       fallbackConfigIds: agent.retryPolicy?.fallbackConfigIds || [],
     },
-  };
-}
-
-export interface RecommendedModelSelection {
-  configId: string;
-  provider: ProviderName | '';
-  modelId: string;
-}
-
-export interface ResolveRecommendedModelSelectionParams {
-  roleHint?: RoleModelHint | null;
-  configOptions: Array<{ id: string; provider: string; model?: string }>;
-  availableModels: Record<string, string[]>;
-}
-
-export function resolveRecommendedModelSelection({
-  roleHint,
-  configOptions,
-  availableModels,
-}: ResolveRecommendedModelSelectionParams): RecommendedModelSelection | null {
-  if (!roleHint) return null;
-
-  const recommendedConfig = configOptions.find((option) =>
-    roleHint.preferredProviders.includes(option.provider as ProviderName),
-  );
-  const provider = (recommendedConfig?.provider || roleHint.preferredProviders[0] || '') as ProviderName | '';
-  const models = provider
-    ? availableModels[provider]?.length
-      ? availableModels[provider]
-      : getProviderDefaultModelIds(provider)
-    : [];
-  const recommendedModel =
-    models.find((model) =>
-      roleHint.preferredModelKeywords.some((keyword) =>
-        model.toLowerCase().includes(keyword.toLowerCase()),
-      ),
-    ) ||
-    models[0] ||
-    '';
-
-  return {
-    configId: recommendedConfig?.id || '',
-    provider,
-    modelId: recommendedModel,
   };
 }
 
