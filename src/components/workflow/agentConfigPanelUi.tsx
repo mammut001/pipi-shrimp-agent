@@ -118,6 +118,7 @@ export interface AgentConfigFormData {
   provider: ProviderName | '';
   modelId: string;
   notifyOnComplete: string[];
+  notifyFullOutputAgentIds: string[];
   retryPolicy: RetryPolicy;
 }
 
@@ -137,6 +138,7 @@ export function createAgentConfigFormData(
       provider: '',
       modelId: '',
       notifyOnComplete: [],
+      notifyFullOutputAgentIds: [],
       retryPolicy: DEFAULT_RETRY_POLICY,
     };
   }
@@ -153,6 +155,9 @@ export function createAgentConfigFormData(
     provider: (agent.model?.provider || '') as ProviderName | '',
     modelId: agent.model?.modelId || '',
     notifyOnComplete: agent.notifyOnComplete || [],
+    notifyFullOutputAgentIds: (agent.notifyFullOutputAgentIds ?? []).filter(
+      (id) => (agent.notifyOnComplete ?? []).includes(id),
+    ),
     retryPolicy: {
       ...DEFAULT_RETRY_POLICY,
       ...agent.retryPolicy,

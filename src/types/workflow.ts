@@ -100,6 +100,7 @@ export interface WorkflowAgent {
   role?: AgentRole;
   retryPolicy?: RetryPolicy;
   notifyOnComplete?: string[];
+  notifyFullOutputAgentIds?: string[];
   visionPolicy?: WorkflowVisionPolicy;
 }
 

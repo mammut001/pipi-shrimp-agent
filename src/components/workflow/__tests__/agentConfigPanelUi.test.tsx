@@ -188,6 +188,7 @@ describe('agentConfigPanelUi', () => {
         provider: '',
         modelId: '',
         notifyOnComplete: [],
+        notifyFullOutputAgentIds: [],
         retryPolicy: DEFAULT_RETRY_POLICY,
       });
     });

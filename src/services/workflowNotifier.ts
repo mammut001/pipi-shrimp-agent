@@ -1,6 +1,6 @@
 import type { WorkflowAgent } from '@/types/workflow';
 import { listUnread, markRead, sendMessage } from '@/services/swarm/messageService';
-import type { WorkflowInboxPromptItem } from './workflowPromptBuilder';
+import { truncate, type WorkflowInboxPromptItem } from './workflowPromptBuilder';
 
 const WORKFLOW_NOTIFICATION_VERSION = 1;
 
@@ -10,6 +10,7 @@ interface WorkflowNotificationContent {
   runId: string;
   summary: string;
   fullLength: number;
+  full?: string;
   timestamp: number;
 }
 
@@ -40,6 +41,9 @@ export async function notifyOnComplete(
     .filter((agent): agent is WorkflowAgent => Boolean(agent));
 
   const summary = output.slice(0, 600);
+  const fullOutputIds = new Set(
+    (fromAgent.notifyFullOutputAgentIds ?? []).filter((id) => fromAgent.notifyOnComplete?.includes(id)),
+  );
 
   for (const target of targetAgents) {
     sendMessage({
@@ -53,6 +57,7 @@ export async function notifyOnComplete(
         runId,
         summary,
         fullLength: output.length,
+        ...(fullOutputIds.has(target.id) ? { full: truncate(output) } : {}),
         timestamp: Date.now(),
       }),
     });
@@ -82,6 +87,7 @@ export function readAgentInbox(
       fromAgentName,
       summary: payload.summary,
       fullLength: payload.fullLength,
+      ...(payload.full !== undefined ? { full: payload.full } : {}),
       createdAt: payload.timestamp || message.createdAt,
     });
     markRead(message.id);

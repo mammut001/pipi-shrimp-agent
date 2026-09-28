@@ -77,4 +77,55 @@ describe('workflowPromptBuilder', () => {
     expect(prompt).toContain('Validate graph cleanup behavior.');
     expect(prompt).toContain('All workflow tests pass');
   });
+
+  it('renders a full_content block instead of summary/full_length when a message carries full content', () => {
+    const prompt = buildEntryAgentPrompt({
+      projectGoal: 'Ship workflow stabilization',
+      agent: createAgent(),
+      iteration: 1,
+      inboxMessages: [{
+        fromAgentId: 'writer',
+        fromAgentName: 'Writer',
+        summary: 'Draft ready for review.',
+        fullLength: 42,
+        full: 'line one\nline two',
+        createdAt: 1,
+      }],
+    });
+
+    expect(prompt).toContain('full_content:');
+    expect(prompt).toContain('line one');
+    expect(prompt).toContain('line two');
+    expect(prompt).not.toContain('- summary: Draft ready for review.');
+  });
+
+  it('renders both formats correctly in a mixed inbox', () => {
+    const prompt = buildDownstreamAgentPrompt({
+      projectGoal: 'Stabilize workflow schema',
+      agent: createAgent({ id: 'qa', name: 'QA', role: 'qa' }),
+      upstreams: [],
+      iteration: 1,
+      inboxMessages: [
+        {
+          fromAgentId: 'reviewer',
+          fromAgentName: 'Reviewer',
+          summary: 'Summary-only notice.',
+          fullLength: 20,
+          createdAt: 1,
+        },
+        {
+          fromAgentId: 'writer',
+          fromAgentName: 'Writer',
+          summary: 'Full notice summary.',
+          fullLength: 20,
+          full: 'The complete notice content.',
+          createdAt: 2,
+        },
+      ],
+    });
+
+    expect(prompt).toContain('- summary: Summary-only notice.');
+    expect(prompt).toContain('full_content:');
+    expect(prompt).toContain('The complete notice content.');
+  });
 });

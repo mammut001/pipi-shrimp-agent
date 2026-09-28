@@ -42,6 +42,9 @@ function normalizeAgentBase(agent: WorkflowAgent): WorkflowAgent {
       fallbackConfigIds: agent.retryPolicy?.fallbackConfigIds ?? [],
     },
     notifyOnComplete: agent.notifyOnComplete ?? [],
+    notifyFullOutputAgentIds: (agent.notifyFullOutputAgentIds ?? []).filter(
+      (id) => (agent.notifyOnComplete ?? []).includes(id),
+    ),
     visionPolicy: agent.visionPolicy ?? 'inherit',
   };
 }

@@ -289,21 +289,45 @@ export function AgentConfigNotifySection({
       <div className="space-y-2 rounded-xl border border-gray-200 p-3">
         {otherAgents.length === 0 ? (
           <div className="text-sm text-gray-400">{t('workflow.notifyOnCompleteEmpty')}</div>
-        ) : otherAgents.map((item) => (
-          <label key={item.id} className="flex items-center gap-2 text-sm text-gray-700">
-            <input
-              type="checkbox"
-              checked={formData.notifyOnComplete.includes(item.id)}
-              onChange={(event) => setFormData((prev) => ({
-                ...prev,
-                notifyOnComplete: event.target.checked
-                  ? [...prev.notifyOnComplete, item.id]
-                  : prev.notifyOnComplete.filter((id) => id !== item.id),
-              }))}
-            />
-            {item.name}
-          </label>
-        ))}
+        ) : otherAgents.map((item) => {
+          const isNotified = formData.notifyOnComplete.includes(item.id);
+          const isFullOutput = formData.notifyFullOutputAgentIds.includes(item.id);
+          return (
+            <div key={item.id} className="space-y-1">
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={isNotified}
+                  onChange={(event) => setFormData((prev) => ({
+                    ...prev,
+                    notifyOnComplete: event.target.checked
+                      ? [...prev.notifyOnComplete, item.id]
+                      : prev.notifyOnComplete.filter((id) => id !== item.id),
+                    notifyFullOutputAgentIds: event.target.checked
+                      ? prev.notifyFullOutputAgentIds
+                      : prev.notifyFullOutputAgentIds.filter((id) => id !== item.id),
+                  }))}
+                />
+                {item.name}
+              </label>
+              {isNotified && (
+                <label className="ml-6 flex items-center gap-2 text-xs text-gray-500">
+                  <input
+                    type="checkbox"
+                    checked={isFullOutput}
+                    onChange={(event) => setFormData((prev) => ({
+                      ...prev,
+                      notifyFullOutputAgentIds: event.target.checked
+                        ? [...prev.notifyFullOutputAgentIds, item.id]
+                        : prev.notifyFullOutputAgentIds.filter((id) => id !== item.id),
+                    }))}
+                  />
+                  {t('workflow.notifyFullOutput')}
+                </label>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );
