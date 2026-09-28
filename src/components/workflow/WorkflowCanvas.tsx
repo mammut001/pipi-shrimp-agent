@@ -89,6 +89,7 @@ const WorkflowCanvas = ({ selectedAgentId, onAgentSelect }: WorkflowCanvasProps)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [templateDrawerOpen, setTemplateDrawerOpen] = useState(false);
   const [templateDrawerPosition, setTemplateDrawerPosition] = useState<{ x: number; y: number } | null>(null);
+  const [showPresetMenu, setShowPresetMenu] = useState(false);
   const isWorkflowPage = currentView === 'workflow';
   const isTopologyLocked = !isWorkflowPage || isRunning;
 
@@ -403,22 +404,61 @@ const WorkflowCanvas = ({ selectedAgentId, onAgentSelect }: WorkflowCanvasProps)
             </svg>
             {t('workflow.clearAll')}
           </button>
-          <button
-            onClick={() => {
-              if (isTopologyLocked) {
-                notifyWorkflowLocked();
-                return;
-              }
-              useWorkflowStore.getState().createA_B_C_Workflow();
-            }}
-            disabled={isTopologyLocked}
-            className="px-4 py-2 bg-purple-600 text-white rounded-lg shadow-lg hover:bg-purple-700 transition-colors flex items-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
-            </svg>
-            {t('workflow.presetChain')}
-          </button>
+          <div className="relative">
+            {showPresetMenu && (
+              <div className="absolute bottom-full right-0 mb-2 w-72 rounded-xl border border-gray-200 bg-white p-1.5 shadow-xl">
+                {[
+                  {
+                    action: () => useWorkflowStore.getState().createA_B_C_Workflow(),
+                    title: t('workflow.presetChain'),
+                    desc: t('workflow.presetChainDesc'),
+                  },
+                  {
+                    action: () => useWorkflowStore.getState().createReviewDeliveryWorkflow(),
+                    title: t('workflow.presetReviewChain'),
+                    desc: t('workflow.presetReviewChainDesc'),
+                  },
+                  {
+                    action: () => useWorkflowStore.getState().createSecurityDeliveryWorkflow(),
+                    title: t('workflow.presetSecurityChain'),
+                    desc: t('workflow.presetSecurityChainDesc'),
+                  },
+                ].map((preset) => (
+                  <button
+                    key={preset.title}
+                    onClick={() => {
+                      setShowPresetMenu(false);
+                      if (isTopologyLocked) {
+                        notifyWorkflowLocked();
+                        return;
+                      }
+                      preset.action();
+                    }}
+                    className="w-full rounded-lg px-3 py-2 text-left hover:bg-purple-50 transition-colors"
+                  >
+                    <div className="text-sm font-medium text-gray-900">{preset.title}</div>
+                    <div className="text-xs text-gray-500">{preset.desc}</div>
+                  </button>
+                ))}
+              </div>
+            )}
+            <button
+              onClick={() => {
+                if (isTopologyLocked) {
+                  notifyWorkflowLocked();
+                  return;
+                }
+                setShowPresetMenu((prev) => !prev);
+              }}
+              disabled={isTopologyLocked}
+              className="w-full px-4 py-2 bg-purple-600 text-white rounded-lg shadow-lg hover:bg-purple-700 transition-colors flex items-center gap-2 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+              {t('workflow.presetMenu')}
+            </button>
+          </div>
           <button
             onClick={handleOpenWorkingDirectory}
             className="px-4 py-2 bg-white border border-gray-200 text-gray-600 rounded-lg shadow hover:bg-gray-50 transition-colors flex items-center gap-2 text-sm"

@@ -17,6 +17,12 @@ import type {
 } from '../types/workflow';
 import { DEFAULT_MAX_GOAL_ITERATIONS } from '@/services/workflow/defaults';
 import { AGENT_TEMPLATES } from '@/services/workflow/templates/agentTemplates';
+import { getRoleModelHint } from '@/services/workflow/templates/roles';
+import {
+  buildConfigOptions,
+  resolveRecommendedModelSelection,
+} from '@/services/workflow/modelRecommendation';
+import { useSettingsStore } from '@/store/settingsStore';
 import { createWorkflowAgentActions } from './workflowAgentActions';
 import { createWorkflowConnectionActions } from './workflowConnectionActions';
 import { createWorkflowRunActions } from './workflowRunActions';
@@ -115,6 +121,8 @@ export interface WorkflowStore extends WorkflowState {
 
   // Preset workflows
   createA_B_C_Workflow: () => { agentA: WorkflowAgent; agentB: WorkflowAgent; agentC: WorkflowAgent } | null;
+  createReviewDeliveryWorkflow: () => { agentA: WorkflowAgent; agentB: WorkflowAgent; agentC: WorkflowAgent } | null;
+  createSecurityDeliveryWorkflow: () => { agentA: WorkflowAgent; agentB: WorkflowAgent; agentC: WorkflowAgent } | null;
 }
 
 export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
@@ -310,53 +318,92 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
 
   // ============ Preset Workflow ============
 
-  createA_B_C_Workflow: () => {
-    if (shouldBlockTopologyMutation(get())) {
-      notifyTopologyMutationBlocked();
-      return null;
-    }
-    const { addAgent, addConnection } = get();
+  createA_B_C_Workflow: () => createPresetChain(get, [
+    { templateId: 'tech-writer', name: 'A - Technical Writer', role: 'writer', execution: { mode: 'single' } },
+    { templateId: 'fullstack-dev', name: 'B - Full Stack Developer', role: 'developer', execution: { mode: 'single' } },
+    { templateId: 'qa-engineer', name: 'C - QA Engineer', role: 'qa', execution: { mode: 'multi-round', maxRounds: 3, roundCondition: 'untilComplete' } },
+  ]),
 
-    const writerTemplate = AGENT_TEMPLATES.find(t => t.id === 'tech-writer');
-    const devTemplate = AGENT_TEMPLATES.find(t => t.id === 'fullstack-dev');
-    const qaTemplate = AGENT_TEMPLATES.find(t => t.id === 'qa-engineer');
+  createReviewDeliveryWorkflow: () => createPresetChain(get, [
+    { templateId: 'fullstack-dev', name: 'A - Full Stack Developer', role: 'developer', execution: { mode: 'single' } },
+    { templateId: 'code-reviewer', name: 'B - Code Reviewer', role: 'reviewer', execution: { mode: 'single' } },
+    { templateId: 'qa-engineer', name: 'C - QA Engineer', role: 'qa', execution: { mode: 'multi-round', maxRounds: 3, roundCondition: 'untilComplete' } },
+  ]),
 
-    const agentA = addAgent({
-      name: 'A - Technical Writer',
-      task: writerTemplate?.task || '编写需求文档',
-      taskPrompt: writerTemplate?.taskPrompt,
-      taskInstruction: writerTemplate?.taskInstruction,
-      soulPrompt: writerTemplate?.soulPrompt || '',
-      execution: { mode: 'single' },
-      inputFrom: null,
-      role: 'writer',
-    });
-
-    const agentB = addAgent({
-      name: 'B - Full Stack Developer',
-      task: devTemplate?.task || '编写代码',
-      taskPrompt: devTemplate?.taskPrompt,
-      taskInstruction: devTemplate?.taskInstruction,
-      soulPrompt: devTemplate?.soulPrompt || '',
-      execution: { mode: 'single' },
-      inputFrom: agentA.id,
-      role: 'developer',
-    });
-
-    const agentC = addAgent({
-      name: 'C - QA Engineer',
-      task: qaTemplate?.task || '执行测试',
-      taskPrompt: qaTemplate?.taskPrompt,
-      taskInstruction: qaTemplate?.taskInstruction,
-      soulPrompt: qaTemplate?.soulPrompt || '',
-      execution: { mode: 'multi-round', maxRounds: 3, roundCondition: 'untilComplete' },
-      inputFrom: agentB.id,
-      role: 'qa',
-    });
-
-    addConnection(agentA.id, agentB.id, 'onComplete');
-    addConnection(agentB.id, agentC.id, 'onComplete');
-
-    return { agentA, agentB, agentC };
-  },
+  createSecurityDeliveryWorkflow: () => createPresetChain(get, [
+    { templateId: 'fullstack-dev', name: 'A - Full Stack Developer', role: 'developer', execution: { mode: 'single' } },
+    { templateId: 'security-auditor', name: 'B - Security Auditor', role: 'security', execution: { mode: 'single' } },
+    { templateId: 'devops-engineer', name: 'C - DevOps Engineer', role: 'devops', execution: { mode: 'single' } },
+  ]),
 }));
+
+// ============ Preset Workflow Helpers ============
+
+/**
+ * Best-effort provider/model pick for a role, from the user's own API
+ * configs, using the same recommendation logic as the per-agent "apply
+ * recommendation" button. Returns undefined (leave on global config)
+ * when nothing matches rather than guessing.
+ */
+function resolveModelForRole(role: WorkflowAgent['role']): WorkflowAgent['model'] | undefined {
+  const { apiConfigs, availableModels } = useSettingsStore.getState();
+  const recommended = resolveRecommendedModelSelection({
+    roleHint: getRoleModelHint(role),
+    configOptions: buildConfigOptions(apiConfigs),
+    availableModels,
+  });
+  if (!recommended || (!recommended.configId && !recommended.provider && !recommended.modelId)) {
+    return undefined;
+  }
+  return {
+    configId: recommended.configId || undefined,
+    provider: recommended.provider || undefined,
+    modelId: recommended.modelId || undefined,
+  };
+}
+
+interface PresetStage {
+  templateId: string;
+  name: string;
+  role: WorkflowAgent['role'];
+  execution: AgentExecutionConfig;
+}
+
+function createPresetChain(
+  get: () => WorkflowStore,
+  stages: [PresetStage, PresetStage, PresetStage],
+): { agentA: WorkflowAgent; agentB: WorkflowAgent; agentC: WorkflowAgent } | null {
+  if (shouldBlockTopologyMutation(get())) {
+    notifyTopologyMutationBlocked();
+    return null;
+  }
+  const { addAgent, addConnection, updateAgent } = get();
+
+  const created: WorkflowAgent[] = [];
+  for (const stage of stages) {
+    const template = AGENT_TEMPLATES.find((item) => item.id === stage.templateId);
+    const previous = created[created.length - 1] ?? null;
+
+    const agent = addAgent({
+      name: stage.name,
+      task: template?.task || stage.name,
+      taskPrompt: template?.taskPrompt,
+      taskInstruction: template?.taskInstruction,
+      soulPrompt: template?.soulPrompt || '',
+      execution: stage.execution,
+      inputFrom: previous?.id ?? null,
+      role: stage.role,
+    });
+
+    const model = resolveModelForRole(stage.role);
+    if (model) {
+      updateAgent(agent.id, { model });
+    }
+    if (previous) {
+      addConnection(previous.id, agent.id, 'onComplete');
+    }
+    created.push(agent);
+  }
+
+  return { agentA: created[0], agentB: created[1], agentC: created[2] };
+}

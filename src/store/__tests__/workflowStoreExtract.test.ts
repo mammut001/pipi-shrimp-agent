@@ -100,7 +100,8 @@ const MAIN_STORE_KEY_ORDER = [
   ...CONNECTION_ACTION_KEYS,
   'addWorkflowRun', 'updateWorkflowRun', 'renameWorkflowRun', 'deleteWorkflowRun',
   'updateRunAgent', 'appendGoalEvaluation', 'selectRun', 'setActiveRunId',
-  'setRunning', 'resetAllStatuses', 'setSelectedPreviewFile', 'clearCanvas', 'createA_B_C_Workflow',
+  'setRunning', 'resetAllStatuses', 'setSelectedPreviewFile', 'clearCanvas',
+  'createA_B_C_Workflow', 'createReviewDeliveryWorkflow', 'createSecurityDeliveryWorkflow',
 ];
 
 describe('slice factories', () => {
