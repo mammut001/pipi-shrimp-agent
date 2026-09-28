@@ -36,6 +36,7 @@ export type TranslationKeys = {
   'common.open': string;
   'common.move': string;
   'common.none': string;
+  'common.unknown': string;
   'common.all': string;
   'common.search': string;
   'common.select': string;
@@ -68,6 +69,11 @@ export type TranslationKeys = {
   'settings.apiProvider': string;
   'settings.apiKey': string;
   'settings.apiKeyPlaceholder': string;
+  'settings.apiKeyCharacterCount': string;
+  'settings.apiKeyMayBeTruncated': string;
+  'settings.apiKeyRequiredError': string;
+  'settings.apiKeyMaskedError': string;
+  'settings.apiKeyTruncatedError': string;
   'settings.model': string;
   'settings.language': string;
   'settings.languageDescription': string;
@@ -477,6 +483,9 @@ export type TranslationKeys = {
   'workflow.loadTemplate': string;
   'workflow.presetChain': string;
   'workflow.openWorkDir': string;
+  'workflow.addAgent': string;
+  'workflow.addAgentHere': string;
+  'workflow.clearAll': string;
   'workflow.notInWorkflowPage': string;
   'workflow.noWorkflowRunning': string;
   'workflow.cannotOpenDir': string;
@@ -1271,6 +1280,8 @@ export type TranslationKeys = {
   'notification.runCompleted': string;
   'notification.runFailed': string;
   'notification.stopped': string;
+  'notification.toast.history': string;
+  'notification.toast.dismiss': string;
 
   // Artifacts
   'artifacts.singleFileGenerated': string;
@@ -1585,6 +1596,7 @@ export type TranslationKeys = {
   'autoresearch.recipe.toConfirm': string;
   'autoresearch.recipe.notConfigured': string;
   'autoresearch.recipe.confirmGoal': string;
+  'autoresearch.recipe.noGoalSet': string;
   'autoresearch.recipe.confirmResearchGoal': string;
   'autoresearch.recipe.confirmResearchGoalFirst': string;
   'autoresearch.recipe.selectWorkspaceFirst': string;

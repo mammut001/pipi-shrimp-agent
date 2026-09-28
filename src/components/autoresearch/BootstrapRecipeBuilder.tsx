@@ -232,7 +232,7 @@ export function BootstrapRecipeBuilder({
           collapsedSummary={
             <span className="truncate pr-4 font-sans">
               <span className="font-semibold text-gray-700">{formatTaskTypeLabel(recipe.researchGoal.taskType, locale)}:</span>{' '}
-              {isGoalPlaceholder(recipe.researchGoal.goalText, recipe.researchGoal.source) ? (t('autoresearch.recipe.confirmGoal') || '请确认目标') : (recipe.researchGoal.goalText || 'No goal set yet')}
+              {isGoalPlaceholder(recipe.researchGoal.goalText, recipe.researchGoal.source) ? (t('autoresearch.recipe.confirmGoal') || '请确认目标') : (recipe.researchGoal.goalText || t('autoresearch.recipe.noGoalSet'))}
             </span>
           }
         >

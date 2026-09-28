@@ -181,7 +181,7 @@ export function WorkflowRunHistory() {
                         <div key={`${run.id}:${entry.agentId || entry.agentName}`} className="flex items-center gap-1 text-gray-500">
                           <span>{getAgentStatusIcon(entry.status)}</span>
                           <span className="truncate">
-                            {agent?.name || entry.agentName || 'Unknown'}
+                            {agent?.name || entry.agentName || t('common.unknown')}
                           </span>
                         </div>
                       );
