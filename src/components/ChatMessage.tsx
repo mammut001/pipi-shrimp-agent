@@ -128,7 +128,7 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1">
               <span className="font-medium text-gray-900">
-                {isUser ? 'You' : 'pipi-shrimp-agent'}
+                {isUser ? t('chat.you') : 'pipi-shrimp-agent'}
               </span>
               <span className="text-xs text-gray-400">
                 {formatTimestamp(message.timestamp)}
@@ -138,7 +138,7 @@ export const ChatMessage = memo(function ChatMessage({ message, isLatest = false
                 <button
                   onClick={handleCopyMessage}
                   className="opacity-0 group-hover/msg:opacity-100 transition-opacity p-1 text-gray-400 hover:text-gray-600 rounded"
-                  title={copied ? 'Copied!' : 'Copy message'}
+                  title={copied ? t('chat.copied') : t('chat.copyMessage')}
                 >
                   {copied ? (
                     <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5 text-green-500" viewBox="0 0 20 20" fill="currentColor">

@@ -171,6 +171,9 @@ export type TranslationKeys = {
   'chat.thinking': string;
   'chat.aiThinking': string;
   'chat.charCount': string;
+  'chat.you': string;
+  'chat.copyMessage': string;
+  'chat.copied': string;
   'chat.tokenUsage': string;
   'chat.newSession': string;
   'chat.sessionTokenUsage': string;
