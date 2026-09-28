@@ -210,6 +210,7 @@ const zhCN: TranslationKeys = {
   'autoresearch.recipe.notConfigured': '未配置',
   'autoresearch.recipe.confirmGoal': '确认目标',
   'autoresearch.recipe.noGoalSet': '尚未设置目标',
+  'autoresearch.recipe.defaultGoalOpener': '我想开始一个 AutoResearch 任务。请引导我设置目标、论文、基线和工作区脚手架。',
   'autoresearch.recipe.confirmResearchGoal': '请确认研究目标',
   'autoresearch.recipe.confirmResearchGoalFirst': '请先确认研究目标',
   'autoresearch.recipe.selectWorkspaceFirst': '请先选择工作区',

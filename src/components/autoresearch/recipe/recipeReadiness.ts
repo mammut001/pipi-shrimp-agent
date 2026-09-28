@@ -1,10 +1,21 @@
-export const PLACEHOLDER_GOALS = [
-  'I want to start an AutoResearch task. Please guide me through setting up goals, papers, baselines, and workspace scaffolding.',
-  'I want to fully reproduce a paper. Please help me identify the paper claims, lock baselines, target primary metric, and construct scaffold files.',
-  'I want to exceed an existing baseline on a known task. Please propose improvements, keep evaluations fair, and setup experiment workspace.',
-  'I want to conduct ablation studies on an existing model or method. Please help me isolate ablation parameters, verify metrics, and bootstrap scaffolding.',
-  'I want to start a brand new AutoResearch project from scratch. Please propose a concrete research objective and scaffold the project workspace.'
-];
+import zhCN from '@/i18n/locales/zh-CN';
+import enUS from '@/i18n/locales/en-US';
+
+/**
+ * goalText is compared against these verbatim to detect an unedited template
+ * opener (see isGoalPlaceholder). Both locales' translations are included so
+ * detection stays correct regardless of which locale was active when the
+ * opener text was generated vs. when it's later checked.
+ */
+const PLACEHOLDER_GOAL_KEYS = [
+  'autoresearch.recipe.defaultGoalOpener',
+  'autoresearch.bootstrap.card.reproduce.opener',
+  'autoresearch.bootstrap.card.baseline.opener',
+  'autoresearch.bootstrap.card.ablation.opener',
+  'autoresearch.bootstrap.card.scratch.opener',
+] as const;
+
+export const PLACEHOLDER_GOALS = PLACEHOLDER_GOAL_KEYS.flatMap((key) => [zhCN[key], enUS[key]]);
 
 export interface Recipe {
   researchGoal: {

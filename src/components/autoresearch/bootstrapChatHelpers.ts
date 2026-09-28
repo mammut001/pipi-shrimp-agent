@@ -1,5 +1,6 @@
 import type { ExtractedBaseline } from '@/services/autoresearch/bootstrap/types';
 import type { SshConfig } from '@/store/autoresearchStore';
+import { t } from '@/i18n';
 import { type Recipe } from './bootstrapRecipePrompt';
 
 /** Shared copy for tests + UI when headless turn omits bootstrap_finalize. */
@@ -72,7 +73,7 @@ export function resolveBootstrapRemoteWorkDir(sshConfig: SshConfig, workDir: str
 export function createDefaultRecipe(sshConfig?: SshConfig): Recipe {
   return {
     researchGoal: {
-      goalText: 'I want to start an AutoResearch task. Please guide me through setting up goals, papers, baselines, and workspace scaffolding.',
+      goalText: t('autoresearch.recipe.defaultGoalOpener'),
       taskType: 'reproduce_paper',
       source: 'template',
     },
