@@ -1240,6 +1240,14 @@ export type TranslationKeys = {
   'telegram.featureSendMessages': string;
   'telegram.featureReceiveMessages': string;
   'telegram.featureRealtimeNotifications': string;
+  'telegram.error.invalidToken': string;
+  'telegram.error.chatNotFound': string;
+  'telegram.error.botBlocked': string;
+  'telegram.error.badRequest': string;
+  'telegram.error.accessDenied': string;
+  'telegram.error.tooManyRequests': string;
+  'telegram.error.serverError': string;
+  'telegram.error.unknown': string;
 
   // Browser Inspection
   'browser.authState.authenticated': string;

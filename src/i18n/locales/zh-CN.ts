@@ -1827,6 +1827,14 @@ const zhCN: TranslationKeys = {
   'telegram.featureSendMessages': '向任意聊天发送消息',
   'telegram.featureReceiveMessages': '接收用户发来的消息',
   'telegram.featureRealtimeNotifications': '实时消息通知',
+  'telegram.error.invalidToken': '无效的机器人令牌，请检查令牌后重试。',
+  'telegram.error.chatNotFound': '未找到聊天，请确认用户已经启动过该机器人。',
+  'telegram.error.botBlocked': '机器人已被该用户屏蔽。',
+  'telegram.error.badRequest': '请求错误：{message}',
+  'telegram.error.accessDenied': '访问被拒绝，机器人无法向该用户发送消息。',
+  'telegram.error.tooManyRequests': '请求过于频繁，请稍后重试。',
+  'telegram.error.serverError': 'Telegram 服务器错误，请稍后重试。',
+  'telegram.error.unknown': '发生未知错误',
 
   // Browser Inspection
   'browser.authState.authenticated': '已登录',

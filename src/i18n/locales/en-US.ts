@@ -1827,6 +1827,14 @@ Fill structured browser forms while re-checking PageState before risky actions.
   'telegram.featureSendMessages': 'Send messages to any chat',
   'telegram.featureReceiveMessages': 'Receive messages from users',
   'telegram.featureRealtimeNotifications': 'Real-time message notifications',
+  'telegram.error.invalidToken': 'Invalid bot token. Please check your token and try again.',
+  'telegram.error.chatNotFound': 'Chat not found. Make sure the bot has been started by the user.',
+  'telegram.error.botBlocked': 'Bot was blocked by the user.',
+  'telegram.error.badRequest': 'Bad request: {message}',
+  'telegram.error.accessDenied': 'Access denied. The bot cannot send messages to this user.',
+  'telegram.error.tooManyRequests': 'Too many requests. Please wait a moment and try again.',
+  'telegram.error.serverError': 'Telegram server error. Please try again later.',
+  'telegram.error.unknown': 'An unknown error occurred',
 
   // Browser Inspection
   'browser.authState.authenticated': 'Authenticated',

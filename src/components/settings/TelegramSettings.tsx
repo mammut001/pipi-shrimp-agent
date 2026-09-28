@@ -56,9 +56,8 @@ export function TelegramSettings() {
     try {
       const info = await telegramValidateToken(trimmed);
       setValidationResult({ success: true, botInfo: info });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : t('telegram.invalidToken');
-      setValidationResult({ success: false, error: message });
+    } catch {
+      setValidationResult({ success: false, error: t('telegram.invalidToken') });
     } finally {
       setIsValidating(false);
     }
