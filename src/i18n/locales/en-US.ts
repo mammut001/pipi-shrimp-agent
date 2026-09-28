@@ -935,6 +935,7 @@ const enUS: TranslationKeys = {
   'workflow.selectModel': 'Select model',
   'workflow.notifyOnComplete': 'Notify on Complete',
   'workflow.notifyOnCompleteEmpty': 'No other agents available',
+  'workflow.notifyFullOutput': 'Send full output',
   'workflow.retryPolicy': 'Retry Policy',
   'workflow.retryMaxAttempts': 'Max attempts',
   'workflow.retryBackoffMs': 'Backoff (ms)',

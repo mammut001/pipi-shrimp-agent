@@ -517,6 +517,7 @@ export type TranslationKeys = {
   'workflow.selectModel': string;
   'workflow.notifyOnComplete': string;
   'workflow.notifyOnCompleteEmpty': string;
+  'workflow.notifyFullOutput': string;
   'workflow.retryPolicy': string;
   'workflow.retryMaxAttempts': string;
   'workflow.retryBackoffMs': string;

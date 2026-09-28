@@ -34,6 +34,7 @@ function cloneWorkflowAgent(agent: WorkflowAgent): WorkflowAgent {
         }
       : undefined,
     notifyOnComplete: [...(agent.notifyOnComplete ?? [])],
+    notifyFullOutputAgentIds: [...(agent.notifyFullOutputAgentIds ?? [])],
   };
 }
 
@@ -54,6 +55,7 @@ function freezeWorkflowRunSnapshot(snapshot: WorkflowRunSnapshot): WorkflowRunSn
       Object.freeze(agent.retryPolicy);
     }
     Object.freeze(agent.notifyOnComplete ?? []);
+    Object.freeze(agent.notifyFullOutputAgentIds ?? []);
     Object.freeze(agent);
   }
 

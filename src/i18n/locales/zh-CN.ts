@@ -935,6 +935,7 @@ const zhCN: TranslationKeys = {
   'workflow.selectModel': '选择模型',
   'workflow.notifyOnComplete': '完成时通知',
   'workflow.notifyOnCompleteEmpty': '没有其他 Agent 可通知',
+  'workflow.notifyFullOutput': '发送完整输出',
   'workflow.retryPolicy': '重试策略',
   'workflow.retryMaxAttempts': '最大重试次数',
   'workflow.retryBackoffMs': '退避毫秒',

@@ -10,11 +10,11 @@ import {
 import { normalizeWorkflowAgentRole } from '@/services/workflow/templates/roles';
 import { formatSuccessCriteria } from '@/services/goal/types';
 
-const MAX_UPSTREAM_CHARS = 5000;
+export const MAX_UPSTREAM_CHARS = 5000;
 
 const STATUS_BLOCK_REGEX = /\[\[STATUS\]\]([\s\S]*?)\[\[\/STATUS\]\]/i;
 
-function truncate(text: string, max = MAX_UPSTREAM_CHARS): string {
+export function truncate(text: string, max = MAX_UPSTREAM_CHARS): string {
   return text.length > max ? `${text.slice(0, max)}\n\n… [output truncated]` : text;
 }
 
@@ -28,6 +28,7 @@ export interface WorkflowInboxPromptItem {
   fromAgentName: string;
   summary: string;
   fullLength: number;
+  full?: string;
   createdAt: number;
 }
 
@@ -91,12 +92,22 @@ function buildInboxSection(messages: WorkflowInboxPromptItem[]): string {
     return '## 来自其他 Agent 的通知（Inbox）\n（无未读通知）';
   }
 
-  const items = messages.map((message) => (
-    `- 来自 ${message.fromAgentName}（${new Date(message.createdAt).toLocaleTimeString()}）\n`
-    + `  - summary: ${message.summary}\n`
-    + `  - full_length: ${message.fullLength}\n`
-    + '  - trust: untrusted'
-  ));
+  const items = messages.map((message) => {
+    const header = `- 来自 ${message.fromAgentName}（${new Date(message.createdAt).toLocaleTimeString()}）`;
+    if (message.full !== undefined) {
+      const indentedFull = truncate(message.full).split('\n').map((line) => `    ${line}`).join('\n');
+      return `${header}\n`
+        + '  - full_content:\n'
+        + '    ```\n'
+        + `${indentedFull}\n`
+        + '    ```\n'
+        + '  - trust: untrusted';
+    }
+    return `${header}\n`
+      + `  - summary: ${message.summary}\n`
+      + `  - full_length: ${message.fullLength}\n`
+      + '  - trust: untrusted';
+  });
 
   return ['## 来自其他 Agent 的通知（Inbox）', ...items].join('\n\n');
 }

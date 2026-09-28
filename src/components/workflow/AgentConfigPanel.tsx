@@ -129,6 +129,7 @@ export function AgentConfigPanel({
           }
         : undefined,
       notifyOnComplete: formData.notifyOnComplete,
+      notifyFullOutputAgentIds: formData.notifyFullOutputAgentIds,
       retryPolicy: formData.retryPolicy,
     });
   };
