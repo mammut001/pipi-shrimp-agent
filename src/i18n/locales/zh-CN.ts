@@ -34,6 +34,7 @@ const zhCN: TranslationKeys = {
   'common.open': '打开',
   'common.move': '移动',
   'common.none': '无',
+  'common.unknown': '未知',
   'common.all': '全部',
   'common.search': '搜索',
   'common.select': '选择',
@@ -208,6 +209,7 @@ const zhCN: TranslationKeys = {
   'autoresearch.recipe.toConfirm': '待确认',
   'autoresearch.recipe.notConfigured': '未配置',
   'autoresearch.recipe.confirmGoal': '确认目标',
+  'autoresearch.recipe.noGoalSet': '尚未设置目标',
   'autoresearch.recipe.confirmResearchGoal': '请确认研究目标',
   'autoresearch.recipe.confirmResearchGoalFirst': '请先确认研究目标',
   'autoresearch.recipe.selectWorkspaceFirst': '请先选择工作区',
@@ -1865,6 +1867,8 @@ const zhCN: TranslationKeys = {
   'notification.runCompleted': '工作流运行完成',
   'notification.runFailed': '工作流运行失败',
   'notification.stopped': '已停止',
+  'notification.toast.history': '通知历史',
+  'notification.toast.dismiss': '关闭通知',
 
   // Error Boundary
   'errorBoundary.title': '应用遇到了问题',

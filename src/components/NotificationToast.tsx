@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useChatStore, useUIStore } from '@/store';
 import type { Notification } from '@/types/ui';
 import { coerceRenderableText } from '@/utils/coerceRenderableText';
+import { t } from '@/i18n';
 
 function formatTimestamp(timestamp?: number) {
   if (!timestamp) return '';
@@ -116,7 +117,7 @@ function NotificationHistoryPanel({
     <div className="pointer-events-auto w-80 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl">
       <div className="flex items-center justify-between border-b border-slate-100 px-3 py-2.5">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Toast History</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">{t('notification.toast.history')}</p>
           <p className="text-xs text-slate-400">最近 {notifications.length} 条通知</p>
         </div>
         <div className="flex gap-2">
@@ -219,7 +220,7 @@ function ToastItem({ notification }: { notification: Notification }) {
           type="button"
           onClick={() => removeNotification(notification.id)}
           className="flex-shrink-0 ml-auto p-1 rounded-md hover:bg-black/5 transition-colors"
-          aria-label="Dismiss notification"
+          aria-label={t('notification.toast.dismiss')}
         >
           <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />

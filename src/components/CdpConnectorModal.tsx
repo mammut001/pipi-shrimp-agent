@@ -201,22 +201,22 @@ export const CdpConnectorModal: React.FC<Props> = ({ onClose }) => {
         {connectionState && (
           <div className="rounded-xl border border-gray-200 bg-gray-50 p-3 text-[10px] text-gray-600 space-y-1.5">
             <div className="flex items-center justify-between gap-3">
-              <span className="uppercase tracking-wider text-gray-400">Mode</span>
+              <span className="uppercase tracking-wider text-gray-400">模式</span>
               <span className="font-medium text-gray-700">{connectionState.launch_mode ?? 'attach'}</span>
             </div>
             <div className="flex items-center justify-between gap-3">
-              <span className="uppercase tracking-wider text-gray-400">Health</span>
+              <span className="uppercase tracking-wider text-gray-400">健康状态</span>
               <span className="font-medium text-gray-700">{connectionState.health_status}</span>
             </div>
             {connectionState.health_failures > 0 && (
               <div className="flex items-center justify-between gap-3">
-                <span className="uppercase tracking-wider text-gray-400">Failures</span>
+                <span className="uppercase tracking-wider text-gray-400">失败次数</span>
                 <span className="font-medium text-amber-700">{connectionState.health_failures}</span>
               </div>
             )}
             {connectionState.current_url && (
               <div>
-                <p className="uppercase tracking-wider text-gray-400">Current URL</p>
+                <p className="uppercase tracking-wider text-gray-400">当前 URL</p>
                 <p className="mt-1 break-all text-gray-700">{connectionState.current_url}</p>
               </div>
             )}

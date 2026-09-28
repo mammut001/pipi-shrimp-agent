@@ -36,6 +36,7 @@ export type TranslationKeys = {
   'common.open': string;
   'common.move': string;
   'common.none': string;
+  'common.unknown': string;
   'common.all': string;
   'common.search': string;
   'common.select': string;
@@ -1279,6 +1280,8 @@ export type TranslationKeys = {
   'notification.runCompleted': string;
   'notification.runFailed': string;
   'notification.stopped': string;
+  'notification.toast.history': string;
+  'notification.toast.dismiss': string;
 
   // Artifacts
   'artifacts.singleFileGenerated': string;
@@ -1593,6 +1596,7 @@ export type TranslationKeys = {
   'autoresearch.recipe.toConfirm': string;
   'autoresearch.recipe.notConfigured': string;
   'autoresearch.recipe.confirmGoal': string;
+  'autoresearch.recipe.noGoalSet': string;
   'autoresearch.recipe.confirmResearchGoal': string;
   'autoresearch.recipe.confirmResearchGoalFirst': string;
   'autoresearch.recipe.selectWorkspaceFirst': string;

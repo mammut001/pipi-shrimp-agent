@@ -34,6 +34,7 @@ const enUS: TranslationKeys = {
   'common.open': 'Open',
   'common.move': 'Move',
   'common.none': 'None',
+  'common.unknown': 'Unknown',
   'common.all': 'All',
   'common.search': 'Search',
   'common.select': 'Select',
@@ -208,6 +209,7 @@ const enUS: TranslationKeys = {
   'autoresearch.recipe.toConfirm': 'Confirm goal',
   'autoresearch.recipe.notConfigured': 'Not Configured',
   'autoresearch.recipe.confirmGoal': 'Confirm goal',
+  'autoresearch.recipe.noGoalSet': 'No goal set yet',
   'autoresearch.recipe.confirmResearchGoal': 'Confirm research goal',
   'autoresearch.recipe.confirmResearchGoalFirst': 'Confirm research goal first',
   'autoresearch.recipe.selectWorkspaceFirst': 'Select workspace first',
@@ -1865,6 +1867,8 @@ Fill structured browser forms while re-checking PageState before risky actions.
   'notification.runCompleted': 'Workflow completed',
   'notification.runFailed': 'Workflow failed',
   'notification.stopped': 'Stopped',
+  'notification.toast.history': 'Toast History',
+  'notification.toast.dismiss': 'Dismiss notification',
 
   // Error Boundary
   'errorBoundary.title': 'Something went wrong',
