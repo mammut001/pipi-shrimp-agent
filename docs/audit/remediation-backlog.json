@@ -1261,8 +1261,8 @@
     "title": "Telegram token stored XOR in localStorage not keychain",
     "lane": "G. Security Hardening",
     "severity": "Medium",
-    "status": "partially fixed",
-    "fixNote": "2026-09-22: Spike landed (588dd9f / 122131e / 90566a3): pluggable SecureStorageProvider in secureStorage.ts (LocalStorageProvider XOR + KeychainProvider dynamic-import stub for `@tauri-apps/plugin-secure-store`), saveSecret/loadSecret/migrateLegacySecret route via getSecureStorage(), settingsStore telegram-token load/migrate, secureStorage.test.ts. Fail-safe migrate: legacy localStorage key is removed only after new-store save+load verify; keychain-missing save throws (no silent XOR fallback). Still open: wire a real Tauri 2 keychain plugin (Cargo/npm/capabilities). See docs/audit/r7-15-keychain-spike.md.",
+    "status": "fixed",
+    "fixNote": "2026-09-29: Desktop Telegram token save/load/delete goes through the OS keychain commands from #170 (`secure_storage_save` / `secure_storage_load` / `secure_storage_delete`, keyring service `com.pipishrimp.agent`). A successful desktop save does not leave the token in localStorage. Non-Tauri browser builds may still use the XOR localStorage provider; that fallback is expected and is not a reason to keep R7-15 partially fixed.",
     "whyItMatters": "Token recoverable from local storage",
     "files": [
       "src/utils/secureStorage.ts",
@@ -1270,7 +1270,7 @@
       "src/utils/__tests__/secureStorage.test.ts",
       "src/store/settingsStore.ts"
     ],
-    "smallestPrScope": "Wire chosen Tauri 2 keychain plugin (spike done)",
+    "smallestPrScope": "Done in #170: OS keychain commands secure_storage_save/load/delete",
     "tests": [
       "token not in localStorage plaintext",
       "src/utils/__tests__/secureStorage.test.ts"

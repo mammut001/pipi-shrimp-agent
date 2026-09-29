@@ -1,3 +1,5 @@
+import { readFileSync } from 'fs';
+import { resolve } from 'path';
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 
 const mockInvoke = jest.fn();
@@ -185,5 +187,56 @@ describe('secureStorage (R7-15)', () => {
         errorSpy.mockRestore();
       }
     });
+  });
+
+  it('saves a telegram token through OS keychain commands in the Tauri runtime', async () => {
+    const token = '123456:desktop-telegram-token';
+    (globalThis as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = { invoke: true };
+    __resetSecureStorageCache();
+    let stored: string | null = null;
+    mockInvoke.mockImplementation(async (command: string, args?: { key?: string; value?: string }) => {
+      if (command === 'secure_storage_save') stored = args?.value ?? null;
+      if (command === 'secure_storage_load') return stored;
+      if (command === 'secure_storage_delete') stored = null;
+      return null;
+    });
+
+    expect(isTauriRuntime()).toBe(true);
+    expect(resolveSecureStorage().name).toBe('keychain');
+    await saveSecret('telegram-token', token);
+
+    expect(mockInvoke).toHaveBeenCalledWith('secure_storage_save', {
+      key: 'telegram-token',
+      value: token,
+    });
+    expect(stored).toBe(token);
+    expect(localStorage.getItem('pipi_secret_v2_telegram-token')).toBeNull();
+    for (let index = 0; index < localStorage.length; index += 1) {
+      const key = localStorage.key(index);
+      expect(key).toBeTruthy();
+      expect(localStorage.getItem(key as string)).not.toContain(token);
+    }
+  });
+});
+
+const R7_15_FIX_NOTE = '2026-09-29: Desktop Telegram token save/load/delete goes through the OS keychain commands from #170 (`secure_storage_save` / `secure_storage_load` / `secure_storage_delete`, keyring service `com.pipishrimp.agent`). A successful desktop save does not leave the token in localStorage. Non-Tauri browser builds may still use the XOR localStorage provider; that fallback is expected and is not a reason to keep R7-15 partially fixed.';
+
+describe('remediation backlog R7-15', () => {
+  it('marks R7-15 fixed and leaves the other 120 entries fixed', () => {
+    const backlogPath = resolve(__dirname, '../../../docs/audit/remediation-backlog.json');
+    const backlog = JSON.parse(readFileSync(backlogPath, 'utf8')) as Array<{
+      id: string;
+      status: string;
+      fixNote?: string;
+    }>;
+
+    expect(backlog).toHaveLength(121);
+    const r715 = backlog.find((item) => item.id === 'R7-15');
+    expect(r715).toBeDefined();
+    expect(r715?.status).toBe('fixed');
+    expect(r715?.fixNote).toBe(R7_15_FIX_NOTE);
+    expect(r715?.fixNote).not.toMatch(/unwired|still open|plugin-secure-store/i);
+    expect(backlog.filter((item) => item.id !== 'R7-15').every((item) => item.status === 'fixed')).toBe(true);
+    expect(backlog.every((item) => item.status === 'fixed')).toBe(true);
   });
 });

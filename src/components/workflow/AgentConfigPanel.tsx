@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSettingsStore } from '@/store/settingsStore';
 import { useWorkflowStore } from '@/store/workflowStore';
 import type { ProviderName } from '@/shared/providers';
@@ -9,7 +9,7 @@ import {
   selectAgentOutputRoutes,
 } from '@/store/workflowStore';
 import { t } from '@/i18n';
-import type { RouteCondition } from '@/types/workflow';
+import type { RouteCondition, WorkflowAgent } from '@/types/workflow';
 import {
   getMissingExplicitRouteMarkers,
   buildModelOptions,
@@ -35,11 +35,17 @@ import {
   AgentConfigPanelSaveFooter,
 } from './agentConfigPanelSections';
 
+type AgentFormPatch = Partial<Omit<WorkflowAgent, 'id'>>;
+
 interface AgentConfigPanelProps {
   agentId: string;
   onClose: () => void;
   hideTaskFields?: boolean;
   embedded?: boolean;
+  /** When set, the footer Save commits the column form instead of writing the panel alone. */
+  onColumnSave?: () => void;
+  /** Latest config patch, including notify checkbox lists, for the shared column Save. */
+  registerConfigPatch?: (getPatch: (() => AgentFormPatch) | null) => void;
 }
 
 export function AgentConfigPanel({
@@ -47,6 +53,8 @@ export function AgentConfigPanel({
   onClose,
   hideTaskFields = false,
   embedded = false,
+  onColumnSave,
+  registerConfigPatch,
 }: AgentConfigPanelProps) {
   const agent = useWorkflowStore((state) => {
     const instance = state.instances.find((item) => item.id === state.currentInstanceId);
@@ -106,14 +114,10 @@ export function AgentConfigPanel({
     [apiConfigs],
   );
 
-  if (!agent) return null;
-
-  const setField = <K extends keyof AgentConfigFormData>(key: K, value: AgentConfigFormData[K]) => {
-    setFormData((prev) => ({ ...prev, [key]: value }));
-  };
-
-  const handleSave = () => {
-    updateAgent(agentId, {
+  const buildPatchRef = useRef<() => AgentFormPatch>(() => ({}));
+  buildPatchRef.current = () => {
+    if (!agent) return {};
+    return {
       name: formData.name,
       soulPrompt: formData.soulPrompt,
       task: hideTaskFields ? agent.task : formData.task,
@@ -131,7 +135,27 @@ export function AgentConfigPanel({
       notifyOnComplete: formData.notifyOnComplete,
       notifyFullOutputAgentIds: formData.notifyFullOutputAgentIds,
       retryPolicy: formData.retryPolicy,
-    });
+    };
+  };
+
+  useEffect(() => {
+    if (!registerConfigPatch) return undefined;
+    registerConfigPatch(() => buildPatchRef.current());
+    return () => registerConfigPatch(null);
+  }, [registerConfigPatch]);
+
+  if (!agent) return null;
+
+  const setField = <K extends keyof AgentConfigFormData>(key: K, value: AgentConfigFormData[K]) => {
+    setFormData((prev) => ({ ...prev, [key]: value }));
+  };
+
+  const handleSave = () => {
+    if (onColumnSave) {
+      onColumnSave();
+      return;
+    }
+    updateAgent(agentId, buildPatchRef.current());
   };
 
   const handleTemplateSelect = (templateId: string) => {

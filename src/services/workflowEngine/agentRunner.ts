@@ -17,6 +17,12 @@ import type {
   WorkflowTranscriptManager,
 } from './transcript';
 import { runHeadlessAgentTurn } from '@/services/headless/agentRunner';
+import {
+  formatFileWriteHandoff,
+  recordFileWriteCall,
+  recordFileWriteResult,
+  type FileWriteCapture,
+} from './fileWriteHandoff';
 
 export type StreamChunkCallback = (agentId: string, chunk: string, fullContent: string) => void;
 
@@ -200,6 +206,7 @@ async function invokeWithStreaming(
   const systemPrompt = buildSystemPrompt(agent, config.model, context.systemPromptOverride);
 
   let accumulatedContent = '';
+  const fileWrites: FileWriteCapture[] = [];
 
   try {
     const result = await runHeadlessAgentTurn({
@@ -230,6 +237,7 @@ async function invokeWithStreaming(
         context.onStreamChunk?.(agent.id, chunk, accumulatedContent);
       },
       onToolCall: (call) => {
+        recordFileWriteCall(fileWrites, call);
         context.transcript.record(agent.id, {
           timestamp: Date.now(),
           type: 'tool_called',
@@ -239,6 +247,7 @@ async function invokeWithStreaming(
         });
       },
       onToolResult: (res) => {
+        recordFileWriteResult(fileWrites, res);
         context.transcript.record(agent.id, {
           timestamp: Date.now(),
           type: 'tool_result',
@@ -248,11 +257,17 @@ async function invokeWithStreaming(
       },
     });
 
-    const fullContent = result.finalText || accumulatedContent;
-    if (!fullContent.trim()) {
-      context.onStreamChunk?.(agent.id, '', fullContent);
+    const assistantText = result.finalText || accumulatedContent;
+    if (assistantText.trim()) {
+      return assistantText;
     }
-    return fullContent;
+    const fileWriteHandoff = formatFileWriteHandoff(fileWrites);
+    if (fileWriteHandoff) {
+      context.onStreamChunk?.(agent.id, '', fileWriteHandoff);
+      return fileWriteHandoff;
+    }
+    context.onStreamChunk?.(agent.id, '', assistantText);
+    return assistantText;
   } catch (error) {
     if (
       (error instanceof DOMException && error.name === 'AbortError') ||

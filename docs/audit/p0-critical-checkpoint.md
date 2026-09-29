@@ -166,7 +166,7 @@ All thirteen anchors from the remediation wave are **`fixed`** in `remediation-b
 | **Problem** | `allowedChats` type and settings existed but inbound router never checked — any chat could command the bot. |
 | **Fix summary** | Central `isTelegramInboundChatAuthorized` guard in `commandRouter` before dispatch; `connectorConfig` localStorage persistence wired to `telegramSetAllowedChats`; owner chat always allowed when allowlist is restrictive; empty allowlist denies all except owner. |
 | **Tests added** | `src/services/telegram/__tests__/chatAuthorization.test.ts`, `commandRouter.test.ts`. |
-| **Remaining risk** | Token storage still XOR localStorage until keychain plugin wired (R7-15 partially fixed — spike done; see `r7-15-keychain-spike.md`). |
+| **Remaining risk** | Desktop Telegram tokens go through the #170 OS keychain commands (`secure_storage_save` / `secure_storage_load` / `secure_storage_delete`, service `com.pipishrimp.agent`) and a successful desktop save does not leave the token in localStorage. Non-Tauri browser builds may still use XOR localStorage. |
 | **Follow-up** | R7-10 token redaction in logs. |
 
 ---

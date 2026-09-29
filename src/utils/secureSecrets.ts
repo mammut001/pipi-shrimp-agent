@@ -116,8 +116,9 @@ function deobfuscate(value: string): string {
  * `getSecureStorage()`. In the default (localStorage) provider the
  * value is XOR-obfuscated and persisted under `pipi_secret_v2_<key>`
  * in localStorage. When the keychain provider is active (Tauri
- * runtime + tauri-plugin-secure-store installed), the value is
- * stored in the OS keychain and never touches localStorage.
+ * desktop runtime), the value is stored with the OS keychain commands
+ * `secure_storage_save` / `secure_storage_load` / `secure_storage_delete`
+ * and a successful save does not leave the value in localStorage.
  *
  * AUDIT-FIX [R7-15]: This shim keeps the existing function signature
  * so all callers (settingsStore, telegramStore) keep working without

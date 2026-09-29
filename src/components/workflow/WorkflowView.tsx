@@ -5,7 +5,7 @@
  * This is the main entry point for the workflow feature.
  */
 
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { WorkflowCanvas } from './WorkflowCanvas';
 import { WorkflowExecutionBar } from './WorkflowExecutionBar';
 import { WorkflowGoalPanel } from './WorkflowGoalPanel';
@@ -19,13 +19,29 @@ import { validateWorkflowForRun } from '@/services/workflow/validation';
 import { t } from '@/i18n';
 import { MAIN_LAYOUT_EDGE_TOGGLE_GUTTER_CLASS } from '@/layout/edgeToggleGutter';
 import type { GoalPreflightResult } from '@/services/goal/preflight/schema';
+import type { WorkflowAgent } from '@/types/workflow';
 
-function WorkflowTaskPanel({ agentId }: { agentId: string }) {
+type AgentFormPatch = Partial<Omit<WorkflowAgent, 'id'>>;
+
+interface TaskDraft {
+  task: string;
+  taskPrompt: string;
+  taskInstruction: string;
+}
+
+function WorkflowTaskPanel({
+  agentId,
+  onSave,
+  onTaskDraft,
+}: {
+  agentId: string;
+  onSave: () => void;
+  onTaskDraft: (draft: TaskDraft) => void;
+}) {
   const agent = useWorkflowStore((state) => {
     const inst = state.instances.find(i => i.id === state.currentInstanceId);
     return inst?.agents.find((item) => item.id === agentId);
   });
-  const updateAgent = useWorkflowStore((state) => state.updateAgent);
   const allAgents = useWorkflowStore((state) => {
     const inst = state.instances.find(i => i.id === state.currentInstanceId);
     return inst?.agents ?? [];
@@ -41,6 +57,10 @@ function WorkflowTaskPanel({ agentId }: { agentId: string }) {
     setTaskInstruction(agent?.taskInstruction || '');
   }, [agent?.task, agent?.taskPrompt, agent?.taskInstruction, agent?.id]);
 
+  useEffect(() => {
+    onTaskDraft({ task, taskPrompt, taskInstruction });
+  }, [onTaskDraft, task, taskPrompt, taskInstruction]);
+
   if (!agent) return null;
 
   const upstreamAgent = agent.inputFrom
@@ -48,11 +68,8 @@ function WorkflowTaskPanel({ agentId }: { agentId: string }) {
     : null;
 
   const handleSave = () => {
-    updateAgent(agentId, {
-      task,
-      taskPrompt,
-      taskInstruction,
-    });
+    onTaskDraft({ task, taskPrompt, taskInstruction });
+    onSave();
   };
 
   return (
@@ -68,6 +85,7 @@ function WorkflowTaskPanel({ agentId }: { agentId: string }) {
           </p>
         </div>
         <button
+          type="button"
           onClick={handleSave}
           data-testid="workflow-task-save"
           className="relative z-10 shrink-0 whitespace-nowrap px-3 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 transition-colors"
@@ -130,6 +148,50 @@ function WorkflowTaskPanel({ agentId }: { agentId: string }) {
           : t('workflow.upstreamNone')}
       </div>
     </div>
+  );
+}
+
+function WorkflowAgentColumn({
+  agentId,
+  onClose,
+}: {
+  agentId: string;
+  onClose: () => void;
+}) {
+  const updateAgent = useWorkflowStore((state) => state.updateAgent);
+  const taskDraftRef = useRef<TaskDraft>({ task: '', taskPrompt: '', taskInstruction: '' });
+  const configPatchRef = useRef<(() => AgentFormPatch) | null>(null);
+
+  const registerConfigPatch = useCallback((getPatch: (() => AgentFormPatch) | null) => {
+    configPatchRef.current = getPatch;
+  }, []);
+
+  const commitAgentForm = () => {
+    const configPatch = configPatchRef.current?.() ?? {};
+    updateAgent(agentId, {
+      ...configPatch,
+      ...taskDraftRef.current,
+    });
+  };
+
+  return (
+    <>
+      <WorkflowTaskPanel
+        agentId={agentId}
+        onSave={commitAgentForm}
+        onTaskDraft={(draft) => {
+          taskDraftRef.current = draft;
+        }}
+      />
+      <AgentConfigPanel
+        agentId={agentId}
+        onClose={onClose}
+        hideTaskFields
+        embedded
+        onColumnSave={commitAgentForm}
+        registerConfigPatch={registerConfigPatch}
+      />
+    </>
   );
 }
 
@@ -219,12 +281,9 @@ export function WorkflowView() {
           {selectedAgentId && (
             <aside className="flex h-full w-[360px] min-h-0 min-w-[320px] max-w-[40vw] shrink-0 flex-col overflow-hidden border-l border-gray-200 bg-white">
               <div className="flex-1 min-h-0 overflow-y-auto">
-                <WorkflowTaskPanel agentId={selectedAgentId} />
-                <AgentConfigPanel
+                <WorkflowAgentColumn
                   agentId={selectedAgentId}
                   onClose={() => setSelectedAgentId(null)}
-                  hideTaskFields
-                  embedded
                 />
               </div>
             </aside>

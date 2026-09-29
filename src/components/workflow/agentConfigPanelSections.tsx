@@ -672,7 +672,9 @@ export function AgentConfigPanelSaveFooter({
   return (
     <div className={`${embedded ? 'px-4 pb-4' : 'border-t border-gray-200 px-4 py-3'}`}>
       <button
+        type="button"
         onClick={onSave}
+        data-testid="workflow-config-save"
         className="w-full rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
       >
         {t('workflow.save')}
