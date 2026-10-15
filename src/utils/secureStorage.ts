@@ -62,8 +62,8 @@ class KeychainProvider implements SecureStorageProvider {
       return null;
     }
 
-    await invoke<void>('secure_storage_save', { key, value: decoded });
-    const verified = await invoke<string | null>('secure_storage_load', { key });
+    await invoke<void>('secret_set', { key, value: decoded });
+    const verified = await invoke<string | null>('secret_get', { key });
     if (verified !== decoded) {
       throw new Error('Native keychain did not retain the migrated secret.');
     }
@@ -77,18 +77,18 @@ class KeychainProvider implements SecureStorageProvider {
       await this.remove(key);
       return;
     }
-    await invoke<void>('secure_storage_save', { key, value });
+    await invoke<void>('secret_set', { key, value });
     localStorage.removeItem(this.localStorageKey(key));
   }
 
   async load(key: string): Promise<string | null> {
-    const value = await invoke<string | null>('secure_storage_load', { key });
+    const value = await invoke<string | null>('secret_get', { key });
     if (value !== null && value !== undefined) return value;
     return this.migrateLocalStorageValue(key);
   }
 
   async remove(key: string): Promise<void> {
-    await invoke<void>('secure_storage_delete', { key });
+    await invoke<void>('secret_delete', { key });
     localStorage.removeItem(this.localStorageKey(key));
   }
 }
