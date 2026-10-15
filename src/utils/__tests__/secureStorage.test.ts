@@ -97,6 +97,12 @@ describe('secureStorage (R7-15)', () => {
       const storage = resolveSecureStorage();
       expect(storage.name).toBe('keychain');
       await storage.save('telegram-token', '123456:abc');
+      expect(localStorage.getItem('pipi_secret_v2_telegram-token')).toBeNull();
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i) ?? '';
+        expect(key).not.toContain('123456:abc');
+        expect(localStorage.getItem(key) ?? '').not.toContain('123456:abc');
+      }
       expect(await storage.load('telegram-token')).toBe('123456:abc');
       await storage.remove('telegram-token');
       expect(stored).toBeNull();
@@ -112,6 +118,28 @@ describe('secureStorage (R7-15)', () => {
         if (key !== null) leaked.push(localStorage.getItem(key) ?? '');
       }
       expect(leaked.some((value) => value.includes('123456:abc'))).toBe(false);
+    });
+
+    it('removes the stale namespaced copy when the keychain already holds the value', async () => {
+      const keychainToken = '123456:keychain-token';
+      const staleToken = '123456:stale-token';
+      localStorage.setItem('pipi_secret_v2_telegram-token', obfuscateInline(staleToken));
+      mockInvoke.mockImplementation(async (command: string) => {
+        if (command === 'secret_get') return keychainToken;
+        return null;
+      });
+
+      expect(await resolveSecureStorage().load('telegram-token')).toBe(keychainToken);
+      expect(localStorage.getItem('pipi_secret_v2_telegram-token')).toBeNull();
+      expect(mockInvoke.mock.calls.map(([command]) => command)).toEqual(['secret_get']);
+    });
+
+    it('leaves the stale local copy when the keychain read throws', async () => {
+      const stale = obfuscateInline('stale-token');
+      localStorage.setItem('pipi_secret_v2_telegram-token', stale);
+      mockInvoke.mockRejectedValue(new Error('keychain unavailable'));
+      await expect(resolveSecureStorage().load('telegram-token')).rejects.toThrow(/keychain unavailable/);
+      expect(localStorage.getItem('pipi_secret_v2_telegram-token')).toBe(stale);
     });
 
     it('migrates an old XOR localStorage value only after native read-back succeeds', async () => {

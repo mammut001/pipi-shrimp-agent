@@ -83,7 +83,12 @@ class KeychainProvider implements SecureStorageProvider {
 
   async load(key: string): Promise<string | null> {
     const value = await invoke<string | null>('secret_get', { key });
-    if (value !== null && value !== undefined) return value;
+    if (value !== null && value !== undefined) {
+      if (value) {
+        localStorage.removeItem(this.localStorageKey(key));
+      }
+      return value;
+    }
     return this.migrateLocalStorageValue(key);
   }
 

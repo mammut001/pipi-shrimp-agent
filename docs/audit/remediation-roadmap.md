@@ -600,8 +600,9 @@ Also see **R4-04–R4-24** (store/workflow cross-cuts) in [round-04](./round-04-
 | R7-09 | `ChatImage` arbitrary src | Med | fixed (code 2026-06-24; verified 2026-09-21) | `ChatImage.tsx` | Allowlist schemes | `ChatImage.test.tsx` scheme allowlist |
 | R7-10 | Telegram token in URL logs | Med | fixed (code 2026-06-24; verified 2026-09-21) | `telegram.rs` | Redact in errors | `redact_token_*` unit tests |
 | R7-13 | `terminal_create` cwd no path_security | Med | fixed (code 2026-06-24; tests 2026-09-21) | `terminal.rs` | validate_terminal_cwd → path_security | `/etc` + relative rejected |
-| R7-15 | Telegram token in localStorage XOR | Med | fixed (2026-10-15) | settings / secureStorage | Tauri 2 keyring commands secret_set/secret_get/secret_delete | `secureStorage.test.ts` fail-safe migrate; see `r7-15-keychain-spike.md` |
+| R7-15 | Telegram token in localStorage XOR | Med | fixed (desktop; browser tracked as R7-19) | settings / secureStorage | Tauri 2 keyring commands secret_set/secret_get/secret_delete | `secureStorage.test.ts` fail-safe migrate; see `r7-15-keychain-spike.md` |
 | R7-16 | TS BLOCKED_PREFIXES missing Windows | Med | fixed (code 2026-06-24; verified 2026-09-21) | `pathValidation.ts` | Add Windows roots | `pathValidation.test.ts` Windows describe |
+| R7-19 | Browser build still stores Telegram token XOR-obfuscated in localStorage | Med | open | settings / secureStorage | Browser-safe storage or documented limitation | `secureStorage.test.ts` browser fallback coverage |
 | R7-14, R7-17, R7-18 | Low/Info | Low | open | various | Hardening batch | per item |
 
 ---
@@ -715,9 +716,9 @@ Recomputed from `docs/audit/remediation-backlog.json` by `status` / `severity` /
 
 | Category | Count |
 | -------- | ----- |
-| **Total tracked in backlog JSON** | 113 |
+| **Total tracked in backlog JSON** | 114 |
 | **Fixed** (`status: fixed`; many still need regression tests) | 96 |
-| **Open** (`status: open`) | 4 — AG-22, AG-24, AG-31, AG-32 (architecture governance, severity Governance) |
+| **Open** (`status: open`) | 5 — AG-22, AG-24, AG-31, AG-32, R7-19 |
 | **Partially fixed** (`status: partially fixed`) | 4 — R5-14, R5-15, TOP-15-08, TOP-15-09 |
 | **Test gap only** (`status: test gap only`) | 9 — TOP-15-03/04/05/06/07/10/11/14/15 |
 | **Open P0 / Critical** (`status: open`) | 0 |
