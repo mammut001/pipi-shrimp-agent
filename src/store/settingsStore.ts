@@ -634,6 +634,7 @@ export const initializeSettings = async () => {
           useSettingsStore.setState({ telegramToken: migrated });
         }
       } else {
+        localStorage.removeItem(SETTINGS_STORAGE_KEYS.telegramToken);
         useSettingsStore.setState({ telegramToken });
       }
     } catch (error) {

@@ -7,15 +7,15 @@
 
 Tauri builds use the Rust keyring crate (3.6.3) with native macOS Keychain,
 Windows Credential Manager, and Linux Secret Service backends. The fixed
-service name is com.pipishrimp.agent; per-secret identifiers are validated
+service name is com.pipishrimp.agent (unchanged since #170 so existing entries stay readable); per-secret identifiers are validated
 before the OS credential API is called. Blocking OS calls run on Tokio's
 blocking thread pool.
 
 The Rust commands are registered in the Tauri invoke handler:
 
-- secure_storage_save
-- secure_storage_load
-- secure_storage_delete
+- secret_set
+- secret_get
+- secret_delete
 
 The frontend KeychainProvider calls those commands through the Tauri core
 API. It has no localStorage fallback. Native read, write, or delete errors

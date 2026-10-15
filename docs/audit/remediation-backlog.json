@@ -1261,8 +1261,8 @@
     "title": "Telegram token stored XOR in localStorage not keychain",
     "lane": "G. Security Hardening",
     "severity": "Medium",
-    "status": "partially fixed",
-    "fixNote": "2026-09-22: Spike landed (588dd9f / 122131e / 90566a3): pluggable SecureStorageProvider in secureStorage.ts (LocalStorageProvider XOR + KeychainProvider dynamic-import stub for `@tauri-apps/plugin-secure-store`), saveSecret/loadSecret/migrateLegacySecret route via getSecureStorage(), settingsStore telegram-token load/migrate, secureStorage.test.ts. Fail-safe migrate: legacy localStorage key is removed only after new-store save+load verify; keychain-missing save throws (no silent XOR fallback). Still open: wire a real Tauri 2 keychain plugin (Cargo/npm/capabilities). See docs/audit/r7-15-keychain-spike.md.",
+    "status": "fixed (desktop; browser tracked as R7-19)",
+    "fixNote": "2026-10-15: Native keychain backend complete — keyring 3.6.3 (apple-native/windows-native/sync-secret-service/crypto-rust) with service name com.pipishrimp.agent, Tauri commands secret_set/secret_get/secret_delete registered in lib.rs invoke handler (no extra capabilities needed for core invoke), key-name allowlist validation + Rust unit tests, frontend KeychainProvider via invoke with fail-safe migrate (legacy localStorage deleted only after keychain write+read-back), async callers (settingsStore/telegram settings), Jest coverage incl. no-plaintext-in-localStorage scan. Prior: 2026-09-22 spike (pluggable SecureStorageProvider, XOR fallback, migrateLegacySecret). See docs/audit/r7-15-keychain-spike.md.",
     "whyItMatters": "Token recoverable from local storage",
     "files": [
       "src/utils/secureStorage.ts",
@@ -1298,6 +1298,29 @@
       "pathValidation.test.ts: Windows system directory and sensitive-file rejection"
     ],
     "dependencies": [],
+    "runtimeBehavior": true,
+    "uiBehavior": false,
+    "splitPrs": false,
+    "recommendedPr": null
+  },
+  {
+    "id": "R7-19",
+    "title": "Browser build still stores Telegram token XOR-obfuscated in localStorage",
+    "lane": "G. Security Hardening",
+    "severity": "Medium",
+    "status": "open",
+    "whyItMatters": "No OS keychain in browser build; token recoverable from local storage",
+    "files": [
+      "src/utils/secureStorage.ts",
+      "src/store/settingsStore.ts"
+    ],
+    "smallestPrScope": "Browser-safe secret storage or documented limitation",
+    "tests": [
+      "src/utils/__tests__/secureStorage.test.ts"
+    ],
+    "dependencies": [
+      "R7-15"
+    ],
     "runtimeBehavior": true,
     "uiBehavior": false,
     "splitPrs": false,

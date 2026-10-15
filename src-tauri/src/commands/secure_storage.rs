@@ -29,7 +29,7 @@ fn keyring_entry(key: &str) -> Result<Entry, String> {
 }
 
 #[tauri::command]
-pub async fn secure_storage_save(key: String, value: String) -> Result<(), String> {
+pub async fn secret_set(key: String, value: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         let entry = keyring_entry(&key)?;
         if value.is_empty() {
@@ -47,7 +47,7 @@ pub async fn secure_storage_save(key: String, value: String) -> Result<(), Strin
 }
 
 #[tauri::command]
-pub async fn secure_storage_load(key: String) -> Result<Option<String>, String> {
+pub async fn secret_get(key: String) -> Result<Option<String>, String> {
     tokio::task::spawn_blocking(move || {
         let entry = keyring_entry(&key)?;
         match entry.get_password() {
@@ -61,7 +61,7 @@ pub async fn secure_storage_load(key: String) -> Result<Option<String>, String> 
 }
 
 #[tauri::command]
-pub async fn secure_storage_delete(key: String) -> Result<(), String> {
+pub async fn secret_delete(key: String) -> Result<(), String> {
     tokio::task::spawn_blocking(move || {
         let entry = keyring_entry(&key)?;
         match entry.delete_credential() {

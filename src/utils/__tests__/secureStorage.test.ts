@@ -88,24 +88,58 @@ describe('secureStorage (R7-15)', () => {
     it('uses the Rust keychain commands and does not write secrets to localStorage', async () => {
       let stored: string | null = null;
       mockInvoke.mockImplementation(async (command: string, args?: { key?: string; value?: string }) => {
-        if (command === 'secure_storage_save') stored = args?.value ?? null;
-        if (command === 'secure_storage_load') return stored;
-        if (command === 'secure_storage_delete') stored = null;
+        if (command === 'secret_set') stored = args?.value ?? null;
+        if (command === 'secret_get') return stored;
+        if (command === 'secret_delete') stored = null;
         return null;
       });
 
       const storage = resolveSecureStorage();
       expect(storage.name).toBe('keychain');
       await storage.save('telegram-token', '123456:abc');
+      expect(localStorage.getItem('pipi_secret_v2_telegram-token')).toBeNull();
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i) ?? '';
+        expect(key).not.toContain('123456:abc');
+        expect(localStorage.getItem(key) ?? '').not.toContain('123456:abc');
+      }
       expect(await storage.load('telegram-token')).toBe('123456:abc');
       await storage.remove('telegram-token');
       expect(stored).toBeNull();
       expect(mockInvoke.mock.calls.map(([command]) => command)).toEqual([
-        'secure_storage_save',
-        'secure_storage_load',
-        'secure_storage_delete',
+        'secret_set',
+        'secret_get',
+        'secret_delete',
       ]);
       expect(localStorage.getItem('pipi_secret_v2_telegram-token')).toBeNull();
+      const leaked: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key !== null) leaked.push(localStorage.getItem(key) ?? '');
+      }
+      expect(leaked.some((value) => value.includes('123456:abc'))).toBe(false);
+    });
+
+    it('removes the stale namespaced copy when the keychain already holds the value', async () => {
+      const keychainToken = '123456:keychain-token';
+      const staleToken = '123456:stale-token';
+      localStorage.setItem('pipi_secret_v2_telegram-token', obfuscateInline(staleToken));
+      mockInvoke.mockImplementation(async (command: string) => {
+        if (command === 'secret_get') return keychainToken;
+        return null;
+      });
+
+      expect(await resolveSecureStorage().load('telegram-token')).toBe(keychainToken);
+      expect(localStorage.getItem('pipi_secret_v2_telegram-token')).toBeNull();
+      expect(mockInvoke.mock.calls.map(([command]) => command)).toEqual(['secret_get']);
+    });
+
+    it('leaves the stale local copy when the keychain read throws', async () => {
+      const stale = obfuscateInline('stale-token');
+      localStorage.setItem('pipi_secret_v2_telegram-token', stale);
+      mockInvoke.mockRejectedValue(new Error('keychain unavailable'));
+      await expect(resolveSecureStorage().load('telegram-token')).rejects.toThrow(/keychain unavailable/);
+      expect(localStorage.getItem('pipi_secret_v2_telegram-token')).toBe(stale);
     });
 
     it('migrates an old XOR localStorage value only after native read-back succeeds', async () => {
@@ -113,25 +147,25 @@ describe('secureStorage (R7-15)', () => {
       localStorage.setItem('pipi_secret_v2_telegram-token', obfuscateInline(token));
       let stored: string | null = null;
       mockInvoke.mockImplementation(async (command: string, args?: { key?: string; value?: string }) => {
-        if (command === 'secure_storage_save') stored = args?.value ?? null;
-        if (command === 'secure_storage_load') return stored;
+        if (command === 'secret_set') stored = args?.value ?? null;
+        if (command === 'secret_get') return stored;
         return null;
       });
 
       expect(await resolveSecureStorage().load('telegram-token')).toBe(token);
       expect(localStorage.getItem('pipi_secret_v2_telegram-token')).toBeNull();
       expect(mockInvoke.mock.calls.map(([command]) => command)).toEqual([
-        'secure_storage_load',
-        'secure_storage_save',
-        'secure_storage_load',
+        'secret_get',
+        'secret_set',
+        'secret_get',
       ]);
     });
 
     it('does not delete an old local copy when keychain verification fails', async () => {
       localStorage.setItem('pipi_secret_v2_telegram-token', obfuscateInline('keep-me'));
       mockInvoke.mockImplementation(async (command: string) => {
-        if (command === 'secure_storage_load') return null;
-        if (command === 'secure_storage_save') return null;
+        if (command === 'secret_get') return null;
+        if (command === 'secret_set') return null;
         return null;
       });
       await expect(resolveSecureStorage().load('telegram-token')).rejects.toThrow(/did not retain/i);
@@ -159,8 +193,8 @@ describe('secureStorage (R7-15)', () => {
       __resetSecureStorageCache();
       let stored: string | null = null;
       mockInvoke.mockImplementation(async (command: string, args?: { key?: string; value?: string }) => {
-        if (command === 'secure_storage_save') stored = args?.value ?? null;
-        if (command === 'secure_storage_load') return stored;
+        if (command === 'secret_set') stored = args?.value ?? null;
+        if (command === 'secret_get') return stored;
         return null;
       });
 
