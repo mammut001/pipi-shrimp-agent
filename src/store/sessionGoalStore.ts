@@ -2,6 +2,7 @@ import { create } from 'zustand';
 
 import { buildSessionGoalPromptContext } from '@/services/sessionGoal/goalPrompt';
 import type { GoalPreflightResult } from '@/services/goal/preflight/schema';
+import { normalizeAcceptanceCommands } from '@/services/completion/contract';
 import {
   createEmptySessionGoal,
   normalizeSessionGoalRecord,
@@ -180,6 +181,7 @@ export const useSessionGoalStore = create<SessionGoalState>((set, get) => ({
           objective: result.finalGoal,
           successCriteria: result.successCriteria,
           asciiPreview: result.asciiPreview,
+          acceptanceCommands: normalizeAcceptanceCommands(result.acceptanceCommands ?? []),
           status: 'active',
           clarifyReady: true,
           updatedAt: now,

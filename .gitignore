@@ -100,3 +100,6 @@ docs/architecture/refactor-plan.md
 
 # Soak failure bundles (generated)
 /artifacts/soak/pipi-soak-failure-*
+
+# Local AI tooling cache
+.commandcode/

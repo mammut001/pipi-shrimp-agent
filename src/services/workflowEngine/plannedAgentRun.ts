@@ -34,6 +34,7 @@ export interface PlannedAgentRunHost extends AgentExecutionHost, RunPersistenceH
   transcripts: WorkflowTranscriptManager;
   deps: WorkflowEngineDeps;
   bumpTotalSteps(): number;
+  persistCompletionLedger?: (markdown: string) => Promise<void> | void;
 }
 
 export async function runPlannedAgent(
@@ -97,7 +98,10 @@ export async function runPlannedAgent(
 
   try {
     const agentStart = host.deps.now();
-    const output = await executeAgent(host, agent, prompt);
+    const output = await executeAgent(host, agent, prompt, {
+      acceptanceCommands: snapshot.acceptanceCommands,
+      persistCompletionLedger: host.persistCompletionLedger,
+    });
     const agentDuration = host.deps.now() - agentStart;
     if (agentDuration > 30_000) {
       // eslint-disable-next-line no-console

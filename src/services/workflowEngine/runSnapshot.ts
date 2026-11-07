@@ -5,12 +5,14 @@ import {
 } from '@/types/workflow';
 import { DEFAULT_MAX_GOAL_ITERATIONS } from '@/services/workflow/defaults';
 import { normalizeSuccessCriteria } from '@/services/goal/types';
+import { normalizeAcceptanceCommands } from '@/services/completion/contract';
 
 export interface WorkflowRunSnapshot {
   instanceId: string;
   instanceName: string;
   projectGoal: string;
   successCriteria: string[];
+  acceptanceCommands: import('@/services/completion/contract').AcceptanceCommand[];
   maxGoalIterations: number;
   goalEvaluatorAgentId: string | null;
   agents: WorkflowAgent[];
@@ -26,6 +28,7 @@ function cloneWorkflowAgent(agent: WorkflowAgent): WorkflowAgent {
     position: { ...agent.position },
     outputRoutes: (agent.outputRoutes ?? []).map((route) => ({ ...route })),
     execution: { ...agent.execution },
+    acceptanceCommands: normalizeAcceptanceCommands(agent.acceptanceCommands),
     model: agent.model ? { ...agent.model } : undefined,
     retryPolicy: agent.retryPolicy
       ? {
@@ -64,6 +67,7 @@ function freezeWorkflowRunSnapshot(snapshot: WorkflowRunSnapshot): WorkflowRunSn
   }
 
   Object.freeze(snapshot.successCriteria);
+  Object.freeze(snapshot.acceptanceCommands);
   Object.freeze(snapshot.agents);
   Object.freeze(snapshot.executableAgents);
   Object.freeze(snapshot.connections);
@@ -81,6 +85,7 @@ export function createWorkflowRunSnapshot(instance: WorkflowInstance): WorkflowR
     instanceName: instance.name,
     projectGoal: instance.projectGoal?.trim() || '',
     successCriteria: normalizeSuccessCriteria(instance.successCriteria),
+    acceptanceCommands: normalizeAcceptanceCommands(instance.acceptanceCommands),
     maxGoalIterations: instance.maxGoalIterations ?? DEFAULT_MAX_GOAL_ITERATIONS,
     goalEvaluatorAgentId: instance.goalEvaluatorAgentId ?? null,
     agents,
@@ -96,6 +101,7 @@ export function buildGoalEvaluationInstance(snapshot: WorkflowRunSnapshot): Work
     name: snapshot.instanceName,
     projectGoal: snapshot.projectGoal,
     successCriteria: [...snapshot.successCriteria],
+    acceptanceCommands: [...snapshot.acceptanceCommands],
     goalEvaluatorAgentId: snapshot.goalEvaluatorAgentId,
     maxGoalIterations: snapshot.maxGoalIterations,
     agents: snapshot.agents,

@@ -5,6 +5,11 @@ import { MAIN_LAYOUT_EDGE_TOGGLE_GUTTER_CLASS } from '@/layout/edgeToggleGutter'
 import { WorkflowGoalPreflightPanel } from './WorkflowGoalPreflightPanel';
 import type { GoalPreflightResult } from '@/services/goal/preflight/schema';
 import { formatSuccessCriteria, normalizeSuccessCriteria } from '@/services/goal/types';
+import {
+  formatAcceptanceCommandsText,
+  normalizeAcceptanceCommands,
+  parseAcceptanceCommandsText,
+} from '@/services/completion/contract';
 import { useUIStore } from '@/store/uiStore';
 
 export interface WorkflowGoalPanelProps {
@@ -26,6 +31,7 @@ export function WorkflowGoalPanel({ onApplyAndStart }: WorkflowGoalPanelProps = 
 
   const [projectGoal, setProjectGoal] = useState('');
   const [successCriteria, setSuccessCriteria] = useState('');
+  const [acceptanceCommands, setAcceptanceCommands] = useState('');
   const [goalEvaluatorAgentId, setGoalEvaluatorAgentId] = useState<string>('');
   const [maxGoalIterations, setMaxGoalIterations] = useState(5);
   const [expanded, setExpanded] = useState(false);
@@ -35,9 +41,11 @@ export function WorkflowGoalPanel({ onApplyAndStart }: WorkflowGoalPanelProps = 
     if (!currentInstance) return;
     setProjectGoal(currentInstance.projectGoal || '');
     setSuccessCriteria(formatSuccessCriteria(currentInstance.successCriteria));
+    setAcceptanceCommands(formatAcceptanceCommandsText(currentInstance.acceptanceCommands ?? []));
     setGoalEvaluatorAgentId(currentInstance.goalEvaluatorAgentId || '');
     setMaxGoalIterations(currentInstance.maxGoalIterations || 5);
   }, [
+    currentInstance?.acceptanceCommands,
     currentInstance?.goalEvaluatorAgentId,
     currentInstance?.id,
     currentInstance?.maxGoalIterations,
@@ -55,11 +63,13 @@ export function WorkflowGoalPanel({ onApplyAndStart }: WorkflowGoalPanelProps = 
     updateInstanceMeta(currentInstance.id, {
       projectGoal: result.finalGoal,
       successCriteria: result.successCriteria,
+      acceptanceCommands: normalizeAcceptanceCommands(result.acceptanceCommands ?? []),
       goalEvaluatorAgentId: goalEvaluatorAgentId || null,
       maxGoalIterations,
     });
     setProjectGoal(result.finalGoal);
     setSuccessCriteria(formatSuccessCriteria(result.successCriteria));
+    setAcceptanceCommands(formatAcceptanceCommandsText(normalizeAcceptanceCommands(result.acceptanceCommands ?? [])));
     addNotification('success', t('workflow.goalPreflight.appliedToast'));
   };
 
@@ -121,6 +131,7 @@ export function WorkflowGoalPanel({ onApplyAndStart }: WorkflowGoalPanelProps = 
               onClick={() => updateInstanceMeta(currentInstance.id, {
                 projectGoal,
                 successCriteria: normalizeSuccessCriteria(successCriteria),
+                acceptanceCommands: parseAcceptanceCommandsText(acceptanceCommands),
                 goalEvaluatorAgentId: goalEvaluatorAgentId || null,
                 maxGoalIterations,
               })}
@@ -176,6 +187,19 @@ export function WorkflowGoalPanel({ onApplyAndStart }: WorkflowGoalPanelProps = 
               value={maxGoalIterations}
               onChange={(event) => setMaxGoalIterations(Math.max(1, Number(event.target.value) || 5))}
               className="mt-1 block w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div className="min-w-0 xl:col-span-3">
+            <label className="block text-xs font-medium text-gray-500">
+              {t('workflow.goalPanel.acceptanceCommands')}
+            </label>
+            <textarea
+              value={acceptanceCommands}
+              onChange={(event) => setAcceptanceCommands(event.target.value)}
+              rows={3}
+              placeholder={t('workflow.goalPanel.acceptanceCommandsPlaceholder')}
+              className="mt-1 block min-h-[88px] w-full max-w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
         </div>

@@ -14,6 +14,7 @@ import {
 import { normalizeWorkflowAgentRole } from '@/services/workflow/templates/roles';
 import { useUIStore } from '@/store/uiStore';
 import { normalizeSuccessCriteria } from '@/services/goal/types';
+import { normalizeAcceptanceCommands } from '@/services/completion/contract';
 
 const STORAGE_KEY_V2 = 'pipi-workflow-v2';
 const STORAGE_KEY_V1 = 'pipi-workflow-v1';
@@ -35,6 +36,7 @@ function normalizeAgentBase(agent: WorkflowAgent): WorkflowAgent {
     outputRoutes: (agent.outputRoutes ?? []).map(normalizeOutputRoute),
     execution: agent.execution ?? DEFAULT_EXECUTION_CONFIG,
     inputFrom: agent.inputFrom ?? null,
+    acceptanceCommands: normalizeAcceptanceCommands((agent as WorkflowAgent).acceptanceCommands),
     role: normalizeWorkflowAgentRole(agent.role),
     retryPolicy: {
       ...DEFAULT_RETRY_POLICY,
@@ -257,6 +259,7 @@ function normalizeInstance(instance: WorkflowInstance): WorkflowInstance {
     ...instance,
     projectGoal: instance.projectGoal ?? '',
     successCriteria: normalizeSuccessCriteria(instance.successCriteria as unknown as string | string[]),
+    acceptanceCommands: normalizeAcceptanceCommands((instance as WorkflowInstance).acceptanceCommands),
     goalEvaluatorAgentId: instance.goalEvaluatorAgentId ?? null,
     maxGoalIterations: instance.maxGoalIterations ?? DEFAULT_MAX_GOAL_ITERATIONS,
     activeRunId: instance.activeRunId ?? null,

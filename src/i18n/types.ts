@@ -522,6 +522,9 @@ export type TranslationKeys = {
   'workflow.retryMaxAttempts': string;
   'workflow.retryBackoffMs': string;
   'workflow.retryFallbackConfigs': string;
+  'workflow.retryFallbackHint': string;
+  'workflow.agentAcceptanceCommands': string;
+  'workflow.agentAcceptanceHint': string;
   'workflow.routeMatch.includes': string;
   'workflow.routeMatch.regex': string;
   'workflow.role.writer': string;
@@ -551,6 +554,8 @@ export type TranslationKeys = {
   'workflow.goalPanel.goalEvaluator': string;
   'workflow.goalPanel.builtinEvaluator': string;
   'workflow.goalPanel.maxIterations': string;
+  'workflow.goalPanel.acceptanceCommands': string;
+  'workflow.goalPanel.acceptanceCommandsPlaceholder': string;
   'workflow.goalPanel.projectGoalRequired': string;
   'workflow.goalPanel.expandConfig': string;
   'workflow.goalPanel.collapseConfig': string;
@@ -590,6 +595,7 @@ export type TranslationKeys = {
   'workflow.goalPreflight.topologyNote': string;
   'workflow.goalPreflight.createSuggestedAgents': string;
   'workflow.goalPreflight.asciiPreview': string;
+  'workflow.goalPreflight.acceptanceEmpty': string;
   'workflow.goalPreflight.asciiAriaLabel': string;
   'workflow.goalPreflight.asciiEmpty': string;
   'workflow.goalPreflight.risks': string;

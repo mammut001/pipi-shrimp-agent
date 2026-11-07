@@ -162,6 +162,15 @@ export class WorkflowEngine {
         self.totalSteps += 1;
         return self.totalSteps;
       },
+      persistCompletionLedger: async (markdown: string) => {
+        const runId = self.currentRunId;
+        if (!runId || !self.shouldAcceptRunMutation(runId)) return;
+        try {
+          await self.deps.writeRunFile?.(self.workingDirectory, 'completion-ledger.md', markdown);
+        } catch {
+          // Ledger is observability-only.
+        }
+      },
     };
   }
 

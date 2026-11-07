@@ -11,6 +11,7 @@ import {
   type GoalPreflightResult,
 } from '@/services/goal/preflight/schema';
 import { createMessage, type Message } from '@/types/chat';
+import { formatAcceptanceCommandsText, normalizeAcceptanceCommands } from '@/services/completion/contract';
 
 interface SessionGoalClarifyPanelProps {
   initialGoal?: string;
@@ -147,6 +148,7 @@ export function SessionGoalClarifyPanel({
 
   const resultCard = useMemo(() => {
     if (!result) return null;
+    const acceptancePreview = formatAcceptanceCommandsText(normalizeAcceptanceCommands(result.acceptanceCommands ?? []));
 
     return (
       <div className="space-y-3">
@@ -165,6 +167,14 @@ export function SessionGoalClarifyPanel({
               <li key={index}>{item}</li>
             ))}
           </ul>
+        </section>
+        <section className="rounded-xl border border-gray-200 bg-gray-50/60 px-3 py-2">
+          <h4 className="text-[10px] font-bold uppercase tracking-wide text-gray-500">{t('workflow.goalPanel.acceptanceCommands')}</h4>
+          {acceptancePreview ? (
+            <pre className="mt-1 whitespace-pre-wrap font-mono text-[11px] text-gray-900">{acceptancePreview}</pre>
+          ) : (
+            <p className="mt-1 text-[11px] text-gray-400">{t('workflow.goalPreflight.acceptanceEmpty')}</p>
+          )}
         </section>
         <section className="rounded-xl border border-gray-200 bg-gray-50/60 px-3 py-2">
           <h4 className="text-[10px] font-bold uppercase tracking-wide text-gray-500">{t('workflow.goalPreflight.asciiPreview')}</h4>

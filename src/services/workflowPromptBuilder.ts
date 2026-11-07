@@ -144,6 +144,11 @@ function buildExecutionInstruction(agent: WorkflowAgent): string {
     '[[STATUS]]',
     '{"goal_progress":"简述当前进度","needs_followup":true,"hand_off_to_role":"coder"}',
     '[[/STATUS]]',
+    '在 [[STATUS]] 之后再输出一段单独的 [[DELIVERY]] ... [[/DELIVERY]] 块（不要放在代码块里），并且块内只放 JSON，例如：',
+    '[[DELIVERY]]',
+    '{"summary":"这一轮做了什么","files_changed":["src/foo.ts"],"commands_run":[{"command":"pnpm test path","exit_code":0}]}',
+    '[[/DELIVERY]]',
+    '完成检查只认正文非空、合法 [[DELIVERY]] 块和系统验收命令的结果；只有 [[WORKFLOW:PASS]] 但没有交付块会被打回一次。',
   ].join('\n');
 }
 

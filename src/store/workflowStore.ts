@@ -59,7 +59,7 @@ export interface WorkflowStore extends WorkflowState {
   getCurrentInstanceOrThrow: () => WorkflowInstance;
   updateInstanceMeta: (
     id: string,
-    updates: Pick<WorkflowInstance, 'projectGoal' | 'successCriteria' | 'goalEvaluatorAgentId' | 'maxGoalIterations'>,
+    updates: Pick<WorkflowInstance, 'projectGoal' | 'successCriteria' | 'goalEvaluatorAgentId' | 'maxGoalIterations'> & Partial<Pick<WorkflowInstance, 'acceptanceCommands'>>,
   ) => void;
 
   // Agent CRUD (operates on current instance)
@@ -245,9 +245,9 @@ export const useWorkflowStore = create<WorkflowStore>((set, get) => ({
     set((state) => {
       const newState = {
         ...state,
-        ...updateInstanceById(state, id, () => ({
+        ...updateInstanceById(state, id, (inst) => ({
           ...updates,
-          maxGoalIterations: updates.maxGoalIterations ?? DEFAULT_MAX_GOAL_ITERATIONS,
+          maxGoalIterations: updates.maxGoalIterations ?? inst.maxGoalIterations ?? DEFAULT_MAX_GOAL_ITERATIONS,
         })),
       };
       saveToStorage(newState);

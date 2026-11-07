@@ -408,6 +408,21 @@ export function AgentConfigRetryPolicySection({
               </label>
             ))}
           </div>
+          <p className="mt-1 text-[11px] text-gray-400">{t('workflow.retryFallbackHint')}</p>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-sm font-medium text-gray-700">
+            {t('workflow.agentAcceptanceCommands')}
+          </label>
+          <textarea
+            value={formData.acceptanceCommands}
+            onChange={(event) => setFormData((prev) => ({ ...prev, acceptanceCommands: event.target.value }))}
+            rows={3}
+            placeholder={t('workflow.goalPanel.acceptanceCommandsPlaceholder')}
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <p className="mt-1 text-[11px] text-gray-400">{t('workflow.agentAcceptanceHint')}</p>
         </div>
       </div>
     </details>

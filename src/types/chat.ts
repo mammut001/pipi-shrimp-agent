@@ -12,6 +12,8 @@ export interface ChatSendOptions {
   attachments?: ImageAttachment[];
   /** Internal: auto-continue message triggered by session goal loop. */
   goalLoopContinuation?: boolean;
+  /** Internal: retry turn triggered by the completion gate (empty text / failed acceptance). */
+  completionRepairAttempt?: number;
 }
 
 // ============= Type Definitions =============

@@ -39,8 +39,11 @@ export const SESSION_GOAL_CLARIFIER_TEMPLATE: AgentTemplate = {
     '  "suggestedAgents": [],',
     '  "asciiPreview": "string",',
     '  "risks": ["string"],',
-    '  "readinessScore": 0',
+    '  "readinessScore": 0,',
+    '  "acceptanceCommands": [{"command": "string, one verifiable shell command"}],',
+    '  "schemaVersion": 2',
     '}',
+    '10. When the goal involves code/tests/builds, propose 1–3 runnable acceptanceCommands; omit only for pure discussion.',
   ].join('\n'),
   soulPrompt: 'You are a friendly Session Goal Clarifier. You ask short questions, draw ASCII previews, and produce strict JSON when the goal is ready.',
   execution: {

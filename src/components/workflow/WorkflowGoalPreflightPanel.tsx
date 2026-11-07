@@ -35,6 +35,7 @@ import {
 } from '@/services/goal/preflight/schema';
 import { useWorkflowStore } from '@/store/workflowStore';
 import { formatSuccessCriteria } from '@/services/goal/types';
+import { formatAcceptanceCommandsText, normalizeAcceptanceCommands } from '@/services/completion/contract';
 
 interface WorkflowGoalPreflightPanelProps {
   /** Current workflow instance id (used to detect empty canvases & run engine). */
@@ -400,6 +401,7 @@ function GoalPreflightResultCard({
   );
 
   const canCreateAgents = agentsCount === 0;
+  const acceptancePreview = formatAcceptanceCommandsText(normalizeAcceptanceCommands(result.acceptanceCommands ?? []));
 
   return (
     <div className="space-y-4" data-testid="workflow-goal-preflight-result">
@@ -475,6 +477,14 @@ function GoalPreflightResultCard({
           )}
         </ResultSection>
       )}
+
+      <ResultSection title={t('workflow.goalPanel.acceptanceCommands')}>
+        {acceptancePreview ? (
+          <pre className="whitespace-pre-wrap font-mono text-xs text-gray-900">{acceptancePreview}</pre>
+        ) : (
+          <p className="text-xs text-gray-400">{t('workflow.goalPreflight.acceptanceEmpty')}</p>
+        )}
+      </ResultSection>
 
       <ResultSection title={t('workflow.goalPreflight.asciiPreview')}>
         <AsciiPreviewBlock text={result.asciiPreview} />

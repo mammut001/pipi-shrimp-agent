@@ -18,6 +18,7 @@ import {
   DEFAULT_EXECUTION_CONFIG,
   DEFAULT_RETRY_POLICY,
 } from '@/services/workflow/defaults';
+import { formatAcceptanceCommandsText } from '@/services/completion/contract';
 import { normalizeWorkflowAgentRole } from '@/services/workflow/templates/roles';
 import {
   extractWorkflowMarkerTokens,
@@ -120,6 +121,7 @@ export interface AgentConfigFormData {
   notifyOnComplete: string[];
   notifyFullOutputAgentIds: string[];
   retryPolicy: RetryPolicy;
+  acceptanceCommands: string;
 }
 
 export function createAgentConfigFormData(
@@ -140,6 +142,7 @@ export function createAgentConfigFormData(
       notifyOnComplete: [],
       notifyFullOutputAgentIds: [],
       retryPolicy: DEFAULT_RETRY_POLICY,
+      acceptanceCommands: '',
     };
   }
 
@@ -163,6 +166,7 @@ export function createAgentConfigFormData(
       ...agent.retryPolicy,
       fallbackConfigIds: agent.retryPolicy?.fallbackConfigIds || [],
     },
+    acceptanceCommands: formatAcceptanceCommandsText(agent.acceptanceCommands ?? []),
   };
 }
 

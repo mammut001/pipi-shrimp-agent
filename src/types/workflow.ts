@@ -88,6 +88,7 @@ export interface WorkflowAgent {
   task?: string;
   taskPrompt?: string;
   taskInstruction?: string;
+  acceptanceCommands?: import('@/services/completion/contract').AcceptanceCommand[];
   position: { x: number; y: number };
   width?: number;
   height?: number;
@@ -173,6 +174,7 @@ export interface WorkflowInstance {
   name: string;
   projectGoal: string;
   successCriteria: GoalSpec['successCriteria'];
+  acceptanceCommands?: import('@/services/completion/contract').AcceptanceCommand[];
   goalEvaluatorAgentId: string | null;
   maxGoalIterations: number;
   agents: WorkflowAgent[];

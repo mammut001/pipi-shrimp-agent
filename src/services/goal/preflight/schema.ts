@@ -30,6 +30,13 @@ export const GoalPreflightAgentSuggestionSchema = z.object({
 
 export type GoalPreflightAgentSuggestion = z.infer<typeof GoalPreflightAgentSuggestionSchema>;
 
+export const GoalPreflightAcceptanceCommandSchema = z.object({
+  command: z.string().min(1),
+  timeoutMs: z.number().int().positive().optional(),
+}).strict();
+
+export type GoalPreflightAcceptanceCommand = z.infer<typeof GoalPreflightAcceptanceCommandSchema>;
+
 export const GoalPreflightResultSchema = z.object({
   status: z.enum(['needs_more_info', 'ready']),
   finalGoal: z.string().min(1),
@@ -40,7 +47,8 @@ export const GoalPreflightResultSchema = z.object({
   asciiPreview: z.string(),
   risks: z.array(z.string()),
   readinessScore: z.number().int().min(0).max(100),
-  schemaVersion: z.literal(1).optional(),
+  acceptanceCommands: z.array(GoalPreflightAcceptanceCommandSchema).optional(),
+  schemaVersion: z.union([z.literal(1), z.literal(2)]).optional(),
 }).strict();
 
 export type GoalPreflightResult = z.infer<typeof GoalPreflightResultSchema>;

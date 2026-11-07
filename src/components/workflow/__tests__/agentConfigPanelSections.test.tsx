@@ -2,10 +2,20 @@
  * @jest-environment jsdom
  */
 
-import { act, createElement } from 'react';
+import { createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
-import { afterEach, beforeAll, beforeEach, describe, expect, it, jest } from '@jest/globals';
-import type { RoleModelHint, WorkflowAgent } from '@/types/workflow';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+
+// Vite's production build strips react's act() in NODE_ENV=production;
+// re-require react in development mode so @testing-library/react gets
+// the development act() wrapper.
+const _origNodeEnv = process.env.NODE_ENV;
+process.env.NODE_ENV = 'development';
+jest.resetModules();
+// @ts-ignore
+const { act } = require('react');
+// @ts-ignore
+const { createRoot: _createRoot } = require('react-dom/client');
 import {
   createAgentConfigFormData,
   type ConfigOption,
@@ -36,7 +46,26 @@ const baseAgent = (overrides: Partial<WorkflowAgent> = {}): WorkflowAgent => ({
   notifyOnComplete: [],
   retryPolicy: { maxAttempts: 3, backoffMs: 1500, fallbackConfigIds: [] },
   visionPolicy: 'inherit',
+  acceptanceCommands: [],
   ...overrides,
+});
+
+// Re-import after resetModules so they receive the development act() wrapper.
+let ReactDomClient: typeof import('react-dom/client');
+let AgentConfigIdentityFields_: typeof import('../agentConfigPanelSections').AgentConfigIdentityFields;
+let AgentConfigModelSection_: typeof import('../agentConfigPanelSections').AgentConfigModelSection;
+let AgentConfigNotifySection_: typeof import('../agentConfigPanelSections').AgentConfigNotifySection;
+let AgentConfigOutputRoutesSection_: typeof import('../agentConfigPanelSections').AgentConfigOutputRoutesSection;
+let AgentConfigPanelSaveFooter_: typeof import('../agentConfigPanelSections').AgentConfigPanelSaveFooter;
+
+beforeAll(async () => {
+  ReactDomClient = await import('react-dom/client');
+  const sections = await import('../agentConfigPanelSections');
+  AgentConfigIdentityFields_ = sections.AgentConfigIdentityFields;
+  AgentConfigModelSection_ = sections.AgentConfigModelSection;
+  AgentConfigNotifySection_ = sections.AgentConfigNotifySection;
+  AgentConfigOutputRoutesSection_ = sections.AgentConfigOutputRoutesSection;
+  AgentConfigPanelSaveFooter_ = sections.AgentConfigPanelSaveFooter;
 });
 
 describe('agentConfigPanelSections', () => {
@@ -50,7 +79,7 @@ describe('agentConfigPanelSections', () => {
   beforeEach(() => {
     container = document.createElement('div');
     document.body.appendChild(container);
-    root = createRoot(container);
+    root = _createRoot(container);
   });
 
   afterEach(() => {
@@ -66,7 +95,7 @@ describe('agentConfigPanelSections', () => {
 
     act(() => {
       root.render(
-        createElement(AgentConfigIdentityFields, {
+        createElement(AgentConfigIdentityFields_, {
           formData,
           setField,
         }),
@@ -102,7 +131,7 @@ describe('agentConfigPanelSections', () => {
 
     act(() => {
       root.render(
-        createElement(AgentConfigModelSection, {
+        createElement(AgentConfigModelSection_, {
           formData,
           setFormData,
           setField,
@@ -131,7 +160,7 @@ describe('agentConfigPanelSections', () => {
     const formData = createAgentConfigFormData(baseAgent());
     act(() => {
       root.render(
-        createElement(AgentConfigNotifySection, {
+        createElement(AgentConfigNotifySection_, {
           formData,
           setFormData: jest.fn(),
           otherAgents: [],
@@ -147,7 +176,7 @@ describe('agentConfigPanelSections', () => {
 
     act(() => {
       root.render(
-        createElement(AgentConfigOutputRoutesSection, {
+        createElement(AgentConfigOutputRoutesSection_, {
           agentId: 'agent-1',
           otherAgents,
           outputRoutes: [
@@ -186,7 +215,7 @@ describe('agentConfigPanelSections', () => {
   it('AgentConfigPanelSaveFooter fires onSave', () => {
     const onSave = jest.fn();
     act(() => {
-      root.render(createElement(AgentConfigPanelSaveFooter, { embedded: false, onSave }));
+      root.render(createElement(AgentConfigPanelSaveFooter_, { embedded: false, onSave }));
     });
     expect(container.textContent).toContain('workflow.save');
     const button = container.querySelector('button');

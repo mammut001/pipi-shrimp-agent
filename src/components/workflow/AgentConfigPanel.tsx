@@ -10,6 +10,7 @@ import {
 } from '@/store/workflowStore';
 import { t } from '@/i18n';
 import type { RouteCondition, WorkflowAgent } from '@/types/workflow';
+import { parseAcceptanceCommandsText } from '@/services/completion/contract';
 import {
   getMissingExplicitRouteMarkers,
   buildModelOptions,
@@ -135,6 +136,7 @@ export function AgentConfigPanel({
       notifyOnComplete: formData.notifyOnComplete,
       notifyFullOutputAgentIds: formData.notifyFullOutputAgentIds,
       retryPolicy: formData.retryPolicy,
+      acceptanceCommands: parseAcceptanceCommandsText(formData.acceptanceCommands),
     };
   };
 

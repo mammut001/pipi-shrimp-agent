@@ -52,7 +52,7 @@ export function decideGoalLoopAfterTurn(input: GoalLoopTurnInput): GoalLoopDecis
   };
 }
 
-export function shouldRunGoalLoop(options?: { goalLoopContinuation?: boolean; isPlanMode?: boolean }): boolean {
+export function shouldRunGoalLoop(options?: { goalLoopContinuation?: boolean; isPlanMode?: boolean; completionRepairAttempt?: number }): boolean {
   if (options?.isPlanMode) return false;
   return true;
 }

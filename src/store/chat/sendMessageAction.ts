@@ -61,6 +61,13 @@ import { useSessionGoalStore } from '@/store/sessionGoalStore';
 import { prepareSendMessageContext } from './sendMessagePreparation';
 import { stripGoalMarkers } from '@/services/sessionGoal/goalEvaluator';
 import { decideGoalLoopAfterTurn, shouldRunGoalLoop } from '@/services/sessionGoal/goalLoop';
+import {
+  buildSessionGoalCompletionContract,
+  evaluateCompletion,
+  runAcceptanceCommands,
+  buildCompletionRepairMessage,
+} from '@/services/completion';
+import { getSessionProjectDir } from '@/utils/sessionFolders';
 import type { ChatActionFactoryDeps } from './chatActions';
 
 export interface SendMessageActionDependencies extends ChatActionFactoryDeps {
@@ -515,33 +522,76 @@ export function createSendMessageActionMethod(
         if (successOwnsTurn && activeGoal && shouldRunGoalLoop({ goalLoopContinuation: options?.goalLoopContinuation, isPlanMode })) {
           const latestGoal = useSessionGoalStore.getState().getGoalForSession(activeSessionId);
           if (latestGoal) {
-            useSessionGoalStore.getState().consumeTurnBudget(activeSessionId, tokenDelta);
-            const refreshedGoal = useSessionGoalStore.getState().getGoalForSession(activeSessionId)!;
-            const loopDecision = decideGoalLoopAfterTurn({
-              goal: refreshedGoal,
-              assistantContent: sanitizedAssistantContent,
-              tokenDelta,
-              isGoalLoopContinuation: options?.goalLoopContinuation,
-            });
-
-            useSessionGoalStore.getState().recordEvaluation(activeSessionId, loopDecision.evaluation);
-
-            if (loopDecision.action === 'complete') {
-              useSessionGoalStore.getState().completeGoal(activeSessionId, loopDecision.evaluation.evidence);
-              uiStore.addNotification('success', t('goal.completedToast'), activeSessionId);
-            } else if (loopDecision.action === 'budget_limited') {
-              useSessionGoalStore.getState().setStatus(activeSessionId, 'budget_limited');
-              useSessionGoalStore.getState().recordTrace(activeSessionId, 'system', '目标预算已用尽');
-              uiStore.addNotification('warning', t('goal.budgetLimitedToast'), activeSessionId);
-            } else if (loopDecision.action === 'blocked') {
-              useSessionGoalStore.getState().pauseGoal(activeSessionId);
-              uiStore.addNotification('info', t('goal.blockedToast'), activeSessionId);
-            } else if (loopDecision.action === 'continue' && loopDecision.continueMessage) {
-              queueMicrotask(() => {
-                void get().sendMessage(loopDecision.continueMessage!, activeSessionId, {
-                  goalLoopContinuation: true,
-                });
+            const completionContract = buildSessionGoalCompletionContract(latestGoal);
+            const hasAcceptance = completionContract.acceptanceCommands.length > 0;
+            const isEmpty = !sanitizedAssistantContent.trim();
+            let gateBlocked = false;
+            let gateEvaluation = null as ReturnType<typeof evaluateCompletion> | null;
+            if (!isAskMode && !isPlanMode && (isEmpty || hasAcceptance)) {
+              const sessionForWorkDir = get().sessions.find((session) => session.id === activeSessionId);
+              const workDir = getSessionProjectDir(sessionForWorkDir) ?? sessionWorkDir;
+              const acceptanceResults = await runAcceptanceCommands(completionContract.acceptanceCommands, {
+                workDir,
+                permissionMode: 'standard',
+                executionMode: executionModeId,
+                toolExecutionSource: 'assistant_tool_call',
+                sessionId: activeSessionId,
               });
+              gateEvaluation = evaluateCompletion(completionContract, {
+                finalText: sanitizedAssistantContent,
+                acceptanceResults,
+              });
+              gateBlocked = !gateEvaluation.pass;
+            }
+
+            if (gateBlocked && gateEvaluation) {
+              const repairsUsed = options?.completionRepairAttempt ?? 0;
+              useSessionGoalStore.getState().recordTrace(activeSessionId, 'system', `完成检查未通过：${gateEvaluation.reasons.join('；')}`);
+              if (repairsUsed < 1 && latestGoal.autoContinue) {
+                const repairMessage = buildCompletionRepairMessage({
+                  evaluation: gateEvaluation,
+                  attempt: repairsUsed + 1,
+                  maxAttempts: 1,
+                });
+                queueMicrotask(() => {
+                  void get().sendMessage(repairMessage, activeSessionId, {
+                    goalLoopContinuation: true,
+                    completionRepairAttempt: repairsUsed + 1,
+                  });
+                });
+              } else {
+                useSessionGoalStore.getState().pauseGoal(activeSessionId);
+                uiStore.addNotification('info', t('goal.blockedToast'), activeSessionId);
+              }
+            } else {
+              useSessionGoalStore.getState().consumeTurnBudget(activeSessionId, tokenDelta);
+              const refreshedGoal = useSessionGoalStore.getState().getGoalForSession(activeSessionId)!;
+              const loopDecision = decideGoalLoopAfterTurn({
+                goal: refreshedGoal,
+                assistantContent: sanitizedAssistantContent,
+                tokenDelta,
+                isGoalLoopContinuation: options?.goalLoopContinuation,
+              });
+
+              useSessionGoalStore.getState().recordEvaluation(activeSessionId, loopDecision.evaluation);
+
+              if (loopDecision.action === 'complete') {
+                useSessionGoalStore.getState().completeGoal(activeSessionId, loopDecision.evaluation.evidence);
+                uiStore.addNotification('success', t('goal.completedToast'), activeSessionId);
+              } else if (loopDecision.action === 'budget_limited') {
+                useSessionGoalStore.getState().setStatus(activeSessionId, 'budget_limited');
+                useSessionGoalStore.getState().recordTrace(activeSessionId, 'system', '目标预算已用尽');
+                uiStore.addNotification('warning', t('goal.budgetLimitedToast'), activeSessionId);
+              } else if (loopDecision.action === 'blocked') {
+                useSessionGoalStore.getState().pauseGoal(activeSessionId);
+                uiStore.addNotification('info', t('goal.blockedToast'), activeSessionId);
+              } else if (loopDecision.action === 'continue' && loopDecision.continueMessage) {
+                queueMicrotask(() => {
+                  void get().sendMessage(loopDecision.continueMessage!, activeSessionId, {
+                    goalLoopContinuation: true,
+                  });
+                });
+              }
             }
           }
         }

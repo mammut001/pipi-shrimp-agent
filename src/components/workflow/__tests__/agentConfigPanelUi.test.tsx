@@ -190,6 +190,7 @@ describe('agentConfigPanelUi', () => {
         notifyOnComplete: [],
         notifyFullOutputAgentIds: [],
         retryPolicy: DEFAULT_RETRY_POLICY,
+        acceptanceCommands: '',
       });
     });
 

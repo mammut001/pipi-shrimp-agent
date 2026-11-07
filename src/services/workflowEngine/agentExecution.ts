@@ -28,6 +28,8 @@ export async function executeAgent(
     signal?: AbortSignal;
     noTools?: boolean;
     allowedTools?: string[];
+    acceptanceCommands?: import('@/services/completion/contract').AcceptanceCommand[];
+    persistCompletionLedger?: (markdown: string) => Promise<void> | void;
   },
 ): Promise<string> {
   const runId = host.currentRunId;
@@ -60,6 +62,8 @@ export async function executeAgent(
       signal: effectiveSignal,
       noTools: options?.noTools,
       allowedTools: options?.allowedTools,
+      acceptanceCommands: options?.acceptanceCommands,
+      persistCompletionLedger: options?.persistCompletionLedger,
       onStreamChunk: options?.disableStreaming ? undefined : ((agentId, chunk, fullContent) => {
         if (!host.shouldAcceptRunMutation(runId)) return;
         host.onStreamChunk?.(agentId, chunk, fullContent);

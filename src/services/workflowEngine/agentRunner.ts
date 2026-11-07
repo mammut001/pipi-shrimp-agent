@@ -18,6 +18,12 @@ import type {
 } from './transcript';
 import { runHeadlessAgentTurn } from '@/services/headless/agentRunner';
 import {
+  buildWorkflowCompletionContract,
+  normalizeAcceptanceCommands,
+  shouldAttachWorkflowCompletionContract,
+} from '@/services/completion/contract';
+import { CompletionRejectedError, isCompletionRejectedError } from '@/services/completion/errors';
+import {
   formatFileWriteHandoff,
   recordFileWriteCall,
   recordFileWriteResult,
@@ -36,6 +42,31 @@ export interface AgentRunContext {
   noTools?: boolean;
   allowedTools?: string[];
   maxToolRounds?: number;
+  acceptanceCommands?: import('@/services/completion/contract').AcceptanceCommand[];
+  /** Persist completion ledger markdown to the run directory. */
+  persistCompletionLedger?: (markdown: string) => Promise<void> | void;
+  /** Switch the active model config before a stronger-model acceptance retry. */
+  resolveStrongerModelConfig?: (failedConfigId: string | undefined) => Promise<{
+    configId: string;
+    agentConfig: {
+      configId: string;
+      provider: string;
+      apiKey: string;
+      model: string;
+      baseUrl: string;
+      apiFormat: string;
+    };
+  } | null> | {
+    configId: string;
+    agentConfig: {
+      configId: string;
+      provider: string;
+      apiKey: string;
+      model: string;
+      baseUrl: string;
+      apiFormat: string;
+    };
+  } | null;
 }
 
 function assertNotAborted(signal?: AbortSignal): void {
@@ -209,6 +240,13 @@ async function invokeWithStreaming(
   const fileWrites: FileWriteCapture[] = [];
 
   try {
+    const noTools = context.noTools ?? (agent.role === 'goal-evaluator' ? true : undefined);
+    const allowedTools = context.allowedTools ?? (agent.role === 'goal-evaluator' ? [] : undefined);
+    const attachCompletion = shouldAttachWorkflowCompletionContract(agent, noTools);
+    const instanceCommands = normalizeAcceptanceCommands(context.acceptanceCommands);
+    const completion = attachCompletion
+      ? buildWorkflowCompletionContract(agent, { acceptanceCommands: instanceCommands })
+      : undefined;
     const result = await runHeadlessAgentTurn({
       sessionId,
       workDir: context.workDir,
@@ -217,8 +255,19 @@ async function invokeWithStreaming(
       permissionMode: 'bypass',
       signal: context.signal,
       timeoutMs: 300_000,
-      noTools: context.noTools ?? (agent.role === 'goal-evaluator' ? true : undefined),
-      allowedTools: context.allowedTools ?? (agent.role === 'goal-evaluator' ? [] : undefined),
+      noTools,
+      allowedTools,
+      completion,
+      completionWorkDir: context.workDir,
+      completionPermissionMode: 'bypass',
+      completionExecutionMode: 'bypass',
+      completionToolSource: 'headless_agent',
+      completionModelTrail: [
+        ...(config.configId ? [config.configId] : []),
+        ...(agent.retryPolicy?.fallbackConfigIds ?? []),
+      ],
+      completionRetryOnModelTrail: (agent.retryPolicy?.fallbackConfigIds ?? []).length > 0,
+      completionPersistLedger: context.persistCompletionLedger,
       maxToolRounds: context.maxToolRounds ?? (agent.execution?.maxRounds || 3),
       agentConfig: {
         configId: config.configId || 'workflow-config',
@@ -258,6 +307,14 @@ async function invokeWithStreaming(
     });
 
     const assistantText = result.finalText || accumulatedContent;
+    if (result.completion) {
+      context.transcript.record(agent.id, {
+        timestamp: Date.now(),
+        type: 'tool_result',
+        content: `Completion: ${result.completion.status} · repairs=${result.completion.repairs} · models=${(result.completion.modelTrail ?? []).join(' -> ') || config.configId || config.model} · tokens=${result.completion.tokenUsage?.input_tokens ?? 0}in/${result.completion.tokenUsage?.output_tokens ?? 0}out · cost_usd=${result.completion.estimatedCostUsd ?? 'unknown'}`,
+        toolName: 'completion_ledger',
+      });
+    }
     if (assistantText.trim()) {
       return assistantText;
     }
@@ -270,6 +327,7 @@ async function invokeWithStreaming(
     return assistantText;
   } catch (error) {
     if (
+      isCompletionRejectedError(error) ||
       (error instanceof DOMException && error.name === 'AbortError') ||
       (error instanceof Error && error.message.includes('timed out'))
     ) {

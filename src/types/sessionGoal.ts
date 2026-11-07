@@ -33,6 +33,7 @@ export interface SessionGoalRecord extends GoalSpec {
   asciiPreview: string;
   status: SessionGoalStatus;
   autoContinue: boolean;
+  acceptanceCommands?: import('@/services/completion/contract').AcceptanceCommand[];
   budget: SessionGoalBudget;
   lastEvaluation?: SessionGoalEvaluation;
   clarifyReady: boolean;
@@ -73,6 +74,7 @@ export function normalizeSessionGoalRecord(raw: Partial<SessionGoalRecord> & Pic
     successCriteria: raw.successCriteria ?? base.successCriteria,
     asciiPreview: raw.asciiPreview ?? base.asciiPreview,
     autoContinue: raw.autoContinue ?? base.autoContinue,
+    acceptanceCommands: raw.acceptanceCommands ?? base.acceptanceCommands ?? [],
     budget: {
       ...DEFAULT_SESSION_GOAL_BUDGET,
       ...(raw.budget ?? {}),
